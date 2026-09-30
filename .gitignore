@@ -38,3 +38,4 @@ base44/.app.jsonc
 .agents/
 .codex/
 .tmp-*
+supabase/.temp/
