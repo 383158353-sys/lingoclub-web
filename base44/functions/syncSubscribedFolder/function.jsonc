@@ -1,0 +1,4 @@
+{
+  "name": "syncSubscribedFolder",
+  "entry": "entry.ts"
+}

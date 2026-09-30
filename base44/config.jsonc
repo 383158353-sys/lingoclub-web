@@ -1,0 +1,9 @@
+{
+  "name": "本地智能助手 (Local Agent)",
+  "site": {
+    "installCommand": "npm install",
+    "buildCommand": "npm run build",
+    "serveCommand": "npm run dev",
+    "outputDirectory": "./dist"
+  }
+}

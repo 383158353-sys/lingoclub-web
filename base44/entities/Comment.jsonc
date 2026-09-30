@@ -1,0 +1,81 @@
+{
+  "name": "Comment",
+  "type": "object",
+  "properties": {
+    "movie_id": {
+      "type": "string",
+      "title": "\u5f71\u89c6ID"
+    },
+    "movie_title": {
+      "type": "string",
+      "title": "\u5f71\u89c6\u540d\u79f0"
+    },
+    "episode_id": {
+      "type": "string",
+      "title": "\u5267\u96c6ID"
+    },
+    "scene_id": {
+      "type": "string",
+      "title": "\u573a\u666fID"
+    },
+    "subtitle_id": {
+      "type": "string",
+      "title": "\u53f0\u8bcdID"
+    },
+    "timestamp": {
+      "type": "string",
+      "title": "\u65f6\u95f4\u8282\u70b9"
+    },
+    "content": {
+      "type": "string",
+      "title": "\u8bc4\u8bba\u5185\u5bb9"
+    },
+    "parent_id": {
+      "type": "string",
+      "title": "\u7236\u8bc4\u8bbaID"
+    },
+    "author_name": {
+      "type": "string",
+      "title": "\u4f5c\u8005\u540d"
+    },
+    "likes": {
+      "type": "number",
+      "title": "\u70b9\u8d5e",
+      "default": 0
+    }
+  },
+  "required": [
+    "movie_id",
+    "content"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

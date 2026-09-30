@@ -1,0 +1,4 @@
+{
+  "name": "syncVideoToGroup",
+  "entry": "entry.ts"
+}

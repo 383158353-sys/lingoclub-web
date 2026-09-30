@@ -1,0 +1,65 @@
+{
+  "name": "Subscription",
+  "type": "object",
+  "title": "Subscription",
+  "properties": {
+    "movie_id": {
+      "type": "string",
+      "title": "\u5f71\u89c6ID"
+    },
+    "movie_title": {
+      "type": "string",
+      "title": "\u5f71\u89c6\u540d\u79f0"
+    },
+    "tier": {
+      "type": "string",
+      "title": "\u8ba2\u9605\u6863\u4f4d",
+      "enum": [
+        "free",
+        "monthly",
+        "yearly",
+        "premium",
+        "credits"
+      ],
+      "default": "free",
+      "description": "free=\u514d\u8d39\u52a0\u5165 / credits=\u6d88\u8017\u79ef\u5206\u52a0\u5165 / premium=\u9ad8\u7ea7\u4f1a\u5458\u514d\u8d39\u52a0\u5165 / monthly,yearly=\u65e7\u6863\u4f4d"
+    },
+    "status": {
+      "type": "string",
+      "title": "\u72b6\u6001",
+      "enum": [
+        "active",
+        "cancelled",
+        "expired"
+      ],
+      "default": "active"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date-time",
+      "title": "\u5f00\u59cb\u65f6\u95f4"
+    },
+    "order": {
+      "type": "number",
+      "title": "\u6392\u5e8f",
+      "default": 0
+    }
+  },
+  "required": [
+    "movie_id"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

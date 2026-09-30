@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "LinguaTube 快速导入",
+  "version": "1.0.0",
+  "description": "在浏览 YouTube/B站 视频时一键导入到 LinguaTube 进行沉浸式学习",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*", "*://*.bilibili.com/*"],
+      "js": ["content.js"]
+    }
+  ]
+}

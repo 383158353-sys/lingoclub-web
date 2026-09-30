@@ -1,0 +1,129 @@
+{
+  "name": "Episode",
+  "type": "object",
+  "title": "Episode",
+  "properties": {
+    "movie_id": {
+      "type": "string",
+      "title": "\u5f71\u89c6ID"
+    },
+    "season": {
+      "type": "number",
+      "title": "\u5b63",
+      "default": 1
+    },
+    "episode_number": {
+      "type": "number",
+      "title": "\u96c6\u6570"
+    },
+    "episode": {
+      "type": "string",
+      "title": "\u96c6\u6807\u8bc6"
+    },
+    "title": {
+      "type": "string",
+      "title": "\u6807\u9898"
+    },
+    "title_en": {
+      "type": "string",
+      "title": "\u82f1\u6587\u6807\u9898"
+    },
+    "synopsis": {
+      "type": "string",
+      "title": "\u7b80\u4ecb"
+    },
+    "duration": {
+      "type": "number",
+      "title": "\u65f6\u957f(\u79d2)",
+      "default": 0
+    },
+    "scene_count": {
+      "type": "number",
+      "title": "\u573a\u666f\u6570",
+      "default": 0
+    },
+    "video_url": {
+      "type": "string",
+      "title": "\u89c6\u9891\u7247\u6bb5URL"
+    },
+    "order": {
+      "type": "number",
+      "title": "\u96c6\u5e8f",
+      "default": 0
+    },
+    "contribution_status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "approved",
+        "pending",
+        "rejected"
+      ],
+      "title": "\u6295\u7a3f\u72b6\u6001",
+      "default": "approved"
+    },
+    "review_note": {
+      "type": "string",
+      "title": "\u5ba1\u6838\u5907\u6ce8"
+    },
+    "reviewed_by_id": {
+      "type": "string",
+      "title": "\u5ba1\u6838\u4ebaID"
+    },
+    "reviewed_date": {
+      "type": "string",
+      "format": "date-time",
+      "title": "\u5ba1\u6838\u65f6\u95f4"
+    },
+    "proposed_by_id": {
+      "type": "string",
+      "title": "\u6295\u7a3f\u4ebaID"
+    },
+    "proposed_by_name": {
+      "type": "string",
+      "title": "\u6295\u7a3f\u4eba\u540d\u79f0"
+    }
+  },
+  "required": [
+    "movie_id"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

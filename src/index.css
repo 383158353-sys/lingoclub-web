@@ -1,0 +1,214 @@
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* CineFluency — 深黑底 + 青绿电影感 */
+    --background: 225 16% 5%;          /* #0a0b0d deep ink */
+    --background-soft: 222 14% 8%;      /* #131519 */
+    --background-elev: 222 12% 12%;    /* #1c1e24 */
+    --foreground: 0 0% 100%;
+    --muted-foreground: 0 0% 63%;      /* #a0a0a0 */
+    --muted: 222 12% 14%;
+    --border: 222 10% 20%;
+    --input: 222 10% 16%;
+    --ring: 167 95% 45%;
+
+    /* copper 仍作为「青绿主色」的兼容令牌名，使全站既有 copper 类自动转为 teal */
+    --copper: 167 95% 45%;             /* #00e6b3 teal */
+    --copper-soft: 167 90% 62%;
+    --copper-foreground: 225 30% 6%;    /* teal 上的深墨字 */
+
+    --mint: 167 100% 50%;              /* 亮 teal 强调 */
+    --mint-soft: 167 90% 74%;
+
+    --card: 222 14% 10%;
+    --card-foreground: 0 0% 100%;
+    --popover: 222 14% 9%;
+    --popover-foreground: 0 0% 100%;
+
+    --primary: 167 95% 45%;
+    --primary-foreground: 225 30% 6%;
+    --secondary: 222 12% 16%;
+    --secondary-foreground: 0 0% 100%;
+    --accent: 222 12% 18%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --chart-1: 167 95% 50%;
+    --chart-2: 200 80% 60%;
+    --chart-3: 280 60% 62%;
+    --chart-4: 35 90% 58%;
+    --chart-5: 340 70% 62%;
+
+    --radius: 0.7rem;
+
+    --font-display: 'Sora', ui-sans-serif, system-ui, sans-serif;
+    --font-heading: 'Sora', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+    --sidebar-background: 222 14% 7%;
+    --sidebar-foreground: 0 0% 92%;
+    --sidebar-primary: 167 95% 45%;
+    --sidebar-primary-foreground: 225 30% 6%;
+    --sidebar-accent: 222 12% 16%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 222 10% 20%;
+    --sidebar-ring: 167 95% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+    font-size: 16px;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+    line-height: 1.6;
+    letter-spacing: -0.003em;
+    font-feature-settings: "ss01" on, "cv01" on, "cv11" on;
+    background-image:
+      radial-gradient(circle at 12% 0%, hsl(167 80% 30% / 0.10), transparent 40%),
+      radial-gradient(circle at 90% 6%, hsl(220 70% 30% / 0.08), transparent 44%);
+    background-attachment: fixed;
+  }
+
+  @media (max-width: 767px) {
+    html, body, #root {
+      width: 100%;
+      max-width: 100%;
+      overflow-x: clip;
+    }
+  }
+
+  ::selection {
+    background: hsl(167 95% 45% / 0.32);
+    color: #fff;
+  }
+
+  /* 统一的标题排版尺度：Sora 粗体 + 紧字距 + 紧行高 + 平衡换行 */
+  h1, h2, h3, h4 {
+    @apply font-display;
+    font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+  }
+  h1 { font-size: clamp(2.25rem, 1.5rem + 2.6vw, 4rem); }
+  h2 { font-size: clamp(1.75rem, 1.35rem + 1.6vw, 2.75rem); }
+  h3 { font-size: clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem); }
+  h4 { font-size: 1.0625rem; }
+
+  p {
+    line-height: 1.7;
+    text-wrap: pretty;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+    transition: color 0.2s ease, opacity 0.2s ease;
+  }
+
+  /* 表单控件统一 Inter，避免系统默认字体破坏一致感 */
+  input, button, select, textarea {
+    font-family: var(--font-body);
+    letter-spacing: -0.003em;
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* 细腻滚动条，贴合深色电影感界面 */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: hsl(var(--background)); }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(0 0% 22%);
+    border-radius: 999px;
+    border: 2px solid hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(167 30% 38%); }
+}
+
+@layer utilities {
+  .font-display { font-family: var(--font-display); }
+  .font-mono { font-family: var(--font-mono); }
+
+  .tracking-luxe { letter-spacing: 0.32em; }
+  .tracking-tightest { letter-spacing: -0.035em; }
+
+  .stroke-frame { position: relative; }
+  .stroke-frame::before {
+    content: "";
+    position: absolute;
+    inset: 6px;
+    border: 1px solid hsl(167 80% 55% / 0.32);
+    border-radius: 999px;
+    pointer-events: none;
+    transform: rotate(-1deg);
+  }
+  .stroke-frame-rect::before {
+    border-radius: calc(var(--radius) - 2px);
+    transform: rotate(0.3deg);
+  }
+
+  .grain {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+    background-image:
+      radial-gradient(rgba(255,255,255,0.5) 0.5px, transparent 0.5px),
+      radial-gradient(rgba(0,0,0,0.4) 0.5px, transparent 0.5px);
+    background-size: 3px 3px, 4px 4px;
+    background-position: 0 0, 1px 1px;
+  }
+
+  /* 兼容旧 copper/cream 类名（copper 现为 teal） */
+  .text-copper { color: hsl(var(--copper)); }
+  .bg-copper { background-color: hsl(var(--copper)); }
+  .border-copper { border-color: hsl(var(--copper) / 0.5); }
+  .text-cream { color: hsl(var(--foreground)); }
+
+  .glass {
+    background: hsl(222 14% 7% / 0.72);
+    backdrop-filter: blur(14px) saturate(120%);
+    -webkit-backdrop-filter: blur(14px) saturate(120%);
+  }
+
+  .hairline { border-color: hsl(0 0% 100% / 0.08); }
+
+  .ken-burns { animation: kenburns 26s ease-in-out infinite alternate; }
+  .fade-up { animation: fadeUp 0.8s cubic-bezier(0.22,1,0.36,1) both; }
+  .scrollbar-none::-webkit-scrollbar { display: none; }
+  .scrollbar-none { scrollbar-width: none; }
+}
+
+@keyframes kenburns {
+  0% { transform: scale(1.08) translate(-1%, -1%); }
+  100% { transform: scale(1.18) translate(1.5%, 1%); }
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}

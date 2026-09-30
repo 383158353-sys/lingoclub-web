@@ -1,0 +1,8 @@
+.env*
+.git
+.agents
+.codex
+.tmp-*
+.release-tools
+supabase
+base44

@@ -1,0 +1,176 @@
+{
+  "name": "Movie",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "title": "\u540d\u79f0"
+    },
+    "title_en": {
+      "type": "string",
+      "title": "\u82f1\u6587\u540d\u79f0"
+    },
+    "tagline": {
+      "type": "string",
+      "title": "\u6807\u8bed"
+    },
+    "description": {
+      "type": "string",
+      "title": "\u7b80\u4ecb"
+    },
+    "poster_url": {
+      "type": "string",
+      "format": "uri",
+      "title": "\u6d77\u62a5"
+    },
+    "backdrop_url": {
+      "type": "string",
+      "format": "uri",
+      "title": "\u80cc\u666f\u56fe"
+    },
+    "genre": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "title": "\u7c7b\u578b"
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": [
+        "beginner",
+        "intermediate",
+        "advanced"
+      ],
+      "title": "\u5b66\u4e60\u96be\u5ea6",
+      "default": "intermediate"
+    },
+    "language": {
+      "type": "string",
+      "title": "\u8bed\u8a00",
+      "default": "en"
+    },
+    "country": {
+      "type": "string",
+      "title": "\u56fd\u5bb6"
+    },
+    "year": {
+      "type": "number",
+      "title": "\u5e74\u4efd"
+    },
+    "rating": {
+      "type": "number",
+      "title": "\u8bc4\u5206",
+      "default": 0
+    },
+    "price_monthly": {
+      "type": "number",
+      "title": "\u6708\u8ba2\u9605\u4ef7\u683c",
+      "default": 0
+    },
+    "price_yearly": {
+      "type": "number",
+      "title": "\u5e74\u8ba2\u9605\u4ef7\u683c",
+      "default": 0
+    },
+    "price_credits": {
+      "type": "number",
+      "title": "\u52a0\u5165\u6240\u9700\u79ef\u5206",
+      "default": 0,
+      "description": "\u52a0\u5165\u8be5\u5c0f\u7ec4\u9700\u6d88\u8017\u7684\u79ef\u5206\uff1b0 \u8868\u793a\u514d\u8d39\u3002\u9ad8\u7ea7\u4f1a\u5458\u65e0\u89c6\u6b64\u8d39\u7528\u3002"
+    },
+    "member_count": {
+      "type": "number",
+      "title": "\u793e\u533a\u4eba\u6570",
+      "default": 0
+    },
+    "total_episodes": {
+      "type": "number",
+      "title": "\u603b\u96c6\u6570",
+      "default": 0
+    },
+    "is_featured": {
+      "type": "boolean",
+      "title": "\u7cbe\u9009",
+      "default": false
+    },
+    "creator_name": {
+      "type": "string",
+      "title": "\u521b\u5efa\u8005"
+    },
+    "visibility": {
+      "type": "string",
+      "enum": [
+        "private",
+        "pending",
+        "public",
+        "rejected"
+      ],
+      "title": "\u516c\u5f00\u72b6\u6001",
+      "default": "public"
+    },
+    "review_note": {
+      "type": "string",
+      "title": "\u5ba1\u6838\u5907\u6ce8"
+    },
+    "reviewed_by_id": {
+      "type": "string",
+      "title": "\u5ba1\u6838\u4ebaID"
+    },
+    "reviewed_date": {
+      "type": "string",
+      "format": "date-time",
+      "title": "\u5ba1\u6838\u65f6\u95f4"
+    }
+  },
+  "required": [
+    "title"
+  ],
+  "rls": {
+    "read": {
+      "$or": [
+        {
+          "data.visibility": "public"
+        },
+        {
+          "data.is_featured": true
+        },
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

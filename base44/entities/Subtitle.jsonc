@@ -1,0 +1,94 @@
+{
+  "name": "Subtitle",
+  "type": "object",
+  "properties": {
+    "movie_id": {
+      "type": "string",
+      "title": "\u5f71\u89c6ID"
+    },
+    "episode_id": {
+      "type": "string",
+      "title": "\u5267\u96c6ID"
+    },
+    "scene_id": {
+      "type": "string",
+      "title": "\u573a\u666fID"
+    },
+    "timestamp": {
+      "type": "string",
+      "title": "\u65f6\u95f4"
+    },
+    "time_start": {
+      "type": "string",
+      "title": "\u5f00\u59cb\u65f6\u95f4"
+    },
+    "time_end": {
+      "type": "string",
+      "title": "\u7ed3\u675f\u65f6\u95f4"
+    },
+    "text_en": {
+      "type": "string",
+      "title": "\u82f1\u6587\u53f0\u8bcd"
+    },
+    "text_zh": {
+      "type": "string",
+      "title": "\u4e2d\u6587\u7ffb\u8bd1"
+    },
+    "speaker": {
+      "type": "string",
+      "title": "\u8bf4\u8bdd\u8005"
+    },
+    "order": {
+      "type": "number",
+      "title": "\u6392\u5e8f"
+    },
+    "analysis_status": {
+      "type": "string",
+      "enum": [
+        "none",
+        "pending",
+        "done"
+      ],
+      "title": "\u89e3\u6790\u72b6\u6001",
+      "default": "none"
+    },
+    "ai_analysis": {
+      "type": "object",
+      "title": "AI\u89e3\u6790",
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "text_en"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

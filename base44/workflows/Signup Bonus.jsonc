@@ -1,0 +1,39 @@
+{
+  "name": "Signup Bonus",
+  "description": "\u65b0\u7528\u6237\u6ce8\u518c\u6210\u529f\u540e\u8d60\u9001 100 \u79ef\u5206\uff08\u5e42\u7b49\uff09",
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "signup_bonus",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "grant": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "grantSignupBonus",
+            "args": {
+              "user_id": "${ .trigger.user_id }"
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "\u53d1\u653e\u6ce8\u518c\u79ef\u5206",
+            "description": "\u8d60\u9001 100 \u79ef\u5206\uff08\u5e42\u7b49\uff09"
+          }
+        }
+      }
+    ]
+  },
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "app_user_auth",
+      "events": [
+        "signup"
+      ]
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "name": "payments-webhook",
+  "entry": "entry.ts"
+}

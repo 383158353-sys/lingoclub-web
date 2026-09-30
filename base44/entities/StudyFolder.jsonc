@@ -1,0 +1,67 @@
+{
+  "name": "StudyFolder",
+  "type": "object",
+  "title": "StudyFolder",
+  "properties": {
+    "name": {
+      "type": "string",
+      "title": "\u6587\u4ef6\u5939\u540d"
+    },
+    "cover_url": {
+      "type": "string",
+      "title": "\u5c01\u9762\u56feURL"
+    },
+    "tab_type": {
+      "type": "string",
+      "enum": [
+        "videos",
+        "films"
+      ],
+      "title": "\u6240\u5c5e\u6807\u7b7e\u9875",
+      "default": "videos"
+    },
+    "sort_order": {
+      "type": "number",
+      "title": "\u6392\u5e8f\u6743\u91cd",
+      "default": 0
+    },
+    "is_shared": {
+      "type": "boolean",
+      "title": "\u662f\u5426\u5df2\u53d1\u5e03\u4e3a\u5171\u4eab\u5c0f\u7ec4",
+      "default": false
+    },
+    "movie_id": {
+      "type": "string",
+      "title": "\u5173\u8054\u7684Movie\u5b9e\u4f53ID",
+      "description": "\u53d1\u5e03\u4e3a\u5c0f\u7ec4\u540e\u751f\u6210\u7684 Movie \u5b9e\u4f53 ID\uff0c\u7528\u4e8e\u53cc\u5411\u5173\u8054\u3002"
+    },
+    "share_link": {
+      "type": "string",
+      "title": "\u5171\u4eab\u9875\u94fe\u63a5",
+      "description": "\u53d1\u5e03\u4e3a\u5c0f\u7ec4\u540e\u751f\u6210\u7684\u516c\u5f00\u6d4f\u89c8\u9875\u94fe\u63a5\u3002"
+    },
+    "shared_date": {
+      "type": "string",
+      "format": "date-time",
+      "title": "\u53d1\u5e03\u65f6\u95f4"
+    }
+  },
+  "required": [
+    "name",
+    "tab_type"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

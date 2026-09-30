@@ -1,0 +1,4 @@
+{
+  "name": "autoTranscribeEpisode",
+  "entry": "entry.ts"
+}

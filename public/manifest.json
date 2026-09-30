@@ -1,0 +1,17 @@
+{
+  "name": "Lingo Club",
+  "short_name": "Lingo Club",
+  "description": "在你喜欢的故事里学会一门语言",
+  "display": "standalone",
+  "start_url": "/",
+  "theme_color": "#0a0b0d",
+  "background_color": "#0a0b0d",
+  "icons": [
+    {
+      "src": "https://media.base44.com/images/public/6a7852460e8c60501e6ee862/63daf1202_image_3_850x850.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

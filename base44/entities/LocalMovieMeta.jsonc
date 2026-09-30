@@ -1,0 +1,60 @@
+{
+  "name": "LocalMovieMeta",
+  "type": "object",
+  "title": "LocalMovieMeta",
+  "properties": {
+    "name": {
+      "type": "string",
+      "title": "\u5f71\u7247\u540d"
+    },
+    "original_title": {
+      "type": "string",
+      "title": "\u539f\u59cb\u89c6\u9891\u6807\u9898",
+      "description": "\u4ece YouTube/B\u7ad9 \u7b49\u5e73\u53f0\u6293\u53d6\u7684\u539f\u59cb\u6807\u9898\u3002\u7528\u6237\u672a\u624b\u52a8\u4fee\u6539\u6807\u9898\u65f6\u663e\u793a\u6b64\u6807\u9898\u3002"
+    },
+    "poster_url": {
+      "type": "string",
+      "title": "\u6d77\u62a5 URL"
+    },
+    "video_url": {
+      "type": "string",
+      "title": "\u89c6\u9891\u94fe\u63a5",
+      "description": "YouTube/B\u7ad9\u7b49\u5728\u7ebf\u89c6\u9891\u94fe\u63a5\u3002\u6709\u6b64\u5b57\u6bb5\u65f6\u5373\u4f7f\u672c\u673a\u65e0\u89c6\u9891\u6587\u4ef6\u4e5f\u53ef\u64ad\u653e\u3002"
+    },
+    "subtitles": {
+      "type": "array",
+      "title": "\u5b57\u5e55\u5217\u8868",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "folder": {
+      "type": "string",
+      "title": "\u6240\u5c5e\u6587\u4ef6\u5939",
+      "default": "\u672a\u5206\u7c7b"
+    },
+    "sort_order": {
+      "type": "number",
+      "title": "\u6392\u5e8f\u6743\u91cd",
+      "default": 0
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "name": "ai-cover-generate",
+  "entry": "entry.ts"
+}

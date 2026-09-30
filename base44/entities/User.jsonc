@@ -1,0 +1,35 @@
+{
+  "properties": {
+    "role": {
+      "type": "string",
+      "description": "The role of the user in the app",
+      "enum": [
+        "admin",
+        "user"
+      ]
+    },
+    "credits": {
+      "type": "number",
+      "title": "\u79ef\u5206\u4f59\u989d",
+      "default": 0,
+      "description": "\u53ef\u7528\u4e8e\u52a0\u5165\u5c0f\u7ec4\u7684\u79ef\u5206\uff1b\u4ec5\u540e\u7aef\u670d\u52a1\u89d2\u8272\u53ef\u4fee\u6539\uff0c\u524d\u7aef\u4e25\u7981\u672c\u5730\u589e\u51cf"
+    },
+    "premium_expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "\u9ad8\u7ea7\u4f1a\u5458\u5230\u671f\u65f6\u95f4",
+      "description": "\u4e3a\u7a7a\u6216\u5df2\u8fc7\u671f\u5373\u975e\u9ad8\u7ea7\u4f1a\u5458\uff1b\u8ba2\u9605\u652f\u4ed8\u6210\u529f\u540e\u7531 webhook \u5199\u5165\uff0c\u5230\u671f/\u53d6\u6d88\u540e\u6e05\u7a7a"
+    },
+    "signup_bonus_granted": {
+      "type": "boolean",
+      "title": "\u5df2\u53d1\u653e\u6ce8\u518c\u8d60\u9001",
+      "default": false,
+      "description": "\u6ce8\u518c\u8d60\u9001 100 \u79ef\u5206\u7684\u5e42\u7b49\u6807\u8bb0\uff0c\u786e\u4fdd\u53ea\u53d1\u653e\u4e00\u6b21"
+    }
+  },
+  "required": [
+    "role"
+  ],
+  "name": "User",
+  "type": "object"
+}

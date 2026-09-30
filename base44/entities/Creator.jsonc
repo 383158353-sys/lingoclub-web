@@ -1,0 +1,43 @@
+{
+  "name": "Creator",
+  "type": "object",
+  "properties": {
+    "display_name": {
+      "type": "string",
+      "title": "\u521b\u4f5c\u8005\u540d\u79f0"
+    },
+    "bio": {
+      "type": "string",
+      "title": "\u7b80\u4ecb"
+    },
+    "website": {
+      "type": "string",
+      "title": "\u7f51\u7ad9"
+    },
+    "verified": {
+      "type": "boolean",
+      "title": "\u5df2\u8ba4\u8bc1",
+      "default": false
+    },
+    "movie_count": {
+      "type": "number",
+      "title": "\u9879\u76ee\u6570",
+      "default": 0
+    }
+  },
+  "required": [
+    "display_name"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}
