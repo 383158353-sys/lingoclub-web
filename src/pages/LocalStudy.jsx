@@ -27,7 +27,7 @@ import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { extractYouTubeId } from "@/lib/youtubeTranscriptClient";
 import { cleanSubtitleText } from "@/lib/subtitleCleaner";
 import { useAuth } from "@/lib/AuthContext";
-import { syncUserState } from "@/lib/cloudState";
+import { readMovieSubtitles, syncUserState } from "@/lib/cloudState";
 import { useGlobalVideoSpace } from "@/hooks/useGlobalVideoSpace";
 import { useTranscriptCueFocus } from "@/hooks/useTranscriptCueFocus";
 import PageBackButton from "@/components/common/PageBackButton";
@@ -409,6 +409,17 @@ export default function LocalStudy() {
   const openMeta = useCallback(async (sourceMeta, markLearned = false, transientFile = null, returnView = null) => {
     const requestId = openRequestRef.current.begin();
     let meta = await localMovies.get(sourceMeta.id).catch(() => null) || sourceMeta;
+    if (!meta.subtitles?.length && Number(meta.subtitle_count) > 0 && user?.id) {
+      try {
+        const archived = await readMovieSubtitles(user.id, meta.id);
+        if (archived?.subtitles?.length) {
+          await localMovies.cacheSubtitles(meta.id, archived.subtitles);
+          meta = { ...meta, subtitles: archived.subtitles, subtitle_text: archived.subtitle_text || meta.subtitle_text || "" };
+        }
+      } catch (error) {
+        console.warn("[LingoClub subtitle lazy load]", { code: error?.code || null, message: error?.message || "unavailable" });
+      }
+    }
     if (!openRequestRef.current.isCurrent(requestId)) return;
     if (markLearned) {
       const last_studied_at = new Date().toISOString();
@@ -457,7 +468,7 @@ export default function LocalStudy() {
       pendingSourceStart: null,
     });
     setMaskOn(false);
-  }, [revokeCurrent, searchParams]);
+  }, [revokeCurrent, searchParams, user?.id]);
 
   useEffect(() => {
     if (!materials) return undefined;

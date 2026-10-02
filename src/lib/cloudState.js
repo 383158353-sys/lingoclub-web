@@ -1,11 +1,12 @@
 import { guestVocab } from "./guestVocab";
 import { getLocalDeletionTombstones, localFolders, localMovies, replaceLocalDeletionTombstones } from "./localStudyMeta";
-import { lightweightCloudState, safeFolder, safeMovie } from "./localCloudPayload";
+import { lightweightCloudState, safeFolder, safeMovie, safeSubtitleCues } from "./localCloudPayload";
 import { clearSession, loadSession, saveSession } from "./reviewSession";
 import { mergeRecords, mergeTombstones } from "./cloudDeletion";
 import { supabase } from "./supabaseClient";
 import { createRequestDeduper } from "./requestDeduper";
 import { getActiveStorageUser, withoutLocalStateNotifications } from "./userStorage";
+import { decodeSubtitleArchive, encodeSubtitleArchive } from "./subtitleArchive";
 
 export const GUEST_MIGRATION_KEY = "lingoclub_guest_migrated_user_v2";
 const dedupeRead = createRequestDeduper();
@@ -116,6 +117,50 @@ export function cloudStateCompaction(state) {
   };
 }
 
+function movieSubtitleTimestamp(movie) {
+  return movie?.subtitle_imported_at || movie?.updated_date || movie?.created_date || new Date(0).toISOString();
+}
+
+async function persistMovieSubtitles(userId, movies = [], deletedItems = []) {
+  const candidates = movies.filter((movie) => movie?.id && (Array.isArray(movie.subtitles) || movie.subtitle_text));
+  const expectedIds = new Set(movies.filter((movie) => movie?.id && (movie.subtitle_count || movie.subtitles?.length || movie.subtitle_text)).map((movie) => movie.id));
+  const deletedMovieIds = new Set(deletedItems.filter((item) => item?.type === "movies" && item?.id).map((item) => item.id));
+  if (!candidates.length && !deletedMovieIds.size) return undefined;
+
+  let archives = {};
+  const hasEveryExpectedMovie = [...expectedIds].every((movieId) => candidates.some((movie) => movie.id === movieId));
+  if (!hasEveryExpectedMovie || deletedMovieIds.size) {
+    const { data: existing, error: readError } = await supabase
+      .from("user_state")
+      .select("movie_subtitles")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (readError) throw readError;
+    archives = { ...(existing?.movie_subtitles || {}) };
+  }
+  for (const movie of candidates) {
+    archives[movie.id] = await encodeSubtitleArchive({
+      subtitles: safeSubtitleCues(movie.subtitles),
+      subtitle_text: typeof movie.subtitle_text === "string" ? movie.subtitle_text : null,
+      updated_at: movieSubtitleTimestamp(movie),
+    });
+  }
+  for (const movieId of deletedMovieIds) delete archives[movieId];
+  return archives;
+}
+
+export async function readMovieSubtitles(userId, movieId) {
+  const resolvedUserId = userId || getActiveStorageUser();
+  if (!supabase || !resolvedUserId || !movieId) return null;
+  const { data, error } = await supabase
+    .from("user_state")
+    .select("movie_subtitles")
+    .eq("user_id", resolvedUserId)
+    .maybeSingle();
+  if (error) throw error;
+  return decodeSubtitleArchive(data?.movie_subtitles?.[movieId]);
+}
+
 export function mergeState(local = {}, remote = {}) {
   const deletedItems = mergeTombstones(local.deletedItems, remote.deletedItems);
   const localSession = local.reviewSession;
@@ -222,10 +267,15 @@ async function performSyncUserState(userId, { legacyState = null, remoteRow } = 
     await restoreLocalState(merged);
     return { data: merged, written: false };
   }
+  // Subtitle rows must be durable before user_state is compacted to metadata.
+  // If this write fails, the user_state PATCH never runs and the old payload
+  // remains intact.
+  const movieSubtitles = await persistMovieSubtitles(userId, merged.movies, merged.deletedItems);
   const payload = {
     user_id: userId,
     data: cloudData,
     updated_at: new Date().toISOString(),
+    ...(movieSubtitles ? { movie_subtitles: movieSubtitles } : {}),
   };
   const writeQuery = row
     ? supabase.from("user_state").update(payload).eq("user_id", userId).select("data,updated_at").single()

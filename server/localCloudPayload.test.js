@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { lightweightCloudState, safeMovie } from "../src/lib/localCloudPayload.js";
 
-test("cloud local-library payload keeps subtitles and metadata while excluding video and heavy assets", () => {
+test("cloud user_state keeps movie metadata while subtitles and heavy assets use dedicated storage", () => {
   const state = lightweightCloudState({
     movies: [{
       id: "episode-1",
@@ -31,10 +31,11 @@ test("cloud local-library payload keeps subtitles and metadata while excluding v
   });
   const [movie] = state.movies;
   assert.equal(movie.name, "S01E01");
-  assert.deepEqual(movie.subtitles, [{ text_en: "large subtitle text", cue: { start: 0 } }]);
+  assert.equal("subtitles" in movie, false);
+  assert.equal(movie.subtitle_count, 1);
   assert.equal(movie.learning_progress.lastCue, 8);
   assert.equal(movie.video_url, "");
-  assert.equal(movie.subtitle_text, "full SRT payload");
+  assert.equal("subtitle_text" in movie, false);
   for (const key of ["video_blob", "poster_blob", "videoHandle", "directoryHandle", "subtitleDirectoryHandle"]) assert.equal(key in movie, false);
   assert.ok(!String(movie.poster_url || "").startsWith("data:image/"));
   assert.deepEqual(state.folders[0].episodeIds, ["episode-1"]);

@@ -257,6 +257,13 @@ const movieCollection = collection(MOVIES_KEY, "movie", "movie");
 
 export const localMovies = {
   ...movieCollection,
+  async cacheSubtitles(recordId, subtitles) {
+    await ensureMigrated(MOVIES_KEY, "movie");
+    const item = read(MOVIES_KEY).find((entry) => entry.id === recordId);
+    if (!item) return null;
+    await saveLocalMediaAssets(assetKey(item, "movie"), { subtitleData: Array.isArray(subtitles) ? subtitles : [] });
+    return { ...item, subtitles: Array.isArray(subtitles) ? subtitles : [] };
+  },
   async importMovie(fields) {
     const before = await movieCollection.list();
     const incomingVideoId = youtubeVideoId(fields?.video_url);

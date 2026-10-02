@@ -21,7 +21,16 @@ function isLocalMovie(movie) {
   return !url || url.startsWith("blob:") || movie?.media_type === "episode";
 }
 
-export function safeMovie(movie, { stripAiCache = false } = {}) {
+export function safeSubtitleCues(cues) {
+  return (Array.isArray(cues) ? cues : []).map((cue) => {
+    if (!cue || typeof cue !== "object") return cue;
+    const safeCue = { ...cue };
+    for (const key of REBUILDABLE_AI_FIELDS) delete safeCue[key];
+    return safeCue;
+  });
+}
+
+export function safeMovie(movie, { stripAiCache = false, stripSubtitles = false } = {}) {
   const result = { ...movie };
   for (const key of HEAVY_LOCAL_FIELDS) delete result[key];
   for (const [key, value] of Object.entries(result)) {
@@ -32,12 +41,12 @@ export function safeMovie(movie, { stripAiCache = false } = {}) {
     if (typeof result.poster_url === "string" && /^(?:blob:|data:image\/)/i.test(result.poster_url)) result.poster_url = "";
   }
   if (stripAiCache && Array.isArray(result.subtitles)) {
-    result.subtitles = result.subtitles.map((cue) => {
-      if (!cue || typeof cue !== "object") return cue;
-      const safeCue = { ...cue };
-      for (const key of REBUILDABLE_AI_FIELDS) delete safeCue[key];
-      return safeCue;
-    });
+    result.subtitles = safeSubtitleCues(result.subtitles);
+  }
+  if (stripSubtitles) {
+    if (Array.isArray(result.subtitles)) result.subtitle_count = result.subtitles.length;
+    delete result.subtitles;
+    delete result.subtitle_text;
   }
   return result;
 }
@@ -55,7 +64,7 @@ export function safeFolder(folder) {
 }
 
 export function lightweightCloudState(state = {}) {
-  const movies = Array.isArray(state.movies) ? state.movies.map((movie) => safeMovie(movie, { stripAiCache: true })) : [];
+  const movies = Array.isArray(state.movies) ? state.movies.map((movie) => safeMovie(movie, { stripAiCache: true, stripSubtitles: true })) : [];
   for (const movie of movies) {
     // Device-local file status is retained in local metadata, but never sent to
     // another device as account state.
