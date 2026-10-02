@@ -32,3 +32,26 @@ npx skills add base44/skills
 - Prefer the existing Base44 CLI workflow over adding new npm scripts for Base44-specific tasks.
 - Reuse the existing SDK client and Vite plugin patterns before adding new Base44 integration paths.
 - Run the relevant checks from `package.json` before finishing code changes.
+
+## Required Delivery Workflow
+
+Use `F:\base44-backup\lingoclub-release` as the fixed production development directory. Never treat `local-agent` as the production development directory.
+
+After every code change:
+
+1. Run the tests or checks directly related to the change first.
+2. Run the complete `npm test` suite.
+3. Run `npm run build`.
+4. Only after the relevant checks, complete test suite, and build all pass, run `git add` and create a commit.
+5. Push to the GitHub remote for the current production repository by default.
+6. When the target branch is `main`, confirm that the push succeeded and inspect the resulting Vercel automatic Production deployment.
+7. If any test or build fails, do not push `main`; fix the failure and rerun the required checks first.
+
+The final report must include these fields:
+
+- 修改内容
+- npm test
+- npm run build
+- commit SHA
+- GitHub push
+- Vercel Production
