@@ -1,4 +1,4 @@
-import { authenticatedUser, encryptCredentialSecret, isSafeProviderUrl } from "./aiCredentials.js";
+import { authenticatedUser, encryptCredentialSecret, isSafeProviderUrl, serviceRoleProjectMatches } from "./aiCredentials.js";
 import { classifyCredentialFailure } from "./aiCredentialErrors.js";
 
 function send(res, status, body) {
@@ -10,13 +10,21 @@ function publicCredential(row, activeId) {
   return { id: row.id, name: row.name, type: row.provider_type, provider: row.provider, baseUrl: row.base_url || "", model: row.model, fastModel: row.fast_model || "", maskedApiKey: row.key_hint ? `••••••••${row.key_hint}` : "", active: row.id === activeId, updatedAt: row.updated_at };
 }
 
+function logDatabaseDiagnostic(error, env) {
+  console.info("[/api/ai-credentials] database diagnostic", {
+    errorCode: error?.code ? String(error.code) : null,
+    errorStatus: Number.isInteger(error?.status) ? error.status : null,
+    serviceRoleProjectMatches: serviceRoleProjectMatches(env),
+  });
+}
+
 export async function handleAICredentials(req, res, body = {}, env = process.env) {
   const { client, user } = await authenticatedUser(req, env);
   const method = String(req.method || "GET").toUpperCase();
   let prefs;
   try { prefs = await client.from("user_ai_preferences").select("active_credential_id").eq("user_id", user.id).maybeSingle(); }
-  catch (error) { throw Object.assign(new Error("Supabase request failed"), classifyCredentialFailure(error, "supabase_connection")); }
-  if (prefs.error) throw Object.assign(new Error("Supabase request failed"), classifyCredentialFailure(prefs.error, "supabase_connection"));
+  catch (error) { logDatabaseDiagnostic(error, env); throw Object.assign(new Error("Supabase request failed"), classifyCredentialFailure(error, "supabase_connection")); }
+  if (prefs.error) { logDatabaseDiagnostic(prefs.error, env); throw Object.assign(new Error("Supabase request failed"), classifyCredentialFailure(prefs.error, "supabase_connection")); }
   const activeId = prefs.data?.active_credential_id || null;
 
   if (method === "GET") {

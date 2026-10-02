@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { authenticatedUser } from "./aiCredentials.js";
+import { authenticatedUser, serviceRoleProjectMatches } from "./aiCredentials.js";
 
 const env = {
   VITE_SUPABASE_URL: "https://project-ref.supabase.co",
@@ -42,6 +42,7 @@ test("authenticatedUser validates with the publishable client and returns a serv
       authErrorStatus: null,
       userResolved: true,
       serviceRoleClientInitialized: true,
+      serviceRoleProjectMatches: null,
     });
     assert.equal(JSON.stringify(logs).includes("access-token-value"), false);
     assert.equal(JSON.stringify(logs).includes(env.VITE_SUPABASE_PUBLISHABLE_KEY), false);
@@ -74,10 +75,17 @@ test("authenticatedUser logs the real Supabase auth error code and status withou
       authErrorStatus: 401,
       userResolved: false,
       serviceRoleClientInitialized: true,
+      serviceRoleProjectMatches: null,
     });
     assert.equal(JSON.stringify(logs).includes("rejected-token"), false);
   } finally {
     globalThis.fetch = originalFetch;
     console.info = originalInfo;
   }
+});
+
+test("service-role project matching reveals only whether a JWT ref matches the configured host", () => {
+  const encoded = Buffer.from(JSON.stringify({ role: "service_role", ref: "project-ref" })).toString("base64url");
+  assert.equal(serviceRoleProjectMatches({ ...env, SUPABASE_SERVICE_ROLE_KEY: `header.${encoded}.signature` }), true);
+  assert.equal(serviceRoleProjectMatches({ ...env, SUPABASE_SERVICE_ROLE_KEY: `header.${Buffer.from(JSON.stringify({ ref: "other-project" })).toString("base64url")}.signature` }), false);
 });

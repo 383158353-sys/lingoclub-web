@@ -33,6 +33,17 @@ function supabaseHost(env) {
   catch { return ""; }
 }
 
+export function serviceRoleProjectMatches(env = process.env) {
+  const key = String(env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  const encodedPayload = key.split(".")[1];
+  if (!encodedPayload) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+    const projectRef = supabaseHost(env).split(".")[0];
+    return typeof payload?.ref === "string" && Boolean(projectRef) ? payload.ref === projectRef : null;
+  } catch { return null; }
+}
+
 export function getAuthSupabase(env = process.env) {
   const url = supabaseUrl(env);
   const key = String(env.VITE_SUPABASE_PUBLISHABLE_KEY || "").trim();
@@ -58,6 +69,7 @@ export async function authenticatedUser(req, env = process.env) {
     authErrorStatus: null,
     userResolved: false,
     serviceRoleClientInitialized: false,
+    serviceRoleProjectMatches: serviceRoleProjectMatches(env),
   };
   if (!token) {
     console.info("[/api/ai-credentials] auth diagnostic", diagnostic);
