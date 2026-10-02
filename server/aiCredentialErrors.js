@@ -24,6 +24,16 @@ export function classifyCredentialFailure(error, fallbackStage = "insert_update"
   return { stage, code: `AI_CREDENTIAL_${stage.toUpperCase()}`, message: SAFE_MESSAGES[stage], status: error?.status >= 400 && error.status <= 599 ? error.status : 503 };
 }
 
+export function credentialDiagnosticCategory(error) {
+  const message = String(error?.message || "").toLowerCase();
+  if (/invalid api key|api key.*invalid/.test(message)) return "invalid_api_key";
+  if (/invalid jwt|jwt.*invalid|bad_jwt/.test(message)) return "invalid_jwt";
+  if (/relation .* does not exist|could not find the table|schema cache/.test(message)) return "missing_table";
+  if (/row-level security|permission denied|not allowed/.test(message)) return "permission_denied";
+  if (/fetch failed|network|socket|connection|timeout|econn/.test(message) || error?.name === "TypeError") return "connection_failed";
+  return "unknown";
+}
+
 export function sendCredentialFailure(res, error, fallbackStage) {
   const failure = classifyCredentialFailure(error, fallbackStage);
   res.statusCode = failure.status;

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyCredentialFailure } from "./aiCredentialErrors.js";
+import { classifyCredentialFailure, credentialDiagnosticCategory } from "./aiCredentialErrors.js";
 
 test("credential API failures are classified without returning raw upstream messages", () => {
   const cases = [
@@ -25,4 +25,10 @@ test("credential write errors have a stable insert/update phase", () => {
   assert.equal(result.stage, "insert_update");
   assert.equal(result.message.includes("private upstream"), false);
   assert.equal(result.message.includes("secret"), false);
+});
+
+test("credential diagnostics classify database failures without exposing raw messages", () => {
+  assert.equal(credentialDiagnosticCategory({ message: "Invalid API key" }), "invalid_api_key");
+  assert.equal(credentialDiagnosticCategory({ message: "Could not find the table in the schema cache" }), "missing_table");
+  assert.equal(credentialDiagnosticCategory(new TypeError("fetch failed")), "connection_failed");
 });

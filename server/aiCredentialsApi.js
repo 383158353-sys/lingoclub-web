@@ -1,5 +1,5 @@
 import { authenticatedUser, encryptCredentialSecret, isSafeProviderUrl, serviceRoleProjectMatches } from "./aiCredentials.js";
-import { classifyCredentialFailure } from "./aiCredentialErrors.js";
+import { classifyCredentialFailure, credentialDiagnosticCategory } from "./aiCredentialErrors.js";
 
 function send(res, status, body) {
   res.statusCode = status;
@@ -14,6 +14,7 @@ function logDatabaseDiagnostic(error, env) {
   console.info("[/api/ai-credentials] database diagnostic", {
     errorCode: error?.code ? String(error.code) : null,
     errorStatus: Number.isInteger(error?.status) ? error.status : null,
+    errorCategory: credentialDiagnosticCategory(error),
     serviceRoleProjectMatches: serviceRoleProjectMatches(env),
   });
 }
