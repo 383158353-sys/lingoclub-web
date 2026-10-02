@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { vocabRepository } from "@/lib/vocabRepository";
 import { useToast } from "@/components/ui/use-toast";
@@ -23,6 +23,32 @@ const todayISO = () => localDateKey();
 const createSessionId = () => {
   try { return crypto.randomUUID(); } catch { return `00000000-0000-4000-8000-${Date.now().toString(16).slice(-12).padStart(12, "0")}`; }
 };
+
+function useProgressiveRenderLimit(total, resetKey, batchSize = 60) {
+  const [limit, setLimit] = useState(() => Math.min(batchSize, total));
+  const sentinelRef = useRef(null);
+
+  useEffect(() => {
+    setLimit(Math.min(batchSize, total));
+  }, [batchSize, resetKey, total]);
+
+  useEffect(() => {
+    if (limit >= total) return undefined;
+    if (typeof IntersectionObserver === "undefined") {
+      setLimit(total);
+      return undefined;
+    }
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return undefined;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting) setLimit((current) => Math.min(current + batchSize, total));
+    }, { rootMargin: "600px" });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [batchSize, limit, total]);
+
+  return [limit, sentinelRef];
+}
 
 // 三阶段复习:①英译中 ②中译英 ③听音选词；选错的本卡追加到本阶段队尾再练一次。
 export default function Collection() {
@@ -74,6 +100,8 @@ export default function Collection() {
 
   useEffect(() => {
     reload();
+    window.addEventListener("lingoclub:cloud-state-hydrated", reload);
+    return () => window.removeEventListener("lingoclub:cloud-state-hydrated", reload);
   }, [reload]);
 
   useEffect(() => {
@@ -132,6 +160,9 @@ export default function Collection() {
   const mistakeTiers = useMemo(() => classifyMistakeTiers(vocab, reviewLogs), [vocab, reviewLogs]);
   const errorWords = useMemo(() => [...mistakeTiers.focus, ...mistakeTiers.weak, ...mistakeTiers.occasional], [mistakeTiers]);
   const visibleMistakes = mistakeFilter === "all" ? errorWords : mistakeTiers[mistakeFilter] || [];
+  const [visibleWordCount, wordsSentinelRef] = useProgressiveRenderLimit(sectionWords.length, sectionWords.length);
+  const [visibleSentenceCount, sentencesSentinelRef] = useProgressiveRenderLimit(sectionSentences.length, sectionSentences.length);
+  const [visibleMistakeCount, mistakesSentinelRef] = useProgressiveRenderLimit(visibleMistakes.length, `${mistakeFilter}:${visibleMistakes.length}`);
   const resumable = isResumable(savedSession, vocab.map((c) => c.id));
   const todaysCompletedIds = savedSession?.dailyQueue?.date === todayISO()
     ? (savedSession.dailyQueue.completedIds || savedSession.completedIds || [])
@@ -408,8 +439,9 @@ export default function Collection() {
               {[["all", "\u5168\u90e8", errorWords.length], ["occasional", "\u5076\u5c14\u5931\u8bef", mistakeTiers.occasional.length], ["weak", "\u8584\u5f31", mistakeTiers.weak.length], ["focus", "\u91cd\u70b9\u653b\u514b", mistakeTiers.focus.length]].map(([key, label, count]) => <button type="button" key={key} onClick={() => setMistakeFilter(key)} className={`rounded-full px-3 py-1.5 text-xs ${mistakeFilter === key ? "bg-copper/20 text-copper" : "border border-border text-muted-foreground"}`}>{label} {count}</button>)}
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-              {visibleMistakes.map((c) => <VocabCard key={c.id} c={c} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+              {visibleMistakes.slice(0, visibleMistakeCount).map((c) => <VocabCard key={c.id} c={c} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
             </div>
+            {visibleMistakeCount < visibleMistakes.length && <div ref={mistakesSentinelRef} className="h-px" aria-hidden="true" />}
           </div>
         )
       ) : vocab.length === 0 ? (
@@ -420,16 +452,18 @@ export default function Collection() {
             <section>
               <h2 className="font-display text-base text-foreground md:text-lg">单词 · 短语 <span className="text-xs font-body text-muted-foreground md:text-sm">· {sectionWords.length}</span></h2>
               <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-                {sectionWords.map((c) => <VocabCard key={c.id} c={c} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+                {sectionWords.slice(0, visibleWordCount).map((c) => <VocabCard key={c.id} c={c} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
               </div>
+              {visibleWordCount < sectionWords.length && <div ref={wordsSentinelRef} className="h-px" aria-hidden="true" />}
             </section>
           )}
           {sectionSentences.length > 0 && (
             <section>
               <h2 className="font-display text-base text-foreground md:text-lg">句子 <span className="text-xs font-body text-muted-foreground md:text-sm">· {sectionSentences.length}</span></h2>
               <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-                {sectionSentences.map((c) => <VocabCard key={c.id} c={c} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+                {sectionSentences.slice(0, visibleSentenceCount).map((c) => <VocabCard key={c.id} c={c} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
               </div>
+              {visibleSentenceCount < sectionSentences.length && <div ref={sentencesSentinelRef} className="h-px" aria-hidden="true" />}
             </section>
           )}
           {sectionWords.length === 0 && sectionSentences.length === 0 && <Empty />}

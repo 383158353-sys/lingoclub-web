@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { collectLegacyLocalState, guestMigrationKey, hydrateUserState, stateHasData, syncUserState } from "./cloudState";
+import { cloudStateCompaction, collectLegacyLocalState, guestMigrationKey, hydrateUserState, stateHasData, syncUserState } from "./cloudState";
 import { supabase, supabaseConfigured } from "./supabaseClient";
 import { setActiveStorageUser } from "./userStorage";
 
@@ -60,18 +60,29 @@ export function AuthProvider({ children }) {
         accessTokenPresent: Boolean(readySession.access_token),
       };
       setActiveStorageUser(nextUser.id);
+      setUser(nextUser);
+      setAuthError(null);
+      try {
+        const lastSyncedAt = localStorage.getItem(`lingoclub:last-synced:${nextUser.id}`);
+        if (lastSyncedAt) setCloudSyncStatus((current) => ({ ...current, lastSyncedAt }));
+      } catch { /* storage is optional */ }
+      // Authentication is enough to render. Account hydration continues in
+      // the background and never holds the page behind the auth spinner.
+      setIsLoadingAuth(false);
       let initialization = initializingRef.current.get(nextUser.id);
       if (!initialization) {
         initialization = (async () => {
-          // This first phase is read-only and must finish before user state is
-          // exposed, so local change listeners cannot save an empty origin.
-          await hydrateUserState(nextUser.id);
-          if (shouldMigrateGuest && stateHasData(legacyState)) {
-            await syncUserState(nextUser.id, { legacyState });
-          } else {
-            // Upload existing account-scoped localhost data, but an empty
-            // production browser cannot create an empty user_state row.
-            await syncUserState(nextUser.id);
+          const hydrated = await hydrateUserState(nextUser.id);
+          window.dispatchEvent(new CustomEvent("lingoclub:cloud-state-hydrated", { detail: { userId: nextUser.id } }));
+          const compaction = cloudStateCompaction(hydrated.remote);
+          window.__LINGOCLUB_SYNC_DIAGNOSTIC__ = {
+            ...(window.__LINGOCLUB_SYNC_DIAGNOSTIC__ || {}),
+            compaction,
+          };
+          if ((shouldMigrateGuest && stateHasData(legacyState)) || compaction.needed) {
+            // Reuse the row already fetched by hydration. The old startup path
+            // performed a second GET before every initial PATCH.
+            await syncUserState(nextUser.id, { legacyState, remoteRow: hydrated.row });
           }
           const syncAt = new Date().toISOString();
           localStorage.setItem(`lingoclub:last-synced:${nextUser.id}`, syncAt);
@@ -79,20 +90,21 @@ export function AuthProvider({ children }) {
           if (shouldMigrateGuest) localStorage.setItem(migrationKey, new Date().toISOString());
         })();
         initializingRef.current.set(nextUser.id, initialization);
+        initialization.catch((error) => {
+          initializingRef.current.delete(nextUser.id);
+          console.error("[LingoClub user_state sync]", error);
+          setAuthError({ type: "sync_unavailable", message: error?.message || "云端同步暂时不可用" });
+          setCloudSyncStatus((current) => ({ ...current, status: navigator.onLine ? "error" : "offline", lastError: "学习数据暂时未同步" }));
+        });
       }
-      await initialization;
-      setAuthError(null);
     } catch (error) {
       initializingRef.current.delete(nextUser.id);
       console.error("[LingoClub user_state sync]", error);
       setAuthError({ type: "sync_unavailable", message: error?.message || "云端同步暂时不可用" });
       setCloudSyncStatus((current) => ({ ...current, status: navigator.onLine ? "error" : "offline", lastError: "学习数据暂时未同步" }));
+      setUser(nextUser);
+      setIsLoadingAuth(false);
     }
-    setUser(nextUser);
-    if (nextUser.id) {
-      try { const lastSyncedAt = localStorage.getItem(`lingoclub:last-synced:${nextUser.id}`); if (lastSyncedAt) setCloudSyncStatus((current) => ({ ...current, lastSyncedAt })); } catch { /* storage is optional */ }
-    }
-    setIsLoadingAuth(false);
     return nextUser;
   }, []);
 
@@ -126,6 +138,7 @@ export function AuthProvider({ children }) {
         syncingRef.current = true;
         setCloudSyncStatus((current) => ({ ...current, status: navigator.onLine ? "syncing" : "offline", lastError: null }));
         try {
+          await initializingRef.current.get(user.id);
           await syncUserState(user.id);
           const lastSyncedAt = new Date().toISOString();
           localStorage.setItem(`lingoclub:last-synced:${user.id}`, lastSyncedAt);

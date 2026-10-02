@@ -68,7 +68,7 @@ export default function LocalPosterPicker({ title, type = "movie", onSelect, sel
         <div className="mt-3 flex min-w-0 max-w-full gap-2 overflow-x-auto pb-1">
           {candidates.map((candidate) => (
             <button type="button" key={candidate.id} disabled={cacheBusy} onClick={() => chooseCandidate(candidate)} className={`w-20 shrink-0 overflow-hidden rounded-lg border text-left disabled:opacity-60 ${selectedUrl === candidate.imageUrl ? "border-copper" : "border-border"}`} title={`使用：${candidate.title}`}>
-              <img src={candidate.imageUrl} alt={candidate.title} className="aspect-[2/3] w-full object-cover" />
+              <img src={candidate.imageUrl} alt={candidate.title} loading="lazy" decoding="async" className="aspect-[2/3] w-full object-cover" />
               <span className="block truncate px-1 pt-1 text-[10px] text-foreground">{candidate.title}</span>
               <span className="block truncate px-1 pb-1 text-[9px] text-muted-foreground">{[candidate.originalTitle, candidate.year, candidate.source === "series" ? "剧集主封面" : candidate.source === "season" ? "季度封面" : "", candidate.provider === "tvmaze" ? "TVmaze" : candidate.provider === "tmdb" ? "TMDB" : candidate.provider === "douban" ? "豆瓣" : ""].filter(Boolean).join(" · ")}</span>
             </button>
@@ -76,7 +76,7 @@ export default function LocalPosterPicker({ title, type = "movie", onSelect, sel
         </div>
       )}
       <div className="mt-2 flex items-center gap-3">
-        {selectedUrl && <img src={selectedUrl} alt="已选封面" className="h-16 w-11 rounded object-cover" />}
+        {selectedUrl && <img src={selectedUrl} alt="已选封面" loading="lazy" decoding="async" className="h-16 w-11 rounded object-cover" />}
         <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">
           <Upload size={12} /> 上传自己的封面
           <input type="file" accept="image/*" className="sr-only" onChange={(event) => { selectFile(event.target.files?.[0]); event.target.value = ""; }} />

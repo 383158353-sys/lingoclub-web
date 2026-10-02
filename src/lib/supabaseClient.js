@@ -11,6 +11,7 @@ async function diagnosticFetch(input, init = {}) {
   if (!url.includes("/rest/v1/user_state")) return nativeFetch(input, init);
 
   const method = String(init.method || request?.method || "GET").toUpperCase();
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
   const headers = new Headers(init.headers || request?.headers);
   const rawBody = init.body ?? (request ? await request.clone().text() : "");
   let payloadUserId = null;
@@ -20,6 +21,9 @@ async function diagnosticFetch(input, init = {}) {
   } catch { /* request may not have a JSON body */ }
 
   const response = await nativeFetch(input, init);
+  const durationMs = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt);
+  const requestBytes = typeof rawBody === "string" && rawBody ? new TextEncoder().encode(rawBody).byteLength : 0;
+  const responseBytes = Number(response.headers.get("content-length")) || null;
   let responseBody = "";
   if (import.meta.env.DEV) { try { responseBody = await response.clone().text(); } catch { /* noop */ } }
   if (typeof window !== "undefined") {
@@ -28,6 +32,9 @@ async function diagnosticFetch(input, init = {}) {
       httpStatus: response.status,
       stage: "user_state",
       payloadCount: Array.isArray(rawBody) ? rawBody.length : rawBody ? 1 : 0,
+      durationMs,
+      requestBytes,
+      responseBytes,
       recordedAt: new Date().toISOString(),
     };
     if (import.meta.env.DEV) Object.assign(diagnostic, {
@@ -40,6 +47,10 @@ async function diagnosticFetch(input, init = {}) {
       ...(window.__LINGOCLUB_SYNC_DIAGNOSTIC__ || {}),
       ...diagnostic,
     };
+    const requests = window.__LINGOCLUB_USER_STATE_REQUESTS__ || [];
+    requests.push(diagnostic);
+    window.__LINGOCLUB_USER_STATE_REQUESTS__ = requests.slice(-20);
+    console.info("[LingoClub user_state request]", diagnostic);
   }
   return response;
 }

@@ -524,7 +524,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
                     <input type="number" min="1" max="999" defaultValue={episodeNumber} aria-label={`${episodeCode} 集数`} onClick={(event) => event.stopPropagation()} onBlur={(event) => { const next = Number(event.currentTarget.value); if (Number.isInteger(next) && next > 0 && next !== episodeNumber) onUpdateEpisodeNumber?.(episode.id, next); }} className="w-16 rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-xs text-foreground" />
                     <button type="button" onClick={() => openMetaFromView(episode, true)} className="min-w-0 flex-1 text-left">
                       <span className="block truncate text-sm font-medium text-foreground">{episode.title || episode.episode_title || episodeCode}</span>
-                      <span className="mt-0.5 block text-[11px] text-muted-foreground">{episode.subtitles?.length ? `${episode.subtitles.length} 条字幕` : "暂无字幕"}{episode.last_studied_at ? " · 已学习" : ""}</span>
+                      <span className="mt-0.5 block text-[11px] text-muted-foreground">{(episode.subtitle_count || episode.subtitles?.length) ? `${episode.subtitle_count || episode.subtitles.length} 条字幕` : "暂无字幕"}{episode.last_studied_at ? " · 已学习" : ""}</span>
                     </button>
                     {!manageMode && <button type="button" onClick={() => handleDeleteMovie(episode)} aria-label={`删除${episode.episode_title || episode.name}`} title="从影片库移除此集" className="rounded-full p-2 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-300"><Trash2 size={14} /></button>}
                   </div>
@@ -550,7 +550,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
                 {movieMetas.map((movie) => (
                   <div key={movie.id} draggable={manageMode} onDragStart={(event) => manageMode && setLocalDragPayload(event, "movie", movie.id)} onDragOver={(event) => manageMode && event.preventDefault()} onDrop={(event) => reorderLocalTarget(event, "movie", movie.id)} className={manageMode ? "cursor-grab" : ""}>
                     <LocalMovieCard meta={movie} manageMode={manageMode} selected={selectedIds.has(movie.id)} onToggleSelect={toggleSelect} onOpen={(meta) => openMetaFromView(meta, true)} onDelete={() => handleDeleteMovie(movie)} landscape={false} />
-                    <p className="mt-1 text-center text-[10px] text-muted-foreground">{movie.last_studied_at ? "已学习" : "未学习"}{movie.subtitles?.length ? ` · ${movie.subtitles.length} 条字幕` : ""}</p>
+                    <p className="mt-1 text-center text-[10px] text-muted-foreground">{movie.last_studied_at ? "已学习" : "未学习"}{(movie.subtitle_count || movie.subtitles?.length) ? ` · ${movie.subtitle_count || movie.subtitles.length} 条字幕` : ""}</p>
                   </div>
                 ))}
               </div>

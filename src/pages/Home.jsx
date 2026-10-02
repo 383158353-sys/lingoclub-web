@@ -23,17 +23,27 @@ export default function Home() {
   const [active, setActive] = useState(0);
 
   useEffect(() => {
-    localMovies.list().
-    then((items) => setMovies((items || []).slice(0, 12).map((movie) => ({
-      ...movie,
-      title: movie.name,
-      title_en: movie.original_title || movie.name,
-      backdrop_url: movie.poster_url,
-      tagline: "继续本地影片学习",
-      creator_name: "我的影片",
-    })))).
-    catch(() => setMovies([])).
-    finally(() => setLoading(false));
+    let active = true;
+    const loadMovies = () => localMovies.listMetadata().
+      then((items) => {
+        if (!active) return;
+        setMovies((items || []).slice(0, 12).map((movie) => ({
+          ...movie,
+          title: movie.name,
+          title_en: movie.original_title || movie.name,
+          backdrop_url: movie.poster_url,
+          tagline: "继续本地影片学习",
+          creator_name: "我的影片",
+        })));
+      }).
+      catch(() => { if (active) setMovies([]); }).
+      finally(() => { if (active) setLoading(false); });
+    void loadMovies();
+    window.addEventListener("lingoclub:cloud-state-hydrated", loadMovies);
+    return () => {
+      active = false;
+      window.removeEventListener("lingoclub:cloud-state-hydrated", loadMovies);
+    };
   }, []);
 
   const hero = movies[active];
@@ -62,6 +72,8 @@ export default function Home() {
             src={hero.backdrop_url || hero.poster_url}
             alt={hero.title}
             fittingType="fill"
+            loading="eager"
+            fetchPriority="high"
             focalPointY={0.4}
             className="h-full w-full animate-ken-burns object-cover" /> :
 
@@ -146,7 +158,7 @@ export default function Home() {
                       }
                       title={m.title}>
                       
-                        <img src={t} alt={m.title} className="h-full w-full object-cover" />
+                        <img src={t} alt={m.title} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                         <div className="absolute inset-0 bg-gradient-to-t from-background/90 to-transparent" />
                         <div className="absolute inset-x-0 bottom-0 px-2 pb-1.5">
                           <p className="truncate text-[11px] font-medium text-foreground/90">{m.title}</p>

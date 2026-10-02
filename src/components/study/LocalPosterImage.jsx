@@ -129,7 +129,7 @@ export default function LocalPosterImage({ item, kind = "movie", alt = "", class
 
   return (
     <>
-      {resolved.ready && src && <img src={src} alt={alt} className={className} onError={() => setFailed((value) => Math.min(value + 1, 2))} />}
+      {resolved.ready && src && <img src={src} alt={alt} loading="lazy" decoding="async" className={className} onError={() => setFailed((value) => Math.min(value + 1, 2))} />}
       {resolved.ready && !src && (resolved.needsPermission
         ? <button type="button" onClick={authorize} className="absolute inset-x-1 bottom-1 z-10 rounded bg-black/70 px-1.5 py-1 text-[10px] text-white">重新授权封面</button>
         : placeholder)}

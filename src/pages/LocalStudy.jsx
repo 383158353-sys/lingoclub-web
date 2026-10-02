@@ -149,7 +149,7 @@ export default function LocalStudy() {
   const refreshLibrary = useCallback(async () => {
     setLoadingLib(true);
     try {
-      const list = await localMovies.list();
+      const list = await localMovies.listMetadata();
       setMetas(list || []);
     } catch {
       setMetas([]);
@@ -168,6 +168,12 @@ export default function LocalStudy() {
   useEffect(() => {
     void refreshLibrary();
     void refreshFolders();
+    const refreshHydratedLibrary = () => {
+      void refreshLibrary();
+      void refreshFolders();
+    };
+    window.addEventListener("lingoclub:cloud-state-hydrated", refreshHydratedLibrary);
+    return () => window.removeEventListener("lingoclub:cloud-state-hydrated", refreshHydratedLibrary);
   }, [refreshLibrary, refreshFolders]);
 
   const isBilibili = /bilibili\.com\/video\/(BV|av)|player\.bilibili\.com\/player/i.test(materials?.videoUrl || "");

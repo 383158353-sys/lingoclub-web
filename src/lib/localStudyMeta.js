@@ -98,6 +98,7 @@ async function normalizeRecord(record, kind) {
   if (subtitleField) {
     assets.subtitleData = subtitleField;
     item.subtitle_id = key;
+    item.subtitle_count = subtitleField.length;
     delete item.subtitles;
     changed = true;
   }
@@ -177,6 +178,10 @@ async function hydrateRecord(record, kind) {
 
 function collection(key, prefix, kind) {
   return {
+    async listMetadata() {
+      await ensureMigrated(key, kind);
+      return read(key).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    },
     async list() {
       await ensureMigrated(key, kind);
       const items = await Promise.all(read(key).map((item) => hydrateRecord(item, kind)));

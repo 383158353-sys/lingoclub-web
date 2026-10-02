@@ -8,13 +8,13 @@ import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import ScrollToTop from './components/ScrollToTop';
 import SiteLayout from './components/layout/SiteLayout';
 import Home from './pages/Home';
-import Collection from './pages/Collection';
 import Login from '@/pages/Login';
-import LocalStudy from './pages/LocalStudy';
-import ExtensionGuide from './pages/ExtensionGuide';
 
 // Keep legacy Base44 pages available without loading their SDK on core local routes.
 const PageNotFound = lazy(() => import('./lib/PageNotFound'));
+const Collection = lazy(() => import('./pages/Collection'));
+const LocalStudy = lazy(() => import('./pages/LocalStudy'));
+const ExtensionGuide = lazy(() => import('./pages/ExtensionGuide'));
 const Communities = lazy(() => import('./pages/Communities'));
 const MovieCommunity = lazy(() => import('./pages/MovieCommunity'));
 const EpisodePage = lazy(() => import('./pages/EpisodePage'));

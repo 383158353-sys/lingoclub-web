@@ -89,7 +89,7 @@ export default function FolderBar({
           className={`${chip(activeFolder === f.id)} ${dropTarget === f.id ? "ring-2 ring-copper scale-105" : ""} cursor-pointer`}
         >
           {f.cover_url ? (
-            <img src={f.cover_url} alt="" className="h-4 w-4 rounded-full object-cover" />
+            <img src={f.cover_url} alt="" loading="lazy" decoding="async" className="h-4 w-4 rounded-full object-cover" />
           ) : (
             <Folder size={12} />
           )}

@@ -5,6 +5,10 @@ const HEAVY_LOCAL_FIELDS = [
   "subtitle_file", "subtitleFile", "subtitle_handle", "subtitleHandle", "directory_handle", "directoryHandle", "subtitleDirectoryHandle",
   "video_handle", "videoHandle",
 ];
+const REBUILDABLE_AI_FIELDS = [
+  "ai_processing", "ai_analysis", "ai_analysis_version", "analysis_status",
+  "ai_cache", "analysis_cache", "parsed_analysis", "generated_analysis",
+];
 
 function isBlob(value) {
   return (typeof Blob !== "undefined" && value instanceof Blob)
@@ -17,7 +21,7 @@ function isLocalMovie(movie) {
   return !url || url.startsWith("blob:") || movie?.media_type === "episode";
 }
 
-export function safeMovie(movie) {
+export function safeMovie(movie, { stripAiCache = false } = {}) {
   const result = { ...movie };
   for (const key of HEAVY_LOCAL_FIELDS) delete result[key];
   for (const [key, value] of Object.entries(result)) {
@@ -26,6 +30,14 @@ export function safeMovie(movie) {
   if (typeof result.video_url === "string" && result.video_url.startsWith("blob:")) result.video_url = "";
   if (isLocalMovie(result)) {
     if (typeof result.poster_url === "string" && /^(?:blob:|data:image\/)/i.test(result.poster_url)) result.poster_url = "";
+  }
+  if (stripAiCache && Array.isArray(result.subtitles)) {
+    result.subtitles = result.subtitles.map((cue) => {
+      if (!cue || typeof cue !== "object") return cue;
+      const safeCue = { ...cue };
+      for (const key of REBUILDABLE_AI_FIELDS) delete safeCue[key];
+      return safeCue;
+    });
   }
   return result;
 }
@@ -43,7 +55,7 @@ export function safeFolder(folder) {
 }
 
 export function lightweightCloudState(state = {}) {
-  const movies = Array.isArray(state.movies) ? state.movies.map(safeMovie) : [];
+  const movies = Array.isArray(state.movies) ? state.movies.map((movie) => safeMovie(movie, { stripAiCache: true })) : [];
   for (const movie of movies) {
     // Device-local file status is retained in local metadata, but never sent to
     // another device as account state.

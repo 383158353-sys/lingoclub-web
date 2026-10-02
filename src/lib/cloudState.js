@@ -4,8 +4,13 @@ import { lightweightCloudState, safeFolder, safeMovie } from "./localCloudPayloa
 import { clearSession, loadSession, saveSession } from "./reviewSession";
 import { mergeRecords, mergeTombstones } from "./cloudDeletion";
 import { supabase } from "./supabaseClient";
+import { createRequestDeduper } from "./requestDeduper";
+import { getActiveStorageUser, withoutLocalStateNotifications } from "./userStorage";
 
 export const GUEST_MIGRATION_KEY = "lingoclub_guest_migrated_user_v2";
+const dedupeRead = createRequestDeduper();
+const dedupeHydration = createRequestDeduper();
+const dedupeSync = createRequestDeduper();
 
 function recordDiagnostic(fields) {
   if (typeof window === "undefined") return;
@@ -23,6 +28,10 @@ export function guestMigrationKey(userId) {
 
 function clone(value) {
   try { return JSON.parse(JSON.stringify(value)); } catch { return null; }
+}
+
+function serializedBytes(value) {
+  try { return new TextEncoder().encode(JSON.stringify(value)).byteLength; } catch { return null; }
 }
 
 function localSettings() {
@@ -96,6 +105,17 @@ export function stateHasData(state = {}) {
     || counts.deleted > 0 || Object.keys(state.settings || {}).length > 0;
 }
 
+export function cloudStateCompaction(state) {
+  if (!state || typeof state !== "object") return { needed: false, beforeBytes: 0, afterBytes: 0 };
+  const beforeBytes = serializedBytes(state) || 0;
+  const afterBytes = serializedBytes(lightweightCloudState(state)) || 0;
+  return {
+    needed: beforeBytes - afterBytes >= 16_384,
+    beforeBytes,
+    afterBytes,
+  };
+}
+
 export function mergeState(local = {}, remote = {}) {
   const deletedItems = mergeTombstones(local.deletedItems, remote.deletedItems);
   const localSession = local.reviewSession;
@@ -124,19 +144,22 @@ export function mergeState(local = {}, remote = {}) {
 }
 
 export async function restoreLocalState(state) {
-  replaceLocalDeletionTombstones(state?.deletedItems || []);
-  guestVocab.replace(state?.vocab || []);
-  await localMovies.replace((state?.movies || []).map((movie) => safeMovie(movie, { dropLocalSubtitles: false })));
-  await localFolders.replace((state?.folders || []).map(safeFolder));
-  if (state?.reviewSession) saveSession(state.reviewSession);
-  else clearSession();
-  for (const [key, value] of Object.entries(state?.settings || {})) {
-    try { localStorage.setItem(key, String(value)); } catch { /* noop */ }
-  }
+  await withoutLocalStateNotifications(async () => {
+    replaceLocalDeletionTombstones(state?.deletedItems || []);
+    guestVocab.replace(state?.vocab || []);
+    await localMovies.replace((state?.movies || []).map((movie) => safeMovie(movie, { dropLocalSubtitles: false })));
+    await localFolders.replace((state?.folders || []).map(safeFolder));
+    if (state?.reviewSession) saveSession(state.reviewSession);
+    else clearSession();
+    for (const [key, value] of Object.entries(state?.settings || {})) {
+      try { localStorage.setItem(key, String(value)); } catch { /* noop */ }
+    }
+  });
 }
 
-export async function readUserState(userId) {
+async function performReadUserState(userId) {
   if (!supabase || !userId) throw new Error("Supabase 未配置或用户身份缺失");
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
   recordDiagnostic({ readStartedAt: new Date().toISOString(), lastSyncStage: "read-user-state" });
   let response;
   try {
@@ -152,24 +175,40 @@ export async function readUserState(userId) {
     readStatus: status,
     readError: error ? { code: error.code, message: error.message, details: error.details, hint: error.hint } : null,
     userStateExists: Boolean(data),
+    readDurationMs: Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt),
+    readPayloadBytes: serializedBytes(data?.data || null),
   });
   if (error) throw error;
+  if (typeof console !== "undefined") console.info("[LingoClub user_state performance]", {
+    operation: "read",
+    durationMs: Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt),
+    payloadBytes: serializedBytes(data?.data || null),
+    found: Boolean(data),
+  });
   return data || null;
+}
+
+export function readUserState(userId) {
+  const resolvedUserId = userId || getActiveStorageUser();
+  return dedupeRead(String(resolvedUserId || "missing-user"), () => performReadUserState(resolvedUserId));
 }
 
 // Hydration is deliberately read-only. Local writes are enabled by
 // AuthContext only after this promise resolves.
-export async function hydrateUserState(userId) {
-  const row = await readUserState(userId);
-  const local = await collectLocalState();
-  const hydrated = mergeState(local, row?.data || {});
-  await restoreLocalState(hydrated);
-  return { exists: Boolean(row), data: hydrated, remote: row?.data || null };
+export function hydrateUserState(userId) {
+  const resolvedUserId = userId || getActiveStorageUser();
+  return dedupeHydration(String(resolvedUserId || "missing-user"), async () => {
+    const row = await readUserState(resolvedUserId);
+    const local = await collectLocalState();
+    const hydrated = mergeState(local, row?.data || {});
+    await restoreLocalState(hydrated);
+    return { exists: Boolean(row), data: hydrated, remote: row?.data || null, row };
+  });
 }
 
-export async function syncUserState(userId, { legacyState = null } = {}) {
+async function performSyncUserState(userId, { legacyState = null, remoteRow } = {}) {
   if (!supabase || !userId) throw new Error("Supabase 未配置或用户身份缺失");
-  const row = await readUserState(userId);
+  const row = remoteRow === undefined ? await readUserState(userId) : remoteRow;
   recordDiagnostic({ lastSyncStage: "collect-local-state", collectStartedAt: new Date().toISOString() });
   const local = await collectLocalState();
   recordDiagnostic({ lastSyncStage: "merge-user-state", localCounts: stateCounts(local) });
@@ -215,4 +254,9 @@ export async function syncUserState(userId, { legacyState = null } = {}) {
   if (!saved?.data) throw new Error("user_state 保存后未返回数据");
   await restoreLocalState(merged);
   return { data: saved.data, written: true };
+}
+
+export function syncUserState(userId, options = {}) {
+  const resolvedUserId = userId || getActiveStorageUser();
+  return dedupeSync(String(resolvedUserId || "missing-user"), () => performSyncUserState(resolvedUserId, options));
 }

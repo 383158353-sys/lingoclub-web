@@ -193,8 +193,13 @@ const Image = React.forwardRef(
     }, [src])
 
     const imageProps = {
+      loading: "lazy",
+      decoding: "async",
       ...props,
-      onError: () => setImgSrc(FALLBACK_IMAGE_URL),
+      onError: (event) => {
+        props.onError?.(event)
+        setImgSrc(FALLBACK_IMAGE_URL)
+      },
     }
 
     // For non-Wix URLs (e.g. TMDB image.tmdb.org) the Image renders a plain

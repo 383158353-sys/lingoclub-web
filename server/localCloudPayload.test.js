@@ -12,7 +12,7 @@ test("cloud local-library payload keeps subtitles and metadata while excluding v
       season_number: 1,
       episode_number: 1,
       poster_id: "episode-1",
-      subtitles: [{ text_en: "large subtitle text", cue: { start: 0 } }],
+      subtitles: [{ text_en: "large subtitle text", cue: { start: 0 }, ai_processing: { translation: "cache" }, ai_analysis: { grammar: [] }, ai_analysis_version: 1, analysis_status: "done" }],
       subtitle_text: "full SRT payload",
       video_blob: new Blob(["video"]),
       video_url: "blob:local-video",

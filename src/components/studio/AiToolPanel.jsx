@@ -81,7 +81,7 @@ export default function AiToolPanel({ movie, onSaved }) {
                 <div>
                   <p className="text-[10px] uppercase tracking-luxe text-muted-foreground">当前海报</p>
                   <div className="mt-1 aspect-[2/3] overflow-hidden rounded-lg border border-border bg-background-elev">
-                    <img src={movie.poster_url} alt="" className="h-full w-full object-cover" />
+                    <img src={movie.poster_url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                   </div>
                 </div>
               )}
@@ -89,7 +89,7 @@ export default function AiToolPanel({ movie, onSaved }) {
                 <div>
                   <p className="text-[10px] uppercase tracking-luxe text-muted-foreground">当前推荐图</p>
                   <div className="mt-1 aspect-video overflow-hidden rounded-lg border border-border bg-background-elev">
-                    <img src={movie.backdrop_url} alt="" className="h-full w-full object-cover" />
+                    <img src={movie.backdrop_url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                   </div>
                 </div>
               )}

@@ -18,5 +18,5 @@ export default function PosterThumb({ blob, className = "" }) {
       </div>
     );
   }
-  return <img src={url} alt="海报" className={`h-full w-full object-cover ${className}`} />;
+  return <img src={url} alt="海报" loading="lazy" decoding="async" className={`h-full w-full object-cover ${className}`} />;
 }
