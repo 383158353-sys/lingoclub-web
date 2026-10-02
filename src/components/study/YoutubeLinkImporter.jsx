@@ -52,6 +52,7 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
     setFetchingSubs(true);
     setSubtitles(null);
     setSubError("");
+    const transcriptStartedAt = performance.now();
 
     // metadata 与 transcript 独立请求，任一失败都不会取消另一项。
     const metaRequest = (async () => {
@@ -66,13 +67,23 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
 
     const transcriptRequest = (async () => {
       try {
-        const { lines, error, title: transcriptTitle } = await transcribeYouTubeClient(canonicalUrl);
+        const result = await transcribeYouTubeClient(canonicalUrl);
+        const { lines, error, title: transcriptTitle } = result;
         if (activeRequestRef.current !== videoId) return;
         if (transcriptTitle) { setTitle(transcriptTitle); setOriginalTitle(transcriptTitle); }
         if (lines?.length) setSubtitles(lines);
         else setSubError(error || "未找到可用字幕轨");
+        if (import.meta.env.DEV) console.info("[youtube-import]", {
+          source: result.cached ? "cache" : result.extractor?.startsWith("browser-proxy") ? "browser-link" : "server",
+          extraction: result.extractor || (result.cached ? "cache" : "unavailable"),
+          subtitleCount: lines?.length || 0,
+          videoId,
+          elapsedMs: Math.round(performance.now() - transcriptStartedAt),
+          diagnostics: result.diagnostics || [],
+        });
       } catch (e) {
         if (activeRequestRef.current === videoId) setSubError(e?.message || "字幕获取失败");
+        if (import.meta.env.DEV) console.info("[youtube-import]", { source: "browser-link", extraction: "failed", subtitleCount: 0, videoId, elapsedMs: Math.round(performance.now() - transcriptStartedAt), reason: e?.message || "failed" });
       } finally {
         if (activeRequestRef.current === videoId) setFetchingSubs(false);
       }

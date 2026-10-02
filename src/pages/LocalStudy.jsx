@@ -25,7 +25,7 @@ import YoutubeSubtitleHelper from "@/components/study/YoutubeSubtitleHelper";
 import { toSec } from "@/lib/timecode";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { extractYouTubeId } from "@/lib/youtubeTranscriptClient";
-import { cleanSubtitleText } from "@/lib/subtitleCleaner";
+import { cleanSubtitleText, mergeFragments } from "@/lib/subtitleCleaner";
 import { useAuth } from "@/lib/AuthContext";
 import { readMovieSubtitles, syncUserState } from "@/lib/cloudState";
 import { useGlobalVideoSpace } from "@/hooks/useGlobalVideoSpace";
@@ -812,6 +812,16 @@ export default function LocalStudy() {
     let cancelled = false;
     const decode = (encoded) => {
       if (!encoded) return [];
+      if (Array.isArray(encoded)) return encoded.map((line, index) => ({
+        id: `bookmarklet-${Date.now()}-${index}`,
+        text_en: cleanSubtitleText(line.text_en || line.text || ""),
+        text_zh: line.text_zh || "",
+        speaker: "",
+        time_start: line.time_start || secondsToTimecode(line.start),
+        time_end: line.time_end || secondsToTimecode(Number(line.start) + Number(line.duration || 0)) || line.time_start || secondsToTimecode(line.start),
+        timestamp: line.time_start || secondsToTimecode(line.start),
+        order: index + 1,
+      })).filter((line) => line.text_en);
       try {
         const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
         const parsed = JSON.parse(new TextDecoder("utf-8").decode(bytes));
@@ -829,27 +839,37 @@ export default function LocalStudy() {
     };
     (async () => {
       let encoded = searchParams.get("subs") || "";
-      if (!encoded && window.opener && window.opener !== window) {
+      const handoffId = searchParams.get("handoffId") || "";
+      let handoffReady = false;
+      if (!encoded && window.opener && window.opener !== window && handoffId) {
         const opener = window.opener;
         encoded = await new Promise((resolve) => {
           let settled = false;
           const handler = (event) => {
-            if (event.source !== opener || event.data?.src !== "lt-bm") return;
+            if (event.source !== opener || event.data?.src !== "lt-bm" || event.data?.handoffId !== handoffId) return;
             settled = true;
+            handoffReady = true;
             window.removeEventListener("message", handler);
-            resolve(event.data.subs || "");
+            clearInterval(readyTimer);
+            resolve(event.data.subtitles || []);
           };
           window.addEventListener("message", handler);
-          try { opener.postMessage("lt-ready", "*"); } catch { resolve(""); return; }
+          const signalReady = () => {
+            try { opener.postMessage({ src: "lt-ready", handoffId }, "*"); } catch { /* opener may be unavailable */ }
+          };
+          signalReady();
+          const readyTimer = setInterval(signalReady, 500);
           setTimeout(() => {
-            if (!settled) { window.removeEventListener("message", handler); resolve(""); }
-          }, 5000);
+            if (!settled) { window.removeEventListener("message", handler); clearInterval(readyTimer); resolve([]); }
+          }, 120000);
         });
       }
       if (cancelled) return;
       const url = searchParams.get("url") || "";
       const title = searchParams.get("title") || "YouTube 视频";
-      const saved = await onImported({ videoUrl: url, videoName: title, originalTitle: title, subtitles: decode(encoded), posterUrl: "" });
+      const importedSubtitles = mergeFragments(decode(encoded));
+      if (import.meta.env.DEV) console.info("[youtube-import]", { source: "bookmarklet", extraction: "page-handoff", videoId: searchParams.get("videoId") || "", subtitleCount: importedSubtitles.length, handoffWindowOpened: Boolean(handoffId), handoffReady, handoffTransferred: handoffReady && importedSubtitles.length > 0 });
+      const saved = await onImported({ videoUrl: url, videoName: title, originalTitle: title, subtitles: importedSubtitles, posterUrl: "" });
       if (saved) window.history.replaceState({}, "", "/local-study");
     })();
     return () => { cancelled = true; };

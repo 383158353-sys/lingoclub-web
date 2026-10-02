@@ -12,27 +12,39 @@ export function buildBookmarklet(appUrl) {
 var u=window.location.href;
 var t=document.title.replace(/\\s*-\\s*YouTube\\s*$/,'').replace(/_哔哩哔哩.*/,'').trim();
 var app=${JSON.stringify(appUrl)};
-var vid=(function(){try{var x=new URL(u);return x.searchParams.get('v')||(x.pathname.match(/\\/(?:shorts|live|embed)\\/([A-Za-z0-9_-]{11})/)||[])[1]||'';}catch(e){return '';}})();
-function fmt(s){s=Math.floor(s||0);var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;if(h>0)return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0');return String(m).padStart(2,'0')+':'+String(x).padStart(2,'0');}
+var ytUrl=null;try{ytUrl=new URL(u);}catch(e){}
+var host=ytUrl?ytUrl.hostname.toLowerCase():'';
+var isYoutube=host==='youtu.be'||host==='youtube.com'||host.endsWith('.youtube.com');
+var vid=(function(){try{return ytUrl.searchParams.get('v')||(ytUrl.pathname.match(/\\/(?:shorts|live|embed)\\/([A-Za-z0-9_-]{11})/)||[])[1]||(host==='youtu.be'?ytUrl.pathname.split('/')[1]:'')||'';}catch(e){return '';}})();
+if(!isYoutube||!vid){alert('请在 YouTube 视频页面点击此书签');return;}
+var startedAt=Date.now();
+var handoffId=String(Date.now())+'-'+Math.random().toString(36).slice(2);
+var target=window.open('about:blank','_blank');
+if(!target){alert('浏览器阻止了新窗口。请允许此页面打开弹出窗口后重试。');return;}
+var extractionReady=false;
+var readyHandler=function(event){if(!extractionReady||event.source!==target||event.data?.src!=='lt-ready'||event.data?.handoffId!==handoffId)return;try{target.postMessage({src:'lt-bm',handoffId:handoffId,subtitles:pendingSubs||[]},app);if(window.console&&console.info)console.info('[youtube-import]',{source:'bookmarklet',extraction:pendingExtractor,subtitleCount:pendingSubs.length,videoId:vid,elapsedMs:Date.now()-startedAt,handoffWindowOpened:true,handoffReady:true,handoffTransferred:true});}catch(e){}};
+var pendingSubs='';
+var pendingExtractor='';
+window.addEventListener('message',readyHandler);
+setTimeout(function(){window.removeEventListener('message',readyHandler);},120000);
+function fmt(s){s=Number(s)||0;var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=(s%60).toFixed(3).padStart(6,'0');if(h>0)return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+x;return String(m).padStart(2,'0')+':'+x;}
 function cleanLine(t){if(!t)return '';return String(t).replace(/<s\\b[^>]*>/gi,'s').replace(/<\\/s\\b[^>]*>/gi,'').replace(/<\\/?[a-z][^>]*>/gi,'').replace(/^\\s*(?:\\d+\\s*(?:分(?:鐘|钟)?|min(?:ute)?s?)\\s*(?:\\d+\\s*(?:秒(?:钟)?|sec(?:ond)?s?))?|\\d+\\s*(?:秒(?:钟)?|sec(?:ond)?s?))\\s*[-–—:♪♫♩♬\\s]*/i,'').replace(/\\s+/g,' ').trim();}
 function parseTime(str){if(!str)return 0;var p=String(str).trim().split(':').map(function(n){return parseInt(n,10)||0;});if(p.length===3)return p[0]*3600+p[1]*60+p[2];if(p.length===2)return p[0]*60+p[1];return 0;}
-function openStudy(subs){
-var p=new URLSearchParams({bookmarklet:'1',url:u,title:t,videoId:vid});
-if(subs&&subs.length<=4000){p.set('subs',subs);window.open(app+'/local-study?'+p.toString(),'_blank');return;}
-var w=window.open(app+'/local-study?'+p.toString(),'_blank');
-if(!subs||!w)return;
-var handler=function(event){if(event.source!==w)return;if(event.data==='lt-ready'){try{w.postMessage({src:'lt-bm',subs:subs},app);}catch(e){}window.removeEventListener('message',handler);}};
-window.addEventListener('message',handler);
-setTimeout(function(){window.removeEventListener('message',handler);},30000);
+function openStudy(subs,extractor){
+pendingSubs=subs||[];
+pendingExtractor=extractor||'none';
+extractionReady=true;
+var p=new URLSearchParams({bookmarklet:'1',url:u,title:t,videoId:vid,handoffId:handoffId});
+try{target.location.replace(app+'/local-study?'+p.toString());}catch(e){showNote('无法打开 LingoClub，请检查弹出窗口设置。');}
 }
 function encode(lines){
 if(!lines||!lines.length)return '';
 var normalized=lines.map(function(line,index){
 var start=Number(line.start);if(!Number.isFinite(start))start=parseTime(line.time_start||'');
 var duration=Number(line.duration);if(!Number.isFinite(duration)||duration<=0){var next=lines[index+1];var nextStart=next?Number(next.start):NaN;if(!Number.isFinite(nextStart)&&next)nextStart=parseTime(next.time_start||'');duration=Number.isFinite(nextStart)&&nextStart>start?nextStart-start:2;}
-return{start:start,duration:duration,text:cleanLine(line.text||line.text_en||'')};
-}).filter(function(line){return line.text;});
-return normalized.length?btoa(unescape(encodeURIComponent(JSON.stringify(normalized)))):'';
+return{text_en:cleanLine(line.text||line.text_en||''),time_start:fmt(start),time_end:fmt(start+duration)};
+}).filter(function(line){return line.text_en;});
+return normalized;
 }
 function extractFromPolymer(){
 try{
@@ -186,22 +198,22 @@ return (data.events||[]).filter(function(e){return e.segs;}).map(function(e){
 var tx=cleanLine((e.segs||[]).map(function(sg){return sg.utf8||'';}).join('').replace(/\\n/g,' ').trim());
 var st=e.tStartMs/1000;var du=(e.dDurationMs||0)/1000;
 return{start:st,duration:du,text:tx};
-}).filter(function(l){return l.text_en;});
+}).filter(function(l){return l.text;});
 }catch(e){return [];}
 }).catch(function(){return [];});
 }
-if(u.indexOf('youtube.com/watch')>-1||u.indexOf('youtu.be/')>-1){
+if(isYoutube){
 var polyLines=extractFromPolymer();
-if(polyLines){openStudy(encode(polyLines));return;}
+if(polyLines){openStudy(encode(polyLines),'polymer');return;}
 var domLines=extractFromDOM();
-if(domLines){openStudy(encode(domLines));return;}
+if(domLines){openStudy(encode(domLines),'dom');return;}
 var settled=false;
 var note=showNote('正在提取字幕，请稍候…');
 var apiP=fetchFromAPI();
 if(apiP){
 apiP.then(function(lines){
 if(settled)return;
-if(lines&&lines.length){settled=true;note.remove();openStudy(encode(lines));}
+if(lines&&lines.length){settled=true;note.remove();openStudy(encode(lines),'player-response');}
 });
 }
 openTranscriptPanel();
@@ -216,7 +228,7 @@ if(l2){
 settled=true;
 clearInterval(pollId);
 note.remove();
-openStudy(encode(l2));
+openStudy(encode(l2),'polymer/dom-poll');
 }else if(attempts>=maxAttempts){
 clearInterval(pollId);
 if(!settled){settled=true;handleNoSubs(note);}
