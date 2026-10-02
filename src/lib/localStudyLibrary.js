@@ -1,7 +1,16 @@
-// 原始视频仅以 FileSystemFileHandle 引用保存到 IndexedDB；字幕 cue 与 poster Blob 仍可缓存。
+// IndexedDB 保存本地学习资料与文件引用；新选的视频二进制只在当前页面内存中使用。
 
 const DB_NAME = "lingo_local_study";
 const STORE = "movies";
+const temporaryVideoFiles = new Map();
+
+export function setTemporaryLocalVideoFile(id, file) {
+  if (id && file) temporaryVideoFiles.set(id, file);
+}
+
+export function clearTemporaryLocalVideoFile(id) {
+  if (id) temporaryVideoFiles.delete(id);
+}
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -32,8 +41,40 @@ export async function saveLocalVideoHandle(id, videoHandle) {
       delete record.videoBlob;
       store.put(record);
     };
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => { clearTemporaryLocalVideoFile(id); resolve(); };
     tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** Store an ordinary browser File in the existing local-media record when a
+ * durable FileSystemHandle is unavailable. Quota failures are surfaced so the
+ * caller can still play the already-selected File temporarily. */
+export async function saveLocalVideoBlob(id, file) {
+  if (!id || !file || typeof file.slice !== "function") throw new Error("未提供有效的视频文件");
+  // Kept as a compatibility export for older callers; never persist video bytes.
+  setTemporaryLocalVideoFile(id, file);
+  return { persisted: false, source: "temporary-file" };
+}
+
+export async function clearLocalVideoSource(id) {
+  if (!id) return;
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const request = store.get(id);
+    request.onsuccess = () => {
+      const record = request.result;
+      if (!record) return;
+      delete record.videoBlob;
+      delete record.videoBlobSavedAt;
+      delete record.videoHandle;
+      delete record.videoHandleSavedAt;
+      if (Object.keys(record).some((key) => key !== "id")) store.put(record);
+      else store.delete(id);
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("无法清理旧本地视频引用"));
   });
 }
 
@@ -167,7 +208,14 @@ export async function getLocalVideoBlob(id) {
 }
 
 export async function getLocalVideoSource(id, { requestPermission = false } = {}) {
-  const asset = await getLocalMediaAssets(id);
+  const temporaryFile = temporaryVideoFiles.get(id);
+  let asset;
+  try { asset = await getLocalMediaAssets(id); }
+  catch (error) {
+    if (temporaryFile) return { file: temporaryFile, source: "temporary-file", permissionRequired: false, temporary: true };
+    throw error;
+  }
+  if (temporaryFile) return { file: temporaryFile, source: "temporary-file", permissionRequired: false, temporary: true };
   if (asset?.videoHandle) {
     let permission = "prompt";
     try { permission = await asset.videoHandle.queryPermission?.({ mode: "read" }) || "granted"; }
@@ -197,6 +245,7 @@ export async function hasLocalVideo(id) {
 }
 
 export async function deleteLocalVideoMany(ids, { deleteCopiedMedia = true } = {}) {
+  for (const id of ids || []) clearTemporaryLocalVideoFile(id);
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");

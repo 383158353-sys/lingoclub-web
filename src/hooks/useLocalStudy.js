@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { invokeAI } from "@/lib/localApi";
-import { getCueContext, getSubtitleProcessingCache, processSubtitleEpisode, recordSubtitleAICall, subtitleHash, CLOSE_READING_VERSION } from "@/lib/subtitleAiProcessing";
+import { getCueContext, getSubtitleProcessingCache, processSubtitleEpisode, processSubtitleLearningWindow, recordSubtitleAICall, subtitleHash, CLOSE_READING_VERSION } from "@/lib/subtitleAiProcessing";
 import { useToast } from "@/components/ui/use-toast";
 import { toSec, fromSecPrecise } from "@/lib/timecode";
+import { mergeCompleteAnalysis, partialAnalysisForCue } from "@/lib/studyLearningCache";
 
 // 本地学习素材专用 study hook —— 与 useEpisodeStudy 同形，但台词来自浏览器
 // 解析（不读数据库），AI 精读结果只缓存在内存里（不写 Subtitle 实体）。
@@ -11,6 +12,31 @@ import { toSec, fromSecPrecise } from "@/lib/timecode";
 // 确保每条字幕都有 id（书签/API 提取的字幕可能没有 id 字段）
 function ensureIds(list) {
   return list.map((s, i) => (s.id ? s : { ...s, id: `auto-${i}` }));
+}
+
+function mergeSubtitleProgress(current, incoming) {
+  const currentById = new Map((current || []).map((cue) => [cue.id, cue]));
+  return (incoming || []).map((cue) => {
+    const previous = currentById.get(cue.id);
+    if (!previous) return cue;
+    return {
+      ...previous,
+      ...cue,
+      // Imported/user-provided Chinese always wins; async progress can only fill an empty value.
+      text_zh: String(previous.text_zh || "").trim() ? previous.text_zh : (cue.text_zh || ""),
+      ai_processing: { ...(previous.ai_processing || {}), ...(cue.ai_processing || {}) },
+    };
+  });
+}
+
+function hasPreprocessedCueContent(cue) {
+  const processing = cue?.ai_processing || {};
+  return Boolean(
+    cue?.ai_analysis?.translation
+    || processing.translation
+    || processing.difficultWords?.length
+    || processing.phrases?.length
+  );
 }
 
 // 时间戳归一化：确保每一行都有 time_start，且严格递增。
@@ -72,7 +98,7 @@ function normalizeTimestamps(list) {
   return subs;
 }
 
-export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSeek, onStudyEnter, onStudyExit, onPlayOnly, onAnalysisCached, onSubtitlesProcessed }) {
+export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSeek, onStudyEnter, onStudyExit, onPlayOnly, onAnalysisCached, onSubtitlesProcessed, onSubtitleLearningProcessed }) {
   const [subs, setSubs] = useState(() => ensureIds(normalizeTimestamps(subtitles || [])));
   const [activeId, setActiveId] = useState(null);
   const [selectedCueId, setSelectedCueId] = useState(null);
@@ -87,17 +113,13 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
   const [failedIds, setFailedIds] = useState(new Set());
   const [processingStatus, setProcessingStatus] = useState({ phase: "idle", completed: 0, total: 0, diagnostics: null });
   const { toast } = useToast();
-  const processedKeyRef = useRef("");
   const currentTimeRef = useRef(currentTime || 0);
   const processingAbortRef = useRef(null);
+  const processingJobRef = useRef("");
+  const learningJobRef = useRef("");
+  const learningAbortRef = useRef(null);
+  const [processingRetry, setProcessingRetry] = useState(0);
   currentTimeRef.current = currentTime || 0;
-  const partialAnalysis = (processing) => ({
-    translation: processing.translation || "",
-    words: (processing.difficultWords || []).map((item) => ({ word: item.expression, meaning: item.contextMeaning || item.basicMeaning, contextMeaning: item.contextMeaning, partOfSpeech: item.partOfSpeech })),
-    phrases: (processing.phrases || []).map((item) => ({ phrase: item.expression, meaning: item.contextMeaning || item.basicMeaning, usage: item.type })),
-    grammar: "", cultural: "", _complete: false, _preprocessed: true,
-  });
-
   // 字幕变化时处理：用 ID 签名判断是「同一批字幕的内容更新」还是「换了新影片」。
     // 同一批字幕（ID 相同）仅更新 subs 内容并合并新的 ai_analysis，不重置精读状态/analyses，
   // 避免 onAnalysisCached 写回 materials.subtitles 后触发重置导致精读面板闪现后消失。
@@ -112,12 +134,15 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
         let changed = false;
         const merged = { ...prev };
         for (const s of normalized) {
-          if (s.ai_analysis && typeof s.ai_analysis === "object" && Number(s.ai_analysis_version || 0) === CLOSE_READING_VERSION && !merged[s.id]) {
+          if (s.ai_analysis && typeof s.ai_analysis === "object" && Number(s.ai_analysis_version || 0) === CLOSE_READING_VERSION && !merged[s.id]?._complete) {
             merged[s.id] = { ...s.ai_analysis, _complete: true };
             changed = true;
-          } else if (s.ai_processing?.translation && !merged[s.id]) {
-            merged[s.id] = partialAnalysis(s.ai_processing);
-            changed = true;
+          } else if (!merged[s.id]?._complete && hasPreprocessedCueContent(s)) {
+            const partial = partialAnalysisForCue(s, merged[s.id]);
+            if (partial && JSON.stringify(partial) !== JSON.stringify(merged[s.id])) {
+              merged[s.id] = partial;
+              changed = true;
+            }
           }
         }
         return changed ? merged : prev;
@@ -135,8 +160,9 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
     for (const s of normalized) {
       if (s.ai_analysis && typeof s.ai_analysis === "object" && Number(s.ai_analysis_version || 0) === CLOSE_READING_VERSION) {
         preloaded[s.id] = { ...s.ai_analysis, _complete: true };
-      } else if (s.ai_processing?.translation) {
-        preloaded[s.id] = partialAnalysis(s.ai_processing);
+      } else if (hasPreprocessedCueContent(s)) {
+        const partial = partialAnalysisForCue(s);
+        if (partial) preloaded[s.id] = partial;
       }
     }
     setAnalyses(preloaded);
@@ -146,39 +172,77 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
   }, [subtitles, onStudyExit]);
 
   const sourceHash = subtitleHash(subs);
+  const inputSubtitles = ensureIds(normalizeTimestamps(subtitles || []));
+  const inputHash = subtitleHash(inputSubtitles);
+  const startLearningPreload = useCallback((jobKey, sourceSubtitles) => {
+    const learningJobKey = `${jobKey}:learning`;
+    if (learningJobRef.current === learningJobKey && learningAbortRef.current && !learningAbortRef.current.signal.aborted) return;
+    learningAbortRef.current?.abort();
+    const controller = new AbortController();
+    learningAbortRef.current = controller;
+    learningJobRef.current = learningJobKey;
+    // Keep translation ahead of vocabulary analysis; this delay only yields time to
+    // the translation worker and does not expose a separate UI state.
+    setTimeout(() => {
+      if (controller.signal.aborted) return;
+      processSubtitleLearningWindow({
+        videoId,
+        subtitles: sourceSubtitles,
+        getCurrentTime: () => currentTimeRef.current,
+        signal: controller.signal,
+        onProgress: async (learningProgress) => {
+          if (controller.signal.aborted || !Array.isArray(learningProgress.subtitles)) return;
+          setSubs((current) => mergeSubtitleProgress(current, learningProgress.subtitles));
+          await onSubtitleLearningProcessed?.(learningProgress.subtitles);
+        },
+      }).catch(() => {});
+    }, 1000);
+  }, [videoId, onSubtitleLearningProcessed]);
+
   useEffect(() => {
-    if (!subs.length || !subs.some((cue) => cue.text_en?.trim())) return undefined;
-    const jobKey = `${videoId}:${sourceHash}`;
-    if (processedKeyRef.current === jobKey) return undefined;
-    processedKeyRef.current = jobKey;
+    const englishCues = inputSubtitles.filter((cue) => cue.text_en?.trim());
+    const missingTranslation = englishCues.some((cue) => !cue.text_zh?.trim());
+    if (!englishCues.length || !missingTranslation) {
+      setProcessingStatus({ phase: "idle", completed: 0, total: 0, diagnostics: null });
+      return undefined;
+    }
+    const jobKey = `${videoId}:${inputHash}`;
+    if (processingJobRef.current === jobKey && processingAbortRef.current && !processingAbortRef.current.signal.aborted) return undefined;
+    processingJobRef.current = jobKey;
     const controller = new AbortController();
     processingAbortRef.current?.abort();
     processingAbortRef.current = controller;
-    setProcessingStatus({ phase: "processing", completed: 0, total: subs.filter((cue) => cue.text_en?.trim()).length, diagnostics: null });
+    setProcessingStatus({ phase: "processing", completed: englishCues.filter((cue) => cue.text_zh?.trim()).length, total: englishCues.length, diagnostics: null });
     processSubtitleEpisode({
       videoId,
-      subtitles: subs,
+      subtitles: inputSubtitles,
       getCurrentTime: () => currentTimeRef.current,
       signal: controller.signal,
-      onProgress: (progress) => {
+      onProgress: async (progress) => {
         if (controller.signal.aborted) return;
         setProcessingStatus(progress);
-        if (typeof window !== "undefined" && progress.diagnostics) {
+        if (import.meta.env.DEV && typeof window !== "undefined" && progress.diagnostics) {
           window.__LINGOCLUB_SUBTITLE_AI_DIAGNOSTICS__ = { videoId, subtitleHash: sourceHash, ...progress.diagnostics, phase: progress.phase, completed: progress.completed, total: progress.total };
         }
         if (Array.isArray(progress.subtitles)) {
-          setSubs(progress.subtitles);
-          onSubtitlesProcessed?.(progress.subtitles);
+          setSubs((current) => mergeSubtitleProgress(current, progress.subtitles));
+          await onSubtitlesProcessed?.(progress.subtitles);
           setAnalyses((current) => {
             const next = { ...current };
             for (const cue of progress.subtitles) {
-              if (!next[cue.id]?._complete && cue.ai_processing?.translation) {
-                next[cue.id] = partialAnalysis(cue.ai_processing);
+              if (!next[cue.id]?._complete && hasPreprocessedCueContent(cue)) {
+                const partial = partialAnalysisForCue(cue, next[cue.id]);
+                if (partial) next[cue.id] = partial;
               }
             }
             return next;
           });
         }
+      },
+      onPriorityTranslationReady: () => {
+        // Translation keeps its head start. Start learning only after the nearest
+        // translation block has been displayed and saved.
+        if (!controller.signal.aborted) startLearningPreload(jobKey, inputSubtitles);
       },
     }).catch((error) => {
       if (!controller.signal.aborted) setProcessingStatus({ phase: "error", error: error?.message || "字幕预处理失败" });
@@ -186,9 +250,41 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
     return () => {
       controller.abort();
       if (processingAbortRef.current === controller) processingAbortRef.current = null;
-      if (processedKeyRef.current === jobKey) processedKeyRef.current = "";
+      if (learningJobRef.current === `${jobKey}:learning`) {
+        learningAbortRef.current?.abort();
+        learningAbortRef.current = null;
+        learningJobRef.current = "";
+      }
     };
-  }, [videoId, sourceHash, onSubtitlesProcessed]);
+  }, [videoId, inputHash, processingRetry, onSubtitlesProcessed, startLearningPreload]);
+
+  // Episodes that already have all translations still get lightweight nearby
+  // vocabulary preloading. The cache key keeps this from duplicating the task
+  // started after the first priority translation block.
+  const hasMissingTranslation = inputSubtitles.some((cue) => cue.text_en?.trim() && !cue.text_zh?.trim());
+  useEffect(() => {
+    if (!inputSubtitles.some((cue) => cue.text_en?.trim()) || hasMissingTranslation) return undefined;
+    const jobKey = `${videoId}:${inputHash}`;
+    startLearningPreload(jobKey, inputSubtitles);
+    return () => {
+      if (learningJobRef.current === `${jobKey}:learning`) {
+        learningAbortRef.current?.abort();
+        learningAbortRef.current = null;
+        learningJobRef.current = "";
+      }
+    };
+  }, [videoId, inputHash, hasMissingTranslation, startLearningPreload]);
+
+  useEffect(() => {
+    if (processingStatus.phase !== "ready") return undefined;
+    const timer = setTimeout(() => setProcessingStatus({ phase: "idle", completed: 0, total: 0, diagnostics: null }), 2800);
+    return () => clearTimeout(timer);
+  }, [processingStatus.phase]);
+
+  const retrySubtitleProcessing = () => {
+    processingJobRef.current = "";
+    setProcessingRetry((value) => value + 1);
+  };
 
   // 播放高亮：取 time_start ≤ t 最近的一行作为当前台词。
   // 不使用区间匹配——宽 time_end 的行会"吸收"缺 time_end 的相邻行，导致跳行。
@@ -241,7 +337,7 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
       if (!a || typeof a !== "object") throw new Error("解析未返回内容");
       failedRef.current.delete(sub.id);
       setFailedIds((s) => { const n = new Set(s); n.delete(sub.id); return n; });
-      setAnalyses((prev) => ({ ...prev, [sub.id]: { ...a, _complete: true } }));
+      setAnalyses((prev) => mergeCompleteAnalysis(prev, sub.id, a));
       // 持久化：将精读结果写回字幕对象的 ai_analysis 字段，通知父组件保存到 LocalMovieMeta。
       // 二次打开同一影片时，上面的预加载逻辑会直接读取，实现"秒开"。
       setSubs((list) => list.map((s) => (s.id === sub.id ? { ...s, ai_analysis: a } : s)));
@@ -301,6 +397,11 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
     setCloseReadingState({ activeCloseReadingCueId: s.id, isCloseReadingLoop: true });
     setSelectedCueId(s.id);
     setActiveId(s.id);
+    setAnalyses((current) => {
+      if (current[s.id]?._complete) return current;
+      const partial = partialAnalysisForCue(s, current[s.id]);
+      return partial ? { ...current, [s.id]: partial } : current;
+    });
     onStudyEnter?.(s);
   };
 
@@ -315,5 +416,5 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
     setSubs((list) => list.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   };
 
-  return { loading: false, subs, activeId, setActiveId, selectedCueId, analyses, analyzingId, failedIds, retry, hasAnyTs, onLineClick, onStudyClick, toggleCloseReading: onStudyClick, exitCloseReading, activeCloseReadingCueId, isCloseReadingLoop, pinnedId, loopingId, clearPin, updateSub, processingStatus };
+  return { loading: false, subs, activeId, setActiveId, selectedCueId, analyses, analyzingId, failedIds, retry, hasAnyTs, onLineClick, onStudyClick, toggleCloseReading: onStudyClick, exitCloseReading, activeCloseReadingCueId, isCloseReadingLoop, pinnedId, loopingId, clearPin, updateSub, processingStatus, retrySubtitleProcessing };
 }

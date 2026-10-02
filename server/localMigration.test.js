@@ -31,10 +31,8 @@ test("AI handler reads credentials from server env and returns a profile", async
   };
   try {
     const res = responseRecorder();
-    await handleAI({}, res, { task: "word_lookup", expression_en: "test" }, {
-      AI_BASE_URL: "https://api.example.com/v1",
-      AI_API_KEY: "server-only-key",
-      AI_MODEL: "test-model",
+    await handleAI({}, res, { credential_id: "cred", task: "word_lookup", expression_en: "test" }, {
+      NODE_ENV: "test", __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ type: "relay", provider: "openai-compatible", base_url: "https://api.example.com/v1", api_key: "server-only-key", model: "test-model" }),
     });
     assert.equal(res.statusCode, 200);
     assert.deepEqual(JSON.parse(res.body).profile.meaning, "测试");
@@ -55,14 +53,65 @@ test("AI handler supports every local learning task", async () => {
       [{ task: "vocabulary_analysis", expression_en: "test" }, "profile"],
       [{ task: "translate_sentence", text_en: "This is a test." }, "analysis"],
       [{ task: "subtitle_batch", video_id: "v", cues: [{ cueId: "c1", text: "Call me." , target: true }] }, "batch"],
+      [{ task: "subtitle_translate_batch", video_id: "v", cues: [{ cueId: "c1", text: "Call me.", target: true }] }, "translation_batch"],
+      [{ task: "subtitle_learning_batch", video_id: "v", cues: [{ cueId: "c1", text: "Call me.", target: true }] }, "learning_batch"],
       [{ task: "generate_distractors", expression_en: "test", meaning_zh: "测试" }, "distractors"],
     ];
     for (const [body, responseKey] of cases) {
       const res = responseRecorder();
-      await handleAI({}, res, body, { AI_BASE_URL: "https://api.example.com/v1", AI_API_KEY: "key", AI_MODEL: "model" });
+      await handleAI({}, res, { ...body, credential_id: "cred" }, { NODE_ENV: "test", __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ type: "relay", provider: "openai-compatible", base_url: "https://api.example.com/v1", api_key: "key", model: "model" }) });
       assert.equal(res.statusCode, 200);
       assert.ok(responseKey in JSON.parse(res.body));
     }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("subtitle translation batch uses Fast Model and returns translations only", async () => {
+  const previousFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url: String(url), body: JSON.parse(options.body) };
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"cues":[{"cueId":"c1","translation":"给我打电话。"}]}' }] } }] }), { status: 200 });
+  };
+  try {
+    const res = responseRecorder();
+    await handleAI({}, res, { credential_id: "subtitle-fast", task: "subtitle_translate_batch", video_id: "v", subtitle_hash: "h", block_id: "b0", cues: [{ cueId: "ctx", text: "Earlier line.", target: false }, { cueId: "c1", text: "Call me.", target: true }] }, {
+      NODE_ENV: "test",
+      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ type: "official", provider: "gemini", base_url: "https://generativelanguage.googleapis.com", api_key: "key", model: "main-model", fast_model: "fast-model" }),
+    });
+    const body = JSON.parse(res.body);
+    assert.equal(res.statusCode, 200);
+    assert.match(request.url, /fast-model/);
+    assert.deepEqual(Object.keys(body.translation_batch.cues[0]).sort(), ["cueId", "translation"]);
+    assert.deepEqual(Object.keys(request.body.generationConfig.responseSchema.properties), ["cues"]);
+    const prompt = request.body.contents[0].parts[0].text;
+    assert.match(prompt, /CONTEXT \[ctx\]/);
+    assert.match(prompt, /Do not analyze vocabulary/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("nearby subtitle learning batch uses Fast Model and requests only cached words and phrases", async () => {
+  const previousFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url: String(url), body: JSON.parse(options.body) };
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"cues":[{"cueId":"c1","difficultWords":[],"phrases":[]}]}' }] } }] }), { status: 200 });
+  };
+  try {
+    const res = responseRecorder();
+    await handleAI({}, res, { credential_id: "subtitle-learning", task: "subtitle_learning_batch", video_id: "v", subtitle_hash: "h", block_id: "l0", cues: [{ cueId: "c1", text: "Call me.", target: true }] }, {
+      NODE_ENV: "test",
+      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ type: "official", provider: "gemini", base_url: "https://generativelanguage.googleapis.com", api_key: "key", model: "main-model", fast_model: "fast-model" }),
+    });
+    const body = JSON.parse(res.body);
+    assert.equal(res.statusCode, 200);
+    assert.match(request.url, /fast-model/);
+    assert.deepEqual(Object.keys(body.learning_batch.cues[0]).sort(), ["cueId", "difficultWords", "phrases"]);
+    assert.deepEqual(Object.keys(request.body.generationConfig.responseSchema.properties), ["cues"]);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -83,7 +132,7 @@ test("analysis normalizes shifted words and removes basic words", () => {
   assert.equal(result.words[0].partOfSpeech, "形容词");
 });
 
-test("Gemini uses fast routing, low thinking, and a structured response schema", async () => {
+test("official Gemini translate_sentence uses the primary model and structured schema without thinking config", async () => {
   const previousFetch = globalThis.fetch;
   let request;
   globalThis.fetch = async (url, options) => {
@@ -92,18 +141,83 @@ test("Gemini uses fast routing, low thinking, and a structured response schema",
   };
   try {
     const res = responseRecorder();
-    await handleAI({}, res, { task: "translate_sentence", text_en: "This is a test.", video_id: "video-1" }, {
-      AI_PROVIDER: "gemini",
-      AI_BASE_URL: "https://generativelanguage.googleapis.com",
-      AI_API_KEY: "server-only-key",
-      AI_MODEL: "gem-3.8-flash",
-      AI_FAST_MODEL: "gem-3.5-flash-lite",
+    await handleAI({}, res, { credential_id: "gem", task: "translate_sentence", text_en: "This is a test.", video_id: "video-1" }, {
+      NODE_ENV: "test", __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ type: "official", provider: "gemini", base_url: "https://generativelanguage.googleapis.com", api_key: "server-only-key", model: "gem-3.8-flash", fast_model: "gem-3.5-flash-lite" }),
     });
     assert.equal(res.statusCode, 200);
-    assert.match(request.url, /gem-3\.5-flash-lite/);
-    assert.equal(request.body.generationConfig.thinkingConfig.thinkingLevel, "low");
+    assert.match(request.url, /gem-3\.8-flash/);
+    assert.equal(request.body.generationConfig.thinkingConfig, undefined);
     assert.equal(request.body.generationConfig.responseMimeType, "application/json");
     assert.equal(request.body.generationConfig.responseSchema.type, "OBJECT");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("Word Detail profile schema is minimal and starts with the configured primary model", async () => {
+  const previousFetch = globalThis.fetch;
+  let responseSchema;
+  let requestUrl;
+  globalThis.fetch = async (url, options) => {
+    requestUrl = String(url);
+    responseSchema = JSON.parse(options.body).generationConfig.responseSchema;
+    const profile = {
+      expression_type: "word", phonetic_us: "/weɪk/", phonetic_uk: "/weɪk/",
+      senses: [{ pos: "v.", meanings: ["醒来", "唤醒"] }, { pos: "n.", meanings: ["守夜", "尾流"] }],
+      roots: [], synthesis: "",
+    };
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(profile) }] } }] }), { status: 200 });
+  };
+  try {
+    const res = responseRecorder();
+    await handleAI({}, res, { credential_id: "gem-profile", task: "vocabulary_analysis", expression_en: "wake", expression_type: "word" }, {
+      NODE_ENV: "test", __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ type: "official", provider: "gemini", base_url: "https://generativelanguage.googleapis.com", api_key: "server-only-key", model: "gemini-main", fast_model: "gemini-fast" }),
+    });
+    const result = JSON.parse(res.body);
+    assert.equal(res.statusCode, 200);
+    assert.match(requestUrl, /gemini-main/);
+    assert.ok(responseSchema.required.includes("senses"));
+    assert.deepEqual(responseSchema.properties.senses.items.required, ["pos", "meanings"]);
+    assert.deepEqual(Object.keys(responseSchema.properties).sort(), ["expression_type", "phonetic_uk", "phonetic_us", "roots", "senses", "synthesis"]);
+    assert.ok(!("synonyms" in responseSchema.properties));
+    assert.ok(!("examples" in responseSchema.properties));
+    assert.deepEqual(result.profile.senses.map((sense) => sense.pos), ["v.", "n."]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("phrase profile request asks only for expression type and POS senses", async () => {
+  const previousFetch = globalThis.fetch;
+  let schema;
+  globalThis.fetch = async (_url, options) => {
+    schema = JSON.parse(options.body).generationConfig.responseSchema;
+    const profile = { expression_type: "phrase", senses: [{ pos: "phr.", meanings: ["停止自责；别再责怪自己"] }] };
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(profile) }] } }] }), { status: 200 });
+  };
+  try {
+    const res = responseRecorder();
+    await handleAI({}, res, { credential_id: "phrase-profile", task: "vocabulary_analysis", expression_en: "stop beating oneself up", expression_type: "phrase" }, {
+      NODE_ENV: "test", __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ type: "official", provider: "gemini", base_url: "https://generativelanguage.googleapis.com", api_key: "server-only-key", model: "main", fast_model: "fast" }),
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(Object.keys(schema.properties).sort(), ["expression_type", "senses"]);
+    assert.deepEqual(JSON.parse(res.body).profile.senses[0].meanings, ["停止自责；别再责怪自己"]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("Word Detail profile does not retry a failed upstream request", async () => {
+  const previousFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return new Response("busy", { status: 503 }); };
+  try {
+    const res = responseRecorder();
+    await assert.rejects(handleAI({}, res, { credential_id: "gem-profile-once", task: "vocabulary_analysis", expression_en: "debate", expression_type: "word" }, {
+      NODE_ENV: "test", __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ type: "relay", provider: "openai-compatible", base_url: "https://api.example.com/v1", api_key: "server-only-key", model: "main", fast_model: "fast" }),
+    }));
+    assert.equal(calls, 1);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -119,9 +233,9 @@ test("AI retries one transient upstream failure and deduplicates an in-flight cl
     return new Response(JSON.stringify({ choices: [{ message: { content: '{"translation":"测试"}' } }] }), { status: 200 });
   };
   try {
-    const body = { task: "translate_sentence", text_en: "This is a test.", video_id: "video-dedupe" };
+    const body = { credential_id: "cred", task: "translate_sentence", text_en: "This is a test.", video_id: "video-dedupe" };
     const [first, second] = await Promise.all([responseRecorder(), responseRecorder()].map(async (res) => {
-      await handleAI({}, res, body, { AI_BASE_URL: "https://api.example.com/v1", AI_API_KEY: "key", AI_MODEL: "model" });
+      await handleAI({}, res, body, { NODE_ENV: "test", __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ type: "relay", provider: "openai-compatible", base_url: "https://api.example.com/v1", api_key: "key", model: "model" }) });
       return res;
     }));
     assert.equal(first.statusCode, 200);
@@ -136,7 +250,8 @@ test("AI handler rejects missing server configuration", async () => {
   const res = responseRecorder();
   await handleAI({}, res, { task: "word_lookup", expression_en: "test" }, {});
   assert.equal(res.statusCode, 503);
-  assert.match(JSON.parse(res.body).error, /AI_BASE_URL/);
+  assert.equal(JSON.parse(res.body).code, "AI_NOT_CONFIGURED");
+  assert.doesNotMatch(res.body, /AI_API_KEY|AI_MODEL|please configure/i);
 });
 
 test("review modes use four answers with related distractors", () => {

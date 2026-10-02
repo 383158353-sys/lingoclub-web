@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import LocalStudyImporter from "@/components/study/LocalStudyImporter";
 import LocalSeasonImporter from "@/components/study/LocalSeasonImporter";
 import YoutubeLinkImporter from "@/components/study/YoutubeLinkImporter";
@@ -11,7 +11,7 @@ import SubListResizer from "@/components/study/SubListResizer";
 import SubtitleMask from "@/components/study/SubtitleMask";
 import SubtitleWorkbench from "@/components/study/SubtitleWorkbench";
 import { useLocalStudy } from "@/hooks/useLocalStudy";
-import { saveLocalVideoHandle, getLocalVideoSource, getLocalMediaStorageStats, saveLocalMediaAssets, removeLocalMediaAssetFields, deleteLocalVideo, deleteLocalVideoMany } from "@/lib/localStudyLibrary";
+import { saveLocalVideoHandle, clearLocalVideoSource, setTemporaryLocalVideoFile, getLocalVideoSource, getLocalMediaStorageStats, saveLocalMediaAssets, removeLocalMediaAssetFields, deleteLocalVideo, deleteLocalVideoMany } from "@/lib/localStudyLibrary";
 import { localFolders, localMovies } from "@/lib/localStudyMeta";
 import { formatEpisodeCode, parseEpisodeNumber } from "@/lib/localSeason";
 import { useToast } from "@/components/ui/use-toast";
@@ -19,16 +19,20 @@ import MinimalSubtitleBar from "@/components/study/MinimalSubtitleBar";
 import TheaterOverlay from "@/components/study/TheaterOverlay";
 import LocalStudyLibrary from "@/components/study/LocalStudyLibrary";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
-import { ArrowLeft, RotateCcw, Maximize2, Film, Loader2, EyeOff, Play, Pause, Info, Pencil, Check, X, RotateCw } from "lucide-react";
+import { RotateCcw, Maximize2, Film, Loader2, EyeOff, Play, Pause, Info, Pencil, Check, X, RotateCw } from "lucide-react";
 import BilibiliScrubber from "@/components/study/BilibiliScrubber";
 import YoutubeSubtitleHelper from "@/components/study/YoutubeSubtitleHelper";
 import { toSec } from "@/lib/timecode";
+import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { extractYouTubeId } from "@/lib/youtubeTranscriptClient";
 import { cleanSubtitleText } from "@/lib/subtitleCleaner";
 import { useAuth } from "@/lib/AuthContext";
 import { syncUserState } from "@/lib/cloudState";
 import { useGlobalVideoSpace } from "@/hooks/useGlobalVideoSpace";
 import { useTranscriptCueFocus } from "@/hooks/useTranscriptCueFocus";
+import PageBackButton from "@/components/common/PageBackButton";
+import { saveLocalLibraryView } from "@/lib/localLibraryNavigation";
+import { cloneSubtitleCues, createLatestRequestGate, replaceEpisodeSubtitlesInList } from "@/lib/localSubtitleWorkflow";
 
 function secondsToTimecode(value) {
   const total = Number(value);
@@ -41,6 +45,22 @@ function secondsToTimecode(value) {
     : `${minutes}:${seconds.toFixed(3).padStart(6, "0")}`;
 }
 
+const TEMP_VIDEO_NOTICE = "页面关闭后可能需要重新选择本地视频；字幕、收藏和学习进度会保留。";
+
+function mergeSubtitleSnapshots(current = [], incoming = []) {
+  const previousById = new Map(current.map((cue) => [cue.id, cue]));
+  return incoming.map((cue) => {
+    const previous = previousById.get(cue.id);
+    if (!previous) return { ...cue };
+    return {
+      ...previous,
+      ...cue,
+      text_zh: String(previous.text_zh || "").trim() ? previous.text_zh : (cue.text_zh || ""),
+      ai_processing: { ...(previous.ai_processing || {}), ...(cue.ai_processing || {}) },
+    };
+  });
+}
+
 // 本地学习页：用户自带本地视频+字幕，全部在浏览器内播放；影片名、海报、字幕
 // 影片元数据保存在 localStorage，视频二进制存本机 IndexedDB（以元数据 id 为 key）。
 // 本机没有视频文件时卡片仍保留（只是不能播放）。
@@ -48,6 +68,7 @@ function secondsToTimecode(value) {
 // 横屏全屏沉浸学习。
 export default function LocalStudy() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [materials, setMaterials] = useState(null); // { videoUrl, videoName, subtitles, posterUrl, recordId, hasLocalVideo }
   const [metas, setMetas] = useState([]); // 本地影片元数据
   const [folders, setFolders] = useState([]); // 本地文件夹元数据
@@ -66,11 +87,16 @@ export default function LocalStudy() {
   const [clockRunning, setClockRunning] = useState(false);
   const [loopRange, setLoopRange] = useState(null);
   const loopRangeRef = useRef(null);
+  const studySubsRef = useRef([]);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
   const videoRef = useRef(null);
+  const relinkFileInputRef = useRef(null);
   const bookmarkletHandledRef = useRef(false);
+  const sourceDeepLinkOpenedRef = useRef("");
+  const sourceDeepLinkFocusedRef = useRef("");
+  const openRequestRef = useRef(createLatestRequestGate());
   const lastCloudSyncNoticeRef = useRef(0);
   const { toast } = useToast();
   const { user, isLoadingAuth } = useAuth();
@@ -78,7 +104,7 @@ export default function LocalStudy() {
 
   useEffect(() => {
     const handleCloudSyncStatus = (event) => {
-      if (event.detail?.ok) return;
+      if (event.detail?.ok || event.detail?.status === "synced") return;
       const now = Date.now();
       if (now - lastCloudSyncNoticeRef.current < 8000) return;
       lastCloudSyncNoticeRef.current = now;
@@ -206,31 +232,12 @@ export default function LocalStudy() {
 
   // 精读：进入单句循环——跳到台词开头播放，到达末尾自动跳回开头
   const onStudyEnter = useCallback((sub) => {
-    const start = toSec(sub.time_start);
-    const end = toSec(sub.time_end);
-    if (Number.isNaN(start)) return;
-    let safeEnd = !Number.isNaN(end) && end > start ? end : NaN;
-    // 无 time_end 时，找下一句台词的起始时间作为循环终点
-    if (Number.isNaN(safeEnd)) {
-      const subs = materials?.subtitles || [];
-      let nextStart = NaN;
-      for (const s of subs) {
-        const a = toSec(s.time_start);
-        if (!Number.isNaN(a) && a > start && (Number.isNaN(nextStart) || a < nextStart)) nextStart = a;
-      }
-      if (!Number.isNaN(nextStart) && nextStart > start) safeEnd = nextStart;
-    }
-    if (Number.isNaN(safeEnd) || safeEnd <= start) {
-      // 无 time_end 且无下一句时，按文本长度估算句子时长（每词约0.45秒，至少3秒）
-      const wordCount = (sub.text_en || "").split(/\s+/).filter(Boolean).length;
-      safeEnd = start + Math.max(3, wordCount * 0.45);
-    }
-    // 末尾加 0.3s 缓冲，确保整句播完再跳回开头
-    const nextLoop = { start, end: safeEnd + 0.3 };
+    const nextLoop = getStudyCueLoopRange(sub, studySubsRef.current);
+    if (!nextLoop) return;
     loopRangeRef.current = nextLoop;
     setLoopRange(nextLoop);
-    playFromLine(start);
-  }, [playFromLine, materials?.subtitles]);
+    playFromLine(nextLoop.start);
+  }, [playFromLine]);
   const onStudyExit = useCallback(() => {
     // 解除单句循环但不暂停或 seek，视频从当前播放位置自然继续。
     loopRangeRef.current = null;
@@ -270,15 +277,48 @@ export default function LocalStudy() {
     }, 1500);
   }, [materials?.recordId]);
 
+  const subtitlePersistQueueRef = useRef(Promise.resolve());
   const onSubtitlesProcessed = useCallback((processedSubtitles) => {
     const id = materials?.recordId;
     if (!id || !Array.isArray(processedSubtitles)) return;
-    setMaterials((current) => current ? { ...current, subtitles: processedSubtitles } : current);
-    setMetas((current) => current.map((meta) => meta.id === id ? { ...meta, subtitles: processedSubtitles } : meta));
-    if (onSubtitlesProcessed._timer) clearTimeout(onSubtitlesProcessed._timer);
-    onSubtitlesProcessed._timer = setTimeout(async () => {
-      try { await localMovies.update(id, { subtitles: processedSubtitles }); } catch { /* cache stays available in memory/local cache */ }
-    }, 500);
+    const snapshot = processedSubtitles.map((cue) => ({ ...cue }));
+    setMaterials((current) => current?.recordId === id ? { ...current, subtitles: mergeSubtitleSnapshots(current.subtitles, snapshot) } : current);
+    setMetas((current) => current.map((meta) => meta.id === id
+      ? { ...meta, subtitles: mergeSubtitleSnapshots(meta.subtitles || [], snapshot), subtitle_count: snapshot.length }
+      : meta));
+    // Persist each processor checkpoint in order so a refresh cannot discard
+    // translations completed by earlier batches.
+    subtitlePersistQueueRef.current = subtitlePersistQueueRef.current
+      .catch(() => {})
+      .then(async () => {
+        const latest = await localMovies.get(id);
+        const subtitles = mergeSubtitleSnapshots(latest?.subtitles || [], snapshot);
+        await localMovies.update(id, { subtitles, subtitle_count: subtitles.length });
+      })
+      .catch(() => {});
+    return subtitlePersistQueueRef.current;
+  }, [materials?.recordId]);
+
+  const onSubtitleLearningProcessed = useCallback((processedSubtitles) => {
+    const id = materials?.recordId;
+    if (!id || !Array.isArray(processedSubtitles)) return;
+    const snapshot = processedSubtitles.map((cue) => ({ ...cue }));
+    const mergeLearning = (current) => current?.recordId === id
+      ? { ...current, subtitles: mergeSubtitleSnapshots(current.subtitles || [], snapshot) }
+      : current;
+    setMaterials(mergeLearning);
+    setMetas((current) => current.map((meta) => meta.id === id
+      ? { ...meta, subtitles: mergeSubtitleSnapshots(meta.subtitles || [], snapshot), subtitle_count: meta.subtitle_count || snapshot.length }
+      : meta));
+    subtitlePersistQueueRef.current = subtitlePersistQueueRef.current
+      .catch(() => {})
+      .then(async () => {
+        const latest = await localMovies.get(id);
+        const subtitles = mergeSubtitleSnapshots(latest?.subtitles || [], snapshot);
+        await localMovies.update(id, { subtitles, subtitle_count: latest?.subtitle_count || subtitles.length });
+      })
+      .catch(() => {});
+    return subtitlePersistQueueRef.current;
   }, [materials?.recordId]);
 
   const study = useLocalStudy({
@@ -292,16 +332,26 @@ export default function LocalStudy() {
     onStudyExit,
     onAnalysisCached,
     onSubtitlesProcessed,
+    onSubtitleLearningProcessed,
   });
+  studySubsRef.current = study.subs;
   const onExternalSeek = useCallback((time) => {
     const activeLoop = loopRangeRef.current;
     if (activeLoop && (time < activeLoop.start - 0.05 || time > activeLoop.end + 0.35)) study.exitCloseReading();
   }, [study.exitCloseReading]);
-  const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, setActiveId: study.setActiveId });
+  const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, setActiveId: study.setActiveId, setSelectedCueId: study.setSelectedCueId });
   const startCloseReadingFromKeyboard = useCallback(() => {
     const cue = transcriptFocus.focusCurrentTranscriptCue();
     if (cue) study.toggleCloseReading(cue);
   }, [study.toggleCloseReading, transcriptFocus.focusCurrentTranscriptCue]);
+  const navigateTranscriptCue = useCallback((direction) => {
+    const cue = transcriptFocus.focusAdjacentTranscriptCue(direction);
+    if (!cue) return;
+    const start = toSec(cue.time_start);
+    if (!Number.isFinite(start)) return;
+    if (study.isCloseReadingLoop) study.toggleCloseReading(cue);
+    else playFromLine(start);
+  }, [playFromLine, study.isCloseReadingLoop, study.toggleCloseReading, transcriptFocus.focusAdjacentTranscriptCue]);
   useGlobalVideoSpace({
     togglePlayback: toggleClock,
     enabled: Boolean(materials?.videoUrl),
@@ -309,6 +359,7 @@ export default function LocalStudy() {
     exitCloseReading: study.exitCloseReading,
     startCloseReading: startCloseReadingFromKeyboard,
     focusCurrentCue: transcriptFocus.focusCurrentTranscriptCue,
+    navigateTranscriptCue,
   });
 
   // 全屏切换后 VideoPlayer 会被重新挂载，需要恢复播放进度
@@ -347,18 +398,28 @@ export default function LocalStudy() {
   }, [materials?.videoUrl]);
   useEffect(() => () => revokeCurrent(), [revokeCurrent]);
 
-  // Open the original media through its persisted file handle. Legacy copied
-  // blobs remain playable until the user explicitly relinks the original file.
-  const openMeta = useCallback(async (sourceMeta, markLearned = false, transientFile = null) => {
-    let meta = sourceMeta;
+  // Reuse an available file handle, a session-selected File, or an old stored
+  // video Blob. New selections are never persisted as video bytes.
+  const openMeta = useCallback(async (sourceMeta, markLearned = false, transientFile = null, returnView = null) => {
+    const requestId = openRequestRef.current.begin();
+    let meta = await localMovies.get(sourceMeta.id).catch(() => null) || sourceMeta;
+    if (!openRequestRef.current.isCurrent(requestId)) return;
     if (markLearned) {
       const last_studied_at = new Date().toISOString();
       try {
-        meta = await localMovies.update(sourceMeta.id, { last_studied_at });
+        meta = await localMovies.update(meta.id, { last_studied_at });
+        if (!openRequestRef.current.isCurrent(requestId)) return;
         setMetas((list) => list.map((item) => item.id === meta.id ? meta : item));
       } catch { /* opening the local lesson must still work if progress metadata cannot be written */ }
     }
-    revokeCurrent();
+    if (returnView) saveLocalLibraryView(returnView);
+    else if (!searchParams.get("returnContext")) {
+      const isRemote = Boolean(meta.video_url);
+      saveLocalLibraryView({ tab: isRemote ? "videos" : "films", activeFolder: "all", activeSeasonId: isRemote ? null : (meta.folder || null) });
+    }
+    if (!searchParams.get("returnContext") && !window.history.state?.lingoclubLocalPlayer) {
+      window.history.pushState({ ...(window.history.state || {}), lingoclubLocalPlayer: true }, "", window.location.href);
+    }
     let videoUrl = null;
     let hasLocalVideo = false;
     let mediaAccess = null;
@@ -367,26 +428,76 @@ export default function LocalStudy() {
       const file = mediaAccess.file || transientFile;
       if (file) { videoUrl = URL.createObjectURL(file); hasLocalVideo = true; }
     } catch { /* noop */ }
+    if (!openRequestRef.current.isCurrent(requestId)) {
+      if (videoUrl?.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
+      return;
+    }
     if (!videoUrl && meta.video_url) { videoUrl = meta.video_url; }
+    revokeCurrent();
     setMaterials({
       videoUrl,
       videoName: meta.name,
       originalTitle: meta.original_title || "",
       subtitles: meta.subtitles || [],
+      subtitleSourceName: meta.subtitle_source_name || "",
+      subtitleImportedAt: meta.subtitle_imported_at || "",
+      subtitleCount: Number(meta.subtitle_count) || (meta.subtitles || []).length,
       posterUrl: meta.poster_url,
       recordId: meta.id,
       hasLocalVideo,
       mediaAccess,
       legacyVideoCopy: mediaAccess?.source === "legacy-blob",
+      temporaryLocalFile: Boolean(meta.local_video_temporary),
+      pendingSourceStart: null,
     });
     setMaskOn(false);
-  }, [revokeCurrent]);
+  }, [revokeCurrent, searchParams]);
+
+  useEffect(() => {
+    if (!materials) return undefined;
+    const onPopState = (event) => {
+      if (event.state?.lingoclubLocalPlayer) return;
+      revokeCurrent();
+      setMaterials(null);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [materials, revokeCurrent]);
+
+  useEffect(() => {
+    const id = searchParams.get("open");
+    if (!id || sourceDeepLinkOpenedRef.current === id || !metas.length) return;
+    const meta = metas.find((item) => String(item.id) === String(id));
+    if (!meta) return;
+    sourceDeepLinkOpenedRef.current = id;
+    void openMeta(meta);
+  }, [metas, openMeta, searchParams]);
+
+  useEffect(() => {
+    const id = searchParams.get("open");
+    const at = Number(searchParams.get("t") ?? searchParams.get("at"));
+    if (!id || !materials || String(materials.recordId) !== String(id) || !Number.isFinite(at)) return;
+    const marker = `${id}:${searchParams.get("cue") || ""}:${at}`;
+    if (sourceDeepLinkFocusedRef.current === marker) return;
+    const cue = transcriptFocus.focusTranscriptCueByIdOrTime(searchParams.get("cue"), at);
+    if (!cue) return;
+    sourceDeepLinkFocusedRef.current = marker;
+    const cueStart = cue?.time_start == null ? at : toSec(cue.time_start);
+    if (searchParams.get("closeReading") === "1") {
+      study.toggleCloseReading(cue);
+      if (!materials.videoUrl) setMaterials((current) => current ? { ...current, pendingSourceStart: cueStart } : current);
+    }
+    else playFromLine(Number.isFinite(cueStart) ? cueStart : at);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("open"); nextParams.delete("at"); nextParams.delete("t"); nextParams.delete("cue"); nextParams.delete("closeReading");
+    setSearchParams(nextParams, { replace: true });
+  }, [materials, playFromLine, searchParams, setSearchParams, study.subs.length, study.toggleCloseReading, transcriptFocus.focusTranscriptCueByIdOrTime]);
 
   const relinkOriginalVideo = useCallback(async () => {
     const id = materials?.recordId;
     if (!id) return;
     if (!window.showOpenFilePicker) {
-      toast({ title: "当前浏览器不支持文件授权", description: "请使用最新版 Chrome 或 Edge，并通过 HTTPS 或 localhost 打开。" });
+      relinkFileInputRef.current?.click();
       return;
     }
     try {
@@ -396,13 +507,33 @@ export default function LocalStudy() {
       });
       const file = await handle.getFile();
       await saveLocalVideoHandle(id, handle);
+      try { await localMovies.update(id, { local_video_temporary: false, local_video_storage: "file-handle" }); } catch { /* handle is already saved */ }
       const nextUrl = URL.createObjectURL(file);
       revokeCurrent();
       setMaterials((current) => current ? { ...current, videoUrl: nextUrl, hasLocalVideo: true, legacyVideoCopy: false, mediaAccess: { source: "handle", permissionRequired: false } } : current);
-      toast({ title: "已关联原始视频文件", description: "浏览器中的旧视频副本已释放；磁盘原文件未移动或删除。" });
+      toast({ title: "已重新关联视频", description: "字幕、收藏和学习记录保持不变。" });
     } catch (error) {
       if (error?.name !== "AbortError") toast({ title: "重新定位失败", description: error?.message || "无法读取所选视频", variant: "destructive" });
     }
+  }, [materials?.recordId, revokeCurrent, toast]);
+
+  const relinkWithBrowserFile = useCallback(async (file) => {
+    const id = materials?.recordId;
+    if (!id || !file) return;
+    await clearLocalVideoSource(id).catch(() => {});
+    setTemporaryLocalVideoFile(id, file);
+    try { await localMovies.update(id, { local_video_temporary: true, local_video_storage: "device-file" }); } catch { /* playback remains available */ }
+    const nextUrl = URL.createObjectURL(file);
+    revokeCurrent();
+    setMaterials((current) => current ? {
+      ...current,
+      videoUrl: nextUrl,
+      hasLocalVideo: true,
+      legacyVideoCopy: false,
+      temporaryLocalFile: true,
+      mediaAccess: { source: "temporary-file", permissionRequired: false, missing: false },
+    } : current);
+    toast({ title: "已关联此设备的视频", description: "字幕、收藏和学习记录保持不变。" });
   }, [materials?.recordId, revokeCurrent, toast]);
 
   const requestVideoPermission = useCallback(async () => {
@@ -507,14 +638,14 @@ export default function LocalStudy() {
         videoName: episode.videoFile?.name || null,
         subtitleExists: Boolean(episode.subtitleFile),
         subtitleName: episode.subtitleFile?.name || null,
+        firstSubtitle: episode.subtitles?.[0]?.text_en || episode.subtitles?.[0]?.text_zh || null,
+        subtitleCount: episode.subtitles?.length || 0,
         posterExists: Boolean(seasonCoverFile),
       }));
       console.info("[LocalStudy] season batch pre-write diagnostics", diagnostics);
       if (typeof window !== "undefined") window.__LINGOCLUB_LOCAL_SEASON_IMPORT__ = { showTitle, seasonNumber: internalSeasonNumber, episodes: diagnostics, recordedAt: new Date().toISOString() };
       const invalidVideo = episodes.find((episode) => !episode.videoFile || typeof episode.videoFile.name !== "string" || typeof episode.videoFile.slice !== "function");
       if (invalidVideo) throw new Error(`第 ${invalidVideo.episodeNumber} 集视频文件缺失或无效，尚未写入剧集`);
-      const unlinkedVideo = episodes.find((episode) => !episode.videoHandle || episode.videoHandle.kind !== "file");
-      if (unlinkedVideo) throw new Error(`第 ${unlinkedVideo.episodeNumber} 集尚未关联原始视频文件，请选择对应视频以授权长期读取；视频不会复制到浏览器存储`);
       const invalidSubtitle = episodes.find((episode) => episode.subtitleFile && (typeof episode.subtitleFile.name !== "string" || typeof episode.subtitleFile.text !== "function"));
       if (invalidSubtitle) throw new Error(`第 ${invalidSubtitle.episodeNumber} 集字幕文件引用无效，尚未写入剧集`);
 
@@ -523,16 +654,21 @@ export default function LocalStudy() {
       const season = existing
         ? await localFolders.update(existing.id, { name: displayTitle, display_title: displayTitle, show_title: showTitle, season_number: internalSeasonNumber, cover_blob: seasonCoverFile })
         : await localFolders.create({ name: displayTitle, display_title: displayTitle, show_title: showTitle, season_number: internalSeasonNumber, project_type: "season", tab_type: "films", cover_blob: seasonCoverFile, sort_order: Date.now() });
+      const temporaryEpisodes = [];
       for (const episode of episodes) {
         const episodeNumber = Number(episode.episodeNumber);
         const episodeCode = formatEpisodeCode(internalSeasonNumber || 1, episodeNumber);
         const episodeTitle = episode.title || "";
+      const episodeSubtitles = cloneSubtitleCues(episode.subtitles);
         const saved = await localMovies.create({
           name: episodeTitle || episodeCode,
           original_title: episode.videoFile.name,
           video_url: "",
           poster_url: "",
-          subtitles: episode.subtitles || [],
+          subtitles: episodeSubtitles,
+          subtitle_source_name: episode.subtitleFile?.name || "",
+          subtitle_imported_at: episode.subtitleFile ? new Date().toISOString() : "",
+          subtitle_count: episodeSubtitles.length,
           folder: season.id,
           media_type: "episode",
           show_title: showTitle,
@@ -540,7 +676,21 @@ export default function LocalStudy() {
           episode_number: episodeNumber,
           episode_title: episodeTitle,
         });
-        if (episode.videoHandle) await saveLocalVideoHandle(saved.id, episode.videoHandle);
+        if (episode.videoHandle) {
+          await saveLocalVideoHandle(saved.id, episode.videoHandle);
+        } else {
+          temporaryEpisodes.push(episode.episodeNumber);
+          setTemporaryLocalVideoFile(saved.id, episode.videoFile);
+          try { await localMovies.update(saved.id, { local_video_temporary: true, local_video_storage: "device-file" }); } catch { /* keep imported episode metadata */ }
+        }
+        console.debug("[LocalStudy] episode subtitle binding", {
+          episode: episodeCode,
+          movieId: saved.id,
+          videoName: episode.videoFile.name,
+          subtitleName: episode.subtitleFile?.name || null,
+          firstSubtitle: episodeSubtitles[0]?.text_en || episodeSubtitles[0]?.text_zh || null,
+          subtitleCount: episodeSubtitles.length,
+        });
         const localHandles = {};
         if (episode.subtitleHandle) localHandles.subtitleHandle = episode.subtitleHandle;
         if (episode.directoryHandle) localHandles.directoryHandle = episode.directoryHandle;
@@ -550,7 +700,7 @@ export default function LocalStudy() {
       setShowImporter(false);
       setImportMode(null);
       await Promise.all([refreshLibrary(), refreshFolders()]);
-      toast({ title: `已保存到本机：「${displayTitle}」`, description: `${episodes.length} 集已加入本地影片库。云同步将在后台进行。` });
+      toast({ title: `已保存到本机：「${displayTitle}」`, description: temporaryEpisodes.length ? `${episodes.length} 集已导入；第 ${temporaryEpisodes.join("、")} 集关闭页面后可能需要重新选择视频。字幕、收藏和进度仍会保留。` : `${episodes.length} 集已加入本地影片库。云同步将在后台进行。` });
       return season;
     } catch (error) {
       toast({ title: "剧集导入失败", description: error?.message || "请稍后重试", variant: "destructive" });
@@ -564,9 +714,6 @@ export default function LocalStudy() {
   const onImported = useCallback(async (m) => {
     setSaving(true);
     try {
-      if (m.videoFile && m.videoUrl?.startsWith("blob:") && !m.videoHandle) {
-        throw new Error("本地视频尚未授权原始文件；请选择原文件后再保存，视频不会复制到浏览器存储");
-      }
       const saved = await localMovies.importMovie({
         name: m.movieName || m.videoName || "未命名影片",
         original_title: m.originalTitle || "",
@@ -579,7 +726,18 @@ export default function LocalStudy() {
       const meta = saved.movie;
       // Persist the local handle before cloud sync so a network failure cannot
       // leave a saved local-library record without its playable source.
+      let temporaryLocalFile = false;
       if (m.videoHandle) await saveLocalVideoHandle(meta.id, m.videoHandle);
+      else if (m.videoFile && m.videoUrl?.startsWith("blob:")) {
+        temporaryLocalFile = true;
+        setTemporaryLocalVideoFile(meta.id, m.videoFile);
+        meta.local_video_temporary = true;
+        meta.local_video_storage = "device-file";
+        try {
+          const updated = await localMovies.update(meta.id, { local_video_temporary: temporaryLocalFile, local_video_storage: "device-file" });
+          Object.assign(meta, updated);
+        } catch { /* the selected File remains playable even if a status field cannot be written */ }
+      }
       const localMediaHandles = {};
       if (m.directoryHandle) localMediaHandles.directoryHandle = m.directoryHandle;
       if (m.subtitleHandle) localMediaHandles.subtitleHandle = m.subtitleHandle;
@@ -613,6 +771,7 @@ export default function LocalStudy() {
       setImportMode(null);
       await refreshLibrary();
       await openMeta(meta, false, m.videoHandle ? null : m.videoFile);
+      if (temporaryLocalFile) toast({ title: "本地视频已关联", description: TEMP_VIDEO_NOTICE });
       return meta;
     } catch (e) {
       toast({ title: "保存影片失败", description: e?.message || "请稍后重试", variant: "destructive" });
@@ -840,12 +999,19 @@ export default function LocalStudy() {
   }, [metas, refreshFolders, refreshLibrary, toast]);
 
   // 字幕改动：同步到 materials（即时刷新学习视图）+ 持久化到 LocalMovieMeta.subtitles。
-  const onSubsChanged = useCallback(async (newSubs) => {
-    setMaterials((m) => (m ? { ...m, subtitles: newSubs } : m));
+  const onSubsChanged = useCallback(async (newSubs, sourceName) => {
     const id = materials?.recordId;
     if (!id) return;
+    const importedAt = sourceName ? new Date().toISOString() : undefined;
+    const fields = {
+      subtitles: newSubs.map((cue) => ({ ...cue })),
+      ...(sourceName ? { subtitle_source_name: sourceName, subtitle_imported_at: importedAt } : {}),
+      subtitle_count: newSubs.length,
+    };
+    setMaterials((m) => (m?.recordId === id ? { ...m, subtitles: fields.subtitles, subtitleSourceName: sourceName || m.subtitleSourceName, subtitleImportedAt: importedAt || m.subtitleImportedAt } : m));
+    setMetas((current) => replaceEpisodeSubtitlesInList(current, id, fields.subtitles, fields));
     try {
-      await localMovies.update(id, { subtitles: newSubs });
+      await localMovies.update(id, fields);
     } catch (e) {
       toast({ title: "字幕未保存到本机", description: e?.message, variant: "destructive" });
     }
@@ -950,8 +1116,11 @@ export default function LocalStudy() {
       <div className="relative">
         {canPlay ? (
           <>
-            <VideoPlayer ref={videoRef} url={materials.videoUrl} onTimeUpdate={setCurrentTime} onUserSeek={onExternalSeek} onPlaybackError={() => toast({ title: "视频无法播放", description: "该格式可能不被浏览器支持（推荐 MP4 / WebM / MOV）；或文件已损坏。", variant: "destructive" })} />
-            {materials.legacyVideoCopy && !theater && <button type="button" onClick={relinkOriginalVideo} className="absolute right-2 top-2 z-40 rounded-full bg-black/70 px-3 py-1.5 text-[11px] text-white hover:bg-black/90">关联原文件并释放旧缓存</button>}
+            <VideoPlayer ref={videoRef} url={materials.videoUrl} autoPlayFrom={materials.pendingSourceStart} onTimeUpdate={(time) => {
+              setCurrentTime(time);
+              if (Number.isFinite(materials.pendingSourceStart) && time >= materials.pendingSourceStart - 0.1) setMaterials((current) => current ? { ...current, pendingSourceStart: null } : current);
+            }} onUserSeek={onExternalSeek} onPlaybackError={() => toast({ title: "视频无法播放", description: "该格式可能不被浏览器支持（推荐 MP4 / WebM / MOV）；或文件已损坏。", variant: "destructive" })} />
+            {materials.legacyVideoCopy && !theater && <button type="button" onClick={relinkOriginalVideo} className="absolute right-2 top-2 z-40 rounded-full bg-black/70 px-3 py-1.5 text-[11px] text-white hover:bg-black/90">重新选择本地视频</button>}
             {isBilibili && !isPhone && !maskOn && (
               <button
                 type="button"
@@ -987,11 +1156,12 @@ export default function LocalStudy() {
           <div className="flex aspect-video items-center justify-center rounded-xl border border-dashed border-border bg-background-elev/30 text-center">
             <div>
               <Film size={28} className="mx-auto text-muted-foreground/60" />
-            <p className="mt-3 text-sm text-muted-foreground">{materials.mediaAccess?.permissionRequired ? "需要重新授权本地媒体文件" : "找不到本地文件"}</p>
-            <p className="mt-1 text-xs text-muted-foreground">影片字幕、收藏和学习进度仍保留。重新授权原文件，或在文件已移动时重新定位。</p>
+            <input ref={relinkFileInputRef} type="file" accept="video/*,.mp4,.webm,.mov,.m4v,.mkv,.avi" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void relinkWithBrowserFile(file); event.target.value = ""; }} />
+            <p className="mt-3 text-sm text-muted-foreground">当前设备未找到视频</p>
+            <p className="mt-1 text-xs text-muted-foreground">影片、字幕、收藏和学习进度仍保留。请选择此设备上的原视频以继续播放。</p>
             <div className="mt-3 flex justify-center gap-2">
-              {materials.mediaAccess?.permissionRequired && <button type="button" onClick={requestVideoPermission} className="rounded-full border border-border px-3 py-1.5 text-xs text-foreground">重新授权本地媒体目录</button>}
-              <button type="button" onClick={relinkOriginalVideo} className="rounded-full bg-copper px-3 py-1.5 text-xs font-medium text-copper-foreground">重新定位</button>
+      {materials.mediaAccess?.permissionRequired && <button type="button" onClick={requestVideoPermission} className="rounded-full border border-border px-3 py-1.5 text-xs text-foreground">允许访问本地视频</button>}
+              <button type="button" onClick={relinkOriginalVideo} className="rounded-full bg-copper px-3 py-1.5 text-xs font-medium text-copper-foreground">重新选择本地视频</button>
             </div>
             </div>
           </div>
@@ -1028,7 +1198,7 @@ export default function LocalStudy() {
     <div>
       <SubListResizer height={subHeight} onChange={setSubHeight} />
       {canPlay && hasSubs ? (
-        <SubtitleScrubber study={study} movieId={materials.recordId} movieTitle={materials.videoName} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} />
+        <SubtitleScrubber study={study} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} movieTitle={materials.videoName} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} sourceType={extractYouTubeId(materials.videoUrl) ? "youtube" : "local"} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} />
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-background-elev/30 p-8 text-center text-sm text-muted-foreground">
           {canPlay ? "本集暂无台词——到下方「字幕管理」添加字幕即可进入逐句精读。" : "本机无视频时无法跳转台词；下方「字幕管理」仍可提前维护字幕内容。"}
@@ -1039,7 +1209,7 @@ export default function LocalStudy() {
 
   const analysisSlot = (
     <div className={`h-full rounded-2xl border border-border/60 bg-background-elev/30 p-4 scrollbar-none ${theater ? "overflow-y-auto" : "lg:sticky lg:top-24 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto"}`}>
-      <StudyAnalysisColumn study={study} movieTitle={materials.videoName || "未命名影片"} movieId={materials.recordId} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} />
+      <StudyAnalysisColumn study={study} movieTitle={materials.videoName || "未命名影片"} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} sourceType={extractYouTubeId(materials.videoUrl) ? "youtube" : "local"} />
     </div>
   );
 
@@ -1053,16 +1223,21 @@ export default function LocalStudy() {
         videoSlot={videoSlot}
         analysisSlot={analysisSlot}
         subtitleSlot={subtitleSlot}
-        minimalSubSlot={<MinimalSubtitleBar study={study} movieId={materials.recordId} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} movieTitle={materials.videoName} storageKey="theater_min_sub_y" storageSizeKey="theater_local_min_sub_size" />}
+        minimalSubSlot={<MinimalSubtitleBar study={study} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} movieTitle={materials.videoName} sourceType={extractYouTubeId(materials.videoUrl) ? "youtube" : "local"} storageKey="theater_min_sub_y" storageSizeKey="theater_local_min_sub_size" />}
       />
     );
   }
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 lg:px-10 pt-20 pb-16 md:pt-28 md:pb-20">
-      <button type="button" onClick={resetImport} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-copper">
-        <ArrowLeft size={15} /> 返回我的影片
-      </button>
+      <PageBackButton onClick={() => {
+        const context = searchParams.get("returnContext");
+        if (context === "review") navigate("/collection?resumeReview=1");
+        else if (context === "mistakes") navigate("/collection?tab=errors&restore=1");
+        else if (context === "collection") navigate("/collection?restore=1");
+        else if (window.history.state?.lingoclubLocalPlayer) window.history.back();
+        else resetImport();
+      }} className="mb-3" />
 
       <div className="mt-4 border-b border-border/50 pb-5 md:mt-6 md:pb-8">
         <p className="text-[11px] uppercase tracking-luxe text-copper/80">我的影片 · 本机</p>
@@ -1101,7 +1276,7 @@ export default function LocalStudy() {
         {materials.originalTitle && materials.originalTitle !== materials.videoName && !editingTitle && (
           <p className="mt-1 text-xs text-muted-foreground/60">原始标题：{materials.originalTitle}</p>
         )}
-        <p className="mt-2 max-w-2xl text-xs leading-relaxed text-muted-foreground md:mt-3 md:text-sm">影片名、海报与字幕保存在当前浏览器；本地视频文件保存在本机 IndexedDB，在线视频链接会在打开时联网播放。</p>
+        <p className="mt-2 max-w-2xl text-xs leading-relaxed text-muted-foreground md:mt-3 md:text-sm">影片名称、字幕、收藏与学习进度会随账号同步。本地视频只从当前设备读取，不会上传。</p>
         <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground md:mt-3"><RotateCcw size={12} /> {materials?.hasLocalVideo ? "本地视频文件 · 仅本机播放" : "在线视频链接 · 跨设备可播"}</p>
       </div>
 
@@ -1119,7 +1294,7 @@ export default function LocalStudy() {
 
       <div className="mt-10">
         <h2 className="font-display text-lg text-foreground">台词和字幕管理 <span className="text-sm font-body text-muted-foreground">· 当前影片</span></h2>
-        <p className="mt-1 text-xs text-muted-foreground">视频链接抓取 / 粘贴·文件导入 / OCR 扫描 / 手动逐句，四种方式统一在这里管理。字幕只保存在当前浏览器。</p>
+        <p className="mt-1 text-xs text-muted-foreground">视频链接抓取 / 粘贴·文件导入 / OCR 扫描 / 手动逐句，四种方式统一在这里管理。字幕和学习资料会随账号同步。</p>
         <div className="mt-4">
           <SubtitleWorkbench
             videoRef={videoRef}
@@ -1128,6 +1303,10 @@ export default function LocalStudy() {
             onChanged={onSubsChanged}
             onSeek={canPlay ? (sec) => { study.exitCloseReading(); seekAndPause(sec); } : null}
             canPlay={canPlay}
+            targetTitle={materials.videoName || "当前影片"}
+            targetSeasonNumber={metas.find((meta) => meta.id === materials.recordId)?.season_number}
+            targetEpisodeNumber={metas.find((meta) => meta.id === materials.recordId)?.episode_number}
+            subtitleSourceName={materials.subtitleSourceName || ""}
           />
         </div>
       </div>

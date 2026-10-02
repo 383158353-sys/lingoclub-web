@@ -4,6 +4,7 @@ import SiteNav from "./SiteNav";
 import SiteFooter from "./SiteFooter";
 import PwaInstallHint from "./PwaInstallHint";
 import MobileBottomNav from "./MobileBottomNav";
+import { AISettingsDialog, AISettingsNotice } from "@/components/AISettingsPanel";
 
 const immersiveRoute = (pathname) =>
   pathname === "/quick-study" ||
@@ -47,6 +48,8 @@ export default function SiteLayout() {
       <SiteFooter />
       <PwaInstallHint />
       <MobileBottomNav hidden={immersive} />
+      <AISettingsNotice />
+      <AISettingsDialog />
     </div>
   );
 }

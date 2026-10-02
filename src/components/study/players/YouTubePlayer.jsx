@@ -44,7 +44,7 @@ function parseYouTube(url) {
   }
 }
 
-const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", onTimeUpdate, onUserSeek }, ref) {
+const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", onTimeUpdate, onUserSeek, autoPlayFrom }, ref) {
   const embed = useMemo(() => parseYouTube(url), [url]);
 
   // Host container React owns but renders NO JSX children into — so React never
@@ -53,6 +53,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
   const ytPlayerRef = useRef(null);
   const ytTickRef = useRef(null);
   const ytPendingSeek = useRef(null);
+  const ytPendingPlay = useRef(false);
   const lastEmittedRef = useRef(-1);
 
   // 用 ref 保存 onTimeUpdate，避免它出现在 useEffect 依赖数组中导致
@@ -61,6 +62,8 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
   onTimeUpdateRef.current = onTimeUpdate;
   const onUserSeekRef = useRef(onUserSeek);
   onUserSeekRef.current = onUserSeek;
+  const autoPlayFromRef = useRef(autoPlayFrom);
+  autoPlayFromRef.current = autoPlayFrom;
   const lastClockRef = useRef({ time: null, at: 0 });
   const suppressSeekDetectionUntilRef = useRef(0);
 
@@ -111,9 +114,19 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
         events: {
           onReady: (e) => {
             if (cancelled) return;
+            if (Number.isFinite(autoPlayFromRef.current)) {
+              try { e.target.seekTo(autoPlayFromRef.current, true); } catch { /* noop */ }
+              try { e.target.playVideo(); } catch { /* autoplay may be blocked by the browser */ }
+              ytPendingPlay.current = false;
+              return;
+            }
             if (Number.isFinite(ytPendingSeek.current)) {
               try { e.target.seekTo(ytPendingSeek.current, true); } catch { /* noop */ }
               ytPendingSeek.current = null;
+            }
+            if (ytPendingPlay.current) {
+              try { e.target.playVideo(); } catch { /* autoplay may be blocked by the browser */ }
+              ytPendingPlay.current = false;
             }
           },
           onStateChange: (e) => {
@@ -175,7 +188,13 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     },
     play(sec) {
       if (Number.isFinite(sec)) suppressSeekDetectionUntilRef.current = Date.now() + 900;
-      try { if (Number.isFinite(sec)) ytPlayerRef.current?.seekTo?.(sec, true); ytPlayerRef.current?.playVideo?.(); } catch { /* noop */ }
+      const player = ytPlayerRef.current;
+      if (!player) {
+        if (Number.isFinite(sec)) ytPendingSeek.current = sec;
+        ytPendingPlay.current = true;
+        return;
+      }
+      try { if (Number.isFinite(sec)) player.seekTo?.(sec, true); player.playVideo?.(); } catch { /* noop */ }
     },
     pause(sec) {
       const t = Number.isFinite(sec) ? sec : 0;

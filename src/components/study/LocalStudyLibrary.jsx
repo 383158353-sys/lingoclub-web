@@ -1,14 +1,19 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import LocalMovieCard from "./LocalMovieCard";
 import FolderBar from "./FolderBar";
-import { Film, Plus, Trash2, Loader2, FolderInput, Check, X, SlidersHorizontal, Youtube, GripVertical, ArrowLeft, Pencil } from "lucide-react";
+import { Film, Plus, Trash2, Loader2, FolderInput, Check, X, SlidersHorizontal, Youtube, GripVertical, Pencil } from "lucide-react";
 import { formatEpisodeCode, parseEpisodeNumber } from "@/lib/localSeason";
 import LocalPosterPicker from "@/components/study/LocalPosterPicker";
 import LocalPosterImage from "@/components/study/LocalPosterImage";
+import PageBackButton from "@/components/common/PageBackButton";
+import { readLocalLibraryView, saveLocalLibraryView, pushLocalLibraryView, replaceLocalLibraryView } from "@/lib/localLibraryNavigation";
+import { useNavigate } from "react-router-dom";
 
 export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onDelete, onDeleteMany, onDeleteSeason, onReorder, onReorderLocal, onMoveToFolder, onCreateFolder, onCreateAlbum, onUpdateAlbum, onRenameFolder, onSetFolderCover, onDeleteFolder, requireAuth, onImportLocal, onImportSeason, onOrganizeAsSeason, onAssignEpisode, onUpdateEpisodeNumber, onImportYoutube, onPublishFolder, onUnpublishFolder }) {
-  const [tab, setTab] = useState("videos");
-  const [activeFolder, setActiveFolder] = useState("all");
+  const navigate = useNavigate();
+  const [initialView] = useState(readLocalLibraryView);
+  const [tab, setTab] = useState(initialView.tab === "films" ? "films" : "videos");
+  const [activeFolder, setActiveFolder] = useState(initialView.activeFolder || "all");
   const [manageMode, setManageMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [showFolderPanel, setShowFolderPanel] = useState(false);
@@ -16,7 +21,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
   const [dragIndex, setDragIndex] = useState(null);
   const [overIndex, setOverIndex] = useState(null);
   const [publishingId, setPublishingId] = useState(null);
-  const [activeSeasonId, setActiveSeasonId] = useState(null);
+  const [activeSeasonId, setActiveSeasonId] = useState(initialView.activeSeasonId || null);
   const [organizeDialog, setOrganizeDialog] = useState(false);
   const [seasonDraft, setSeasonDraft] = useState({ showTitle: "", seasonNumber: "1", coverFile: null, coverUrl: "" });
   const [dropDialog, setDropDialog] = useState(null);
@@ -31,6 +36,23 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
     } finally {
       setPublishingId(null);
     }
+  };
+
+  const startSeasonImport = () => {
+    setManageMode(false);
+    setSelectedIds(new Set());
+    setShowFolderPanel(false);
+    setPanelFolderName("");
+    setDragIndex(null);
+    setOverIndex(null);
+    setDropDialog(null);
+    setOrganizeDialog(false);
+    setAlbumDialog(false);
+    setPublishingId(null);
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    document.documentElement.scrollLeft = 0;
+    document.body.scrollLeft = 0;
+    if (requireAuth()) onImportSeason?.();
   };
 
   const landscape = tab === "videos";
@@ -50,6 +72,24 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
   const movieMetas = useMemo(() => looseMetas.filter((meta) => !looseEpisodes.includes(meta)), [looseMetas, looseEpisodes]);
   const activeSeason = seasonProjects.find((folder) => folder.id === activeSeasonId) || null;
   const activeEpisodes = useMemo(() => activeSeason ? seasonEpisodes.filter((meta) => meta.folder === activeSeason.id).sort((a, b) => (a.sort_order ?? a.episode_number ?? 0) - (b.sort_order ?? b.episode_number ?? 0)) : [], [activeSeason, seasonEpisodes]);
+  useEffect(() => {
+    const view = { tab, activeFolder, activeSeasonId };
+    saveLocalLibraryView(view);
+    if (!window.history.state?.lingoclubLocalLibraryView) {
+      window.history.replaceState({ ...(window.history.state || {}), lingoclubLocalLibraryView: { view, parent: null } }, "", window.location.href);
+    }
+    const restoreHistoryView = (event) => {
+      const restored = event.state?.lingoclubLocalLibraryView?.view;
+      if (!restored) return;
+      setTab(restored.tab === "films" ? "films" : "videos");
+      setActiveFolder(restored.activeFolder || "all");
+      setActiveSeasonId(restored.activeSeasonId || null);
+      setManageMode(false);
+      setSelectedIds(new Set());
+    };
+    window.addEventListener("popstate", restoreHistoryView);
+    return () => window.removeEventListener("popstate", restoreHistoryView);
+  }, [tab, activeFolder, activeSeasonId]);
 
   const folderCounts = useMemo(() => {
     const counts = { uncategorized: 0 };
@@ -79,7 +119,20 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
       ? activeEpisodes.map((meta) => meta.id)
       : [...looseMetas.map((meta) => meta.id), ...seasonProjects.map((folder) => `folder:${folder.id}`)];
 
-  const switchTab = (t) => { setTab(t); setActiveFolder("all"); setManageMode(false); setSelectedIds(new Set()); setShowFolderPanel(false); setActiveSeasonId(null); };
+  const switchTab = (t) => { replaceLocalLibraryView({ tab: t, activeFolder: "all", activeSeasonId: null }); setTab(t); setActiveFolder("all"); setManageMode(false); setSelectedIds(new Set()); setShowFolderPanel(false); setActiveSeasonId(null); };
+  const enterSeason = (id) => { setManageMode(false); setSelectedIds(new Set()); const next = { tab: "films", activeFolder: "all", activeSeasonId: id }; pushLocalLibraryView(next); setTab(next.tab); setActiveFolder(next.activeFolder); setActiveSeasonId(next.activeSeasonId); };
+  const enterFolder = (id) => { const next = { tab, activeFolder: id, activeSeasonId: null }; pushLocalLibraryView(next); setActiveFolder(next.activeFolder); setActiveSeasonId(null); };
+  const goToParent = () => {
+    if ((activeSeasonId || activeFolder !== "all") && window.history.state?.lingoclubLocalLibraryView?.parent) { window.history.back(); return; }
+    if (activeSeasonId) { replaceLocalLibraryView({ tab: "films", activeFolder: "all", activeSeasonId: null }); setActiveSeasonId(null); return; }
+    if (activeFolder !== "all") { replaceLocalLibraryView({ tab, activeFolder: "all", activeSeasonId: null }); setActiveFolder("all"); return; }
+    navigate("/");
+  };
+  const openMetaFromView = (meta, markLearned = false, transientFile = null) => {
+    const returnView = { tab, activeFolder, activeSeasonId };
+    saveLocalLibraryView(returnView);
+    onOpen(meta, markLearned, transientFile, returnView);
+  };
 
   const toggleSelect = (id) => setSelectedIds((prev) => {
     const next = new Set(prev);
@@ -255,7 +308,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
         onDrop={(event) => manageMode && reorderLocalTarget(event, "season", season.id)}
         className={`group relative overflow-hidden rounded-xl border border-border/60 bg-card text-left transition-colors hover:border-copper/40 ${compact ? "w-40 shrink-0" : ""}`}
       >
-        <button type="button" onClick={() => { setManageMode(false); setSelectedIds(new Set()); setActiveSeasonId(season.id); }} className="block w-full text-left">
+        <button type="button" onClick={() => enterSeason(season.id)} className="block w-full text-left">
           <div className={`${compact ? "aspect-[3/2]" : "aspect-[2/3]"} overflow-hidden bg-muted/30`}>
             <LocalPosterImage item={season} kind="folder" alt={season.display_title || season.name} className="h-full w-full object-cover transition-transform group-hover:scale-105" placeholder={<div className="flex h-full items-center justify-center text-muted-foreground/40"><Film size={28} /></div>} />
           </div>
@@ -287,6 +340,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-4 lg:px-10 pt-20 pb-16 md:pt-28 md:pb-20">
+      <div className="mb-3"><PageBackButton onClick={goToParent} /></div>
       <p className="text-[11px] uppercase tracking-luxe text-copper/80">工具箱 · 我的影片</p>
       <div className="mt-2 flex items-end justify-between gap-3">
         <h1 className="font-display text-2xl leading-tight text-foreground md:text-4xl">{landscape ? "我的视频" : activeSeason ? (activeSeason.display_title || activeSeason.name) : "我的影片"}</h1>
@@ -296,7 +350,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
               <button type="button" onClick={() => { if (requireAuth()) onImportLocal(); }} className="inline-flex items-center gap-1.5 rounded-full border border-copper/40 px-3.5 py-2 text-sm font-medium text-copper transition-colors hover:bg-copper/10">
                 <Plus size={15} /> 导入电影
               </button>
-              <button type="button" onClick={() => { if (requireAuth()) onImportSeason?.(); }} className="inline-flex items-center gap-1.5 rounded-full bg-copper px-4 py-2 text-sm font-medium text-copper-foreground transition-transform hover:scale-[1.02]">
+              <button type="button" onClick={startSeasonImport} className="inline-flex items-center gap-1.5 rounded-full bg-copper px-4 py-2 text-sm font-medium text-copper-foreground transition-transform hover:scale-[1.02]">
                 <Plus size={16} /> 导入剧集
               </button>
             </div>
@@ -329,7 +383,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
           folders={tabFolders}
           activeFolder={activeFolder}
           counts={folderCounts}
-          onSelect={setActiveFolder}
+          onSelect={enterFolder}
           onCreate={(name) => onCreateFolder(name, tab)}
           onRename={onRenameFolder}
           onSetCover={onSetFolderCover}
@@ -439,19 +493,18 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
               onDragEnd={onDragEnd}
               className={`transition-opacity ${dragIndex === i ? "opacity-40" : ""} ${manageMode && overIndex === i && dragIndex !== null && dragIndex !== i ? "ring-2 ring-copper rounded-xl" : ""} ${dragIndex !== null ? "cursor-grabbing" : "cursor-grab"}`}
             >
-              <LocalMovieCard meta={m} manageMode={manageMode} selected={selectedIds.has(m.id)} onToggleSelect={toggleSelect} onOpen={onOpen} onDelete={() => handleDeleteMovie(m)} landscape={landscape} />
+              <LocalMovieCard meta={m} manageMode={manageMode} selected={selectedIds.has(m.id)} onToggleSelect={toggleSelect} onOpen={openMetaFromView} onDelete={() => handleDeleteMovie(m)} landscape={landscape} />
             </div>
           ))}
         </div>
       ) : activeSeason ? (
         <section className="mt-5">
-          <button type="button" onClick={() => setActiveSeasonId(null)} className="mb-3 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-copper"><ArrowLeft size={15} /> 我的影片</button>
           <h2 className="font-display text-xl text-foreground">{activeSeason.display_title || activeSeason.name}</h2>
           <p className="mt-1 text-xs text-muted-foreground">{activeEpisodes.length} 集</p>
           {seasonProjects.length > 1 && (
             <div className="mt-4 flex gap-2 overflow-x-auto pb-2" aria-label="拖动到另一季以移动剧集">
               {seasonProjects.filter((season) => season.id !== activeSeason.id).map((season) => (
-                <button key={season.id} type="button" onDragOver={(event) => manageMode && event.preventDefault()} onDrop={(event) => manageMode && startSeasonDrop(event, season)} onClick={() => { setManageMode(false); setSelectedIds(new Set()); setActiveSeasonId(season.id); }} className="shrink-0 rounded-full border border-border px-3 py-1.5 text-[11px] text-muted-foreground hover:border-copper/50 hover:text-copper">
+                <button key={season.id} type="button" onDragOver={(event) => manageMode && event.preventDefault()} onDrop={(event) => manageMode && startSeasonDrop(event, season)} onClick={() => enterSeason(season.id)} className="shrink-0 rounded-full border border-border px-3 py-1.5 text-[11px] text-muted-foreground hover:border-copper/50 hover:text-copper">
                   拖到此处：{season.display_title || season.name}
                 </button>
               ))}
@@ -469,7 +522,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
                     {manageMode && <input type="checkbox" checked={selectedIds.has(episode.id)} onChange={() => toggleSelect(episode.id)} aria-label={`选择${episode.episode_title || episode.name}`} />}
                     <span className="cursor-grab text-muted-foreground/50" aria-hidden="true"><GripVertical size={15} /></span>
                     <input type="number" min="1" max="999" defaultValue={episodeNumber} aria-label={`${episodeCode} 集数`} onClick={(event) => event.stopPropagation()} onBlur={(event) => { const next = Number(event.currentTarget.value); if (Number.isInteger(next) && next > 0 && next !== episodeNumber) onUpdateEpisodeNumber?.(episode.id, next); }} className="w-16 rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-xs text-foreground" />
-                    <button type="button" onClick={() => onOpen(episode, true)} className="min-w-0 flex-1 text-left">
+                    <button type="button" onClick={() => openMetaFromView(episode, true)} className="min-w-0 flex-1 text-left">
                       <span className="block truncate text-sm font-medium text-foreground">{episode.title || episode.episode_title || episodeCode}</span>
                       <span className="mt-0.5 block text-[11px] text-muted-foreground">{episode.subtitles?.length ? `${episode.subtitles.length} 条字幕` : "暂无字幕"}{episode.last_studied_at ? " · 已学习" : ""}</span>
                     </button>
@@ -496,7 +549,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
                 {movieMetas.map((movie) => (
                   <div key={movie.id} draggable={manageMode} onDragStart={(event) => manageMode && setLocalDragPayload(event, "movie", movie.id)} onDragOver={(event) => manageMode && event.preventDefault()} onDrop={(event) => reorderLocalTarget(event, "movie", movie.id)} className={manageMode ? "cursor-grab" : ""}>
-                    <LocalMovieCard meta={movie} manageMode={manageMode} selected={selectedIds.has(movie.id)} onToggleSelect={toggleSelect} onOpen={(meta) => onOpen(meta, true)} onDelete={() => handleDeleteMovie(movie)} landscape={false} />
+                    <LocalMovieCard meta={movie} manageMode={manageMode} selected={selectedIds.has(movie.id)} onToggleSelect={toggleSelect} onOpen={(meta) => openMetaFromView(meta, true)} onDelete={() => handleDeleteMovie(movie)} landscape={false} />
                     <p className="mt-1 text-center text-[10px] text-muted-foreground">{movie.last_studied_at ? "已学习" : "未学习"}{movie.subtitles?.length ? ` · ${movie.subtitles.length} 条字幕` : ""}</p>
                   </div>
                 ))}
@@ -509,7 +562,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
                 {looseEpisodes.map((episode) => (
                   <div key={episode.id} draggable={manageMode} onDragStart={(event) => manageMode && setLocalDragPayload(event, "looseEpisode", episode.id)} onDragOver={(event) => manageMode && event.preventDefault()} onDrop={(event) => reorderLocalTarget(event, "looseEpisode", episode.id)} className={manageMode ? "cursor-grab" : ""}>
-                    <LocalMovieCard meta={episode} manageMode={manageMode} selected={selectedIds.has(episode.id)} onToggleSelect={toggleSelect} onOpen={(meta) => onOpen(meta, true)} onDelete={() => handleDeleteMovie(episode)} landscape={false} />
+                    <LocalMovieCard meta={episode} manageMode={manageMode} selected={selectedIds.has(episode.id)} onToggleSelect={toggleSelect} onOpen={(meta) => openMetaFromView(meta, true)} onDelete={() => handleDeleteMovie(episode)} landscape={false} />
                   </div>
                 ))}
               </div>

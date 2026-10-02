@@ -43,9 +43,9 @@ export async function collectLocalState() {
   return {
     version: 1,
     vocab: clone(await guestVocab.list()) || [],
-    // Strip IndexedDB-hydrated subtitle cues/poster object URLs before cloning.
-    // Serializing them first was needlessly expensive and could stall sync.
-    movies: movies.map((movie) => clone(safeMovie(movie, { dropLocalSubtitles: true }))).filter(Boolean),
+    // Keep parsed subtitle cues in the account payload so another device can
+    // learn from the transcript even when the original local video is absent.
+    movies: movies.map((movie) => clone(safeMovie(movie))).filter(Boolean),
     folders: folders.map((folder) => clone(safeFolder(folder))).filter(Boolean),
     deletedItems: clone(getLocalDeletionTombstones()) || [],
     reviewSession: clone(loadSession()),

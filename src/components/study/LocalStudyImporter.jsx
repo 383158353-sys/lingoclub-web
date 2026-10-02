@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
-import { FileVideo, FileText, Play, Loader2, Info, ArrowLeft, ImagePlus, CheckCircle2, AlertCircle } from "lucide-react";
+import { FileVideo, FileText, Play, Loader2, Info, ImagePlus, CheckCircle2, AlertCircle } from "lucide-react";
+import PageBackButton from "@/components/common/PageBackButton";
 import { parseTranscript } from "@/lib/transcriptParser";
 import { mergeFragments } from "@/lib/subtitleCleaner";
 import { useToast } from "@/components/ui/use-toast";
@@ -32,6 +33,8 @@ export default function LocalStudyImporter({ onReady, onCancel, saving }) {
   const [fetchedSubs, setFetchedSubs] = useState(null);
   const [subError, setSubError] = useState("");
   const lastFetchedUrlRef = useRef("");
+  const fallbackVideoInputRef = useRef(null);
+  const fallbackSubtitleInputRef = useRef(null);
   const { toast } = useToast();
 
   const pickVideo = (f, handle = null) => {
@@ -56,7 +59,7 @@ export default function LocalStudyImporter({ onReady, onCancel, saving }) {
 
   const chooseVideoFile = async () => {
     if (!window.showOpenFilePicker) {
-      toast({ title: "当前浏览器不支持持久文件授权", description: "请使用最新版 Chrome 或 Edge，并通过 HTTPS 或 localhost 打开。" });
+      fallbackVideoInputRef.current?.click();
       return;
     }
     try {
@@ -124,7 +127,7 @@ export default function LocalStudyImporter({ onReady, onCancel, saving }) {
 
   const chooseSubtitleFile = async () => {
     if (!window.showOpenFilePicker) {
-      toast({ title: "当前浏览器不支持文件授权", description: "请使用最新版 Chrome / Edge，并通过 HTTPS 或 localhost 打开。" });
+      fallbackSubtitleInputRef.current?.click();
       return;
     }
     try {
@@ -148,31 +151,8 @@ export default function LocalStudyImporter({ onReady, onCancel, saving }) {
   const start = async () => {
     const finalVideoUrl = videoUrlInput.trim() || videoUrl;
     if (!finalVideoUrl) { toast({ title: "请先添加视频", variant: "destructive" }); return; }
-    let persistentVideoHandle = videoHandle;
-    let persistentVideoFile = videoFile;
-    if (videoFile && finalVideoUrl.startsWith("blob:") && !persistentVideoHandle) {
-      if (!window.confirm("为了下次打开仍能读取视频，请授权原文件。现在请选择刚才导入的同一个视频文件；原文件不会被复制。")) return;
-      if (!window.showOpenFilePicker) {
-        toast({ title: "无法持久保存本地视频引用", description: "当前浏览器不支持文件授权。请使用最新版 Chrome / Edge，并通过 HTTPS 或 localhost 打开。", variant: "destructive" });
-        return;
-      }
-      try {
-        const [handle] = await window.showOpenFilePicker({
-          multiple: false,
-          types: [{ description: "视频文件", accept: { "video/*": [".mp4", ".webm", ".mov", ".m4v", ".mkv", ".avi"] } }],
-        });
-        const selectedFile = await handle.getFile();
-        if (selectedFile.name !== videoFile.name || selectedFile.size !== videoFile.size) {
-          toast({ title: "所选文件不匹配", description: "请授权与刚才选择的本地视频完全相同的原文件。", variant: "destructive" });
-          return;
-        }
-        persistentVideoHandle = handle;
-        persistentVideoFile = selectedFile;
-      } catch (error) {
-        if (error?.name !== "AbortError") toast({ title: "未能授权原始视频", description: error?.message || "请重试", variant: "destructive" });
-        return;
-      }
-    }
+    const persistentVideoHandle = videoHandle;
+    const persistentVideoFile = videoFile;
     const finalName = movieName.trim() || videoName.replace(/\.[^.]+$/, "").trim() || "未命名影片";
     setParsing(true);
     try {
@@ -218,15 +198,16 @@ export default function LocalStudyImporter({ onReady, onCancel, saving }) {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-5 pt-28 pb-20">
+      {onCancel && <div className="mb-3"><PageBackButton onClick={onCancel} disabled={parsing || saving} /></div>}
       <p className="text-[11px] uppercase tracking-luxe text-copper/80">工具箱 · 我的影片</p>
       <h1 className="mt-2 font-display text-3xl leading-tight text-foreground md:text-4xl">导入新影片</h1>
       <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-        选择本地视频后即可开始学习。视频由浏览器只读原位置播放，不复制到浏览器存储或上传服务器；字幕与海报均为可选。
+        选择本地视频后即可开始学习。支持的浏览器会记住本地文件引用；其他浏览器会在当前页面读取所选文件，不会复制视频。字幕与海报均为可选。
       </p>
 
       <div className="mt-6 flex items-start gap-2 rounded-lg border border-mint/30 bg-mint/10 px-3 py-2 text-xs leading-relaxed text-foreground/90">
         <Info size={13} className="mt-0.5 shrink-0 text-mint" />
-        <span>视频保留在原磁盘，通过授权文件引用播放；字幕与海报缓存于本机浏览器，换设备需重新授权或导入。</span>
+        <span>视频始终保留在原磁盘，不会复制或上传。刷新后如果浏览器无法恢复本地文件，请重新选择视频；字幕、收藏和学习记录会正常保留。</span>
       </div>
 
       <div className="mt-6 grid gap-5">
@@ -263,9 +244,10 @@ export default function LocalStudyImporter({ onReady, onCancel, saving }) {
             {(fetchingMeta || fetchingSubs) && <Loader2 size={16} className="animate-spin text-copper" />}
           </div>
           <div className="relative mt-3">
+            <input ref={fallbackVideoInputRef} type="file" accept="video/*,.mp4,.webm,.mov,.m4v,.mkv,.avi" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) pickVideo(file, null); event.target.value = ""; }} />
             <button type="button" onClick={chooseVideoFile} className="inline-flex items-center gap-2 rounded-lg border border-dashed border-copper/40 px-3.5 py-2.5 text-sm text-copper hover:bg-copper/5"><FileVideo size={15} />{videoName ? `已选择：${videoFile?.name || videoName}` : "选择本地视频"}</button>
           </div>
-          <p className="mt-2 text-[11px] text-muted-foreground">文件只读引用原位置，不会复制到浏览器或上传。</p>
+          <p className="mt-2 text-[11px] text-muted-foreground">视频只从当前设备读取，不会复制或上传。刷新后无法恢复时，请重新选择本地视频；字幕和学习资料会保留。</p>
         </div>
 
         {/* 字幕拖拽 / 粘贴 */}
@@ -277,6 +259,7 @@ export default function LocalStudyImporter({ onReady, onCancel, saving }) {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {subtitleMode === "file" ? (
               <div className="relative">
+                <input ref={fallbackSubtitleInputRef} type="file" multiple accept=".srt,.vtt,.txt,text/plain" className="hidden" onChange={(event) => { const files = Array.from(event.target.files || []); const preferred = files.find((file) => videoFile && fileStem(file.name) === fileStem(videoFile.name)) || (files.length === 1 ? files[0] : null); if (preferred) { pickSubtitle(preferred, null); setSubtitleMode("file"); } else if (files.length) toast({ title: "请选择与影片同名的字幕", description: "当前影片会与同名字幕自动匹配。", variant: "destructive" }); event.target.value = ""; }} />
                 <button type="button" onClick={chooseSubtitleFile} className="inline-flex items-center gap-2 rounded-lg border border-dashed border-border px-3.5 py-2.5 text-sm text-foreground hover:bg-muted/40"><FileText size={15} />{subName ? `已选择：${subName}` : "选择本地字幕（可选）"}</button>
               </div>
             ) : (
@@ -316,16 +299,6 @@ export default function LocalStudyImporter({ onReady, onCancel, saving }) {
           )}
         </div>
 
-        {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={parsing || saving}
-            className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-          >
-            <ArrowLeft size={15} /> 返回我的影片
-          </button>
-        )}
         <button
           type="button"
           onClick={start}

@@ -3,6 +3,8 @@ import { useToast } from "@/components/ui/use-toast";
 import { parseTranscript } from "@/lib/transcriptParser";
 import { mergeFragments } from "@/lib/subtitleCleaner";
 import { toSec } from "@/lib/timecode";
+import { formatEpisodeCode } from "@/lib/localSeason";
+import { applySubtitleImport, subtitleEpisodeMismatch } from "@/lib/localSubtitleWorkflow";
 import {
   Loader2, UploadCloud, ListPlus, Check,
   Sparkles, Plus, Trash2, Pencil, X, Wand2,
@@ -14,8 +16,8 @@ function genSubId() {
 
 // 统一字幕工作台：粘贴·文件导入 / 手动逐句
 // 两个 Tab 集成在一个面板里。结果统一追加到外部传入的 subs 数组，
-// onChanged 同步给父组件持久化。
-export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], onChanged, onSeek, canPlay = false, initialTab = "paste" }) {
+// onChanged 将替换或明确追加后的 cue 列表同步给父组件持久化。
+export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], onChanged, onSeek, canPlay = false, initialTab = "paste", targetTitle = "当前影片", targetSeasonNumber, targetEpisodeNumber, subtitleSourceName = "" }) {
   const { toast } = useToast();
   const [tab, setTab] = useState(initialTab);
   const [pastedText, setPastedText] = useState("");
@@ -23,6 +25,7 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
   const [totalSec, setTotalSec] = useState(1058);
   const [dragOver, setDragOver] = useState(false);
   const [fileName, setFileName] = useState("");
+  const [pendingImport, setPendingImport] = useState(null);
   const fileInputRef = useRef(null);
 
   // 手动逐句状态
@@ -38,6 +41,29 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
   // ===== 粘贴 / 文件导入 =====
   const parsedFromText = pastedText.trim() ? mergeFragments(parseTranscript(pastedText, totalSec)).slice(0, 300) : [];
   const pasteTimed = parsedFromText.filter((l) => l.time_start).length;
+
+  const applyImport = (mapped, mode, sourceName = "") => {
+    onChanged(applySubtitleImport(subs, mapped, mode), sourceName || undefined);
+    setPendingImport(null);
+    setPastedText("");
+    setFileName("");
+    toast({ title: mode === "append" ? `已追加 ${mapped.length} 句台词` : `已替换为 ${mapped.length} 句台词` });
+  };
+
+  const requestImport = (mapped, sourceName = fileName) => {
+    if (!mapped?.length) { toast({ title: "没有可导入的台词", variant: "destructive" }); return; }
+    const mismatch = subtitleEpisodeMismatch({ seasonNumber: targetSeasonNumber, episodeNumber: targetEpisodeNumber }, sourceName);
+    const parsed = mismatch?.parsed;
+    const mismatched = Boolean(mismatch);
+    if (mismatched) {
+      const currentEpisodeNumber = Number(targetEpisodeNumber);
+      const currentCode = formatEpisodeCode(targetSeasonNumber || parsed.seasonNumber || 1, currentEpisodeNumber);
+      const subtitleCode = formatEpisodeCode(parsed.seasonNumber || targetSeasonNumber || 1, parsed.episodeNumber);
+      if (!window.confirm(`字幕似乎属于 ${subtitleCode}，但当前打开的是 ${currentCode}。\n\n取消导入，或仍然导入？`)) return;
+    }
+    if (subs.length) setPendingImport({ mapped, sourceName });
+    else applyImport(mapped, "replace", sourceName);
+  };
 
   const readFile = async (f) => {
     try {
@@ -76,11 +102,7 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
           order: p.order ?? subs.length + i + 1,
           timestamp: p.time_start || "",
         }));
-        const sorted = [...subs, ...mapped].sort((a, b) => (a.order || 0) - (b.order || 0));
-        onChanged(sorted);
-        setPastedText("");
-        setFileName("");
-        toast({ title: `已追加 ${mapped.length} 句台词` });
+        requestImport(mapped, fileName);
       } catch (e) {
         toast({ title: "解析失败", description: e?.message, variant: "destructive" });
       } finally {
@@ -101,11 +123,7 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
       order: l.order ?? (subs.length + i + 1),
       timestamp: l.time_start || "",
     }));
-    const sorted = [...subs, ...mapped].sort((a, b) => (a.order || 0) - (b.order || 0));
-    onChanged(sorted);
-    setPastedText("");
-    setFileName("");
-    toast({ title: `已追加 ${mapped.length} 句台词`, description: pasteTimed > 0 ? `其中 ${pasteTimed} 条带时间戳` : "" });
+    requestImport(mapped, fileName);
   };
 
   // ===== 手动逐句 =====
@@ -164,8 +182,8 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
     }
   };
 
-  // 导入即分句：用 pre-merge（原始 cue 级）时间戳作为对齐源（粒度更细、
-  // 时间戳更精准），AI 分句后追加到现有字幕。无时间戳则回退规则合并。
+  // 导入即分句：用 pre-merge（原始 cue 级）时间戳作为对齐源；生成后按统一
+  // 的导入确认流程替换当前字幕，或在用户选择时追加。
   const importAndSegment = async () => {
     if (!pastedText.trim()) return;
     setParsing(true);
@@ -191,11 +209,7 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
           timestamp: p.time_start || "",
         }));
       }
-      const sorted = [...subs, ...mapped].sort((a, b) => (a.order || 0) - (b.order || 0));
-      onChanged(sorted);
-      setPastedText("");
-      setFileName("");
-      toast({ title: `已导入 ${mapped.length} 句`, description: timed.length ? "智能分句 · 已保留时间戳对齐" : "" });
+      requestImport(mapped, fileName);
     } catch (e) {
       const msg = e?.response?.data?.error || e?.data?.error || e?.message || "请稍后重试";
       toast({ title: "导入失败", description: msg, variant: "destructive" });
@@ -299,6 +313,12 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
       {/* ===== 粘贴 / 文件导入 ===== */}
       {tab === "paste" && (
         <div className="mt-4">
+          <div className="mb-3 rounded-lg border border-border/70 bg-background-elev/30 px-3 py-2 text-xs">
+            <p className="text-muted-foreground">当前目标</p>
+            <p className="mt-0.5 font-medium text-foreground">{targetTitle}{Number(targetEpisodeNumber) > 0 ? ` · ${formatEpisodeCode(targetSeasonNumber || 1, targetEpisodeNumber)}` : ""}</p>
+            {subtitleSourceName && <p className="mt-1 text-[11px] text-muted-foreground">当前字幕：{subtitleSourceName} · {subs.length} 条</p>}
+            {fileName && <p className="mt-1 text-[11px] text-copper">将导入：{fileName} → {targetTitle}{Number(targetEpisodeNumber) > 0 ? ` · ${formatEpisodeCode(targetSeasonNumber || 1, targetEpisodeNumber)}` : ""}</p>}
+          </div>
           <label className="block">
             <span className="text-[11px] uppercase tracking-luxe text-muted-foreground">直接粘贴文本</span>
             <textarea
@@ -332,7 +352,7 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
                 disabled={parsing}
                 className="inline-flex items-center gap-2 rounded-full bg-mint px-4 py-1.5 text-xs font-medium text-background transition-transform hover:scale-[1.02] disabled:opacity-50"
               >
-                {parsing ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} 智能分句并追加
+                {parsing ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} 智能分句并导入
               </button>
             </div>
           )}
@@ -368,6 +388,17 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
             />
           </div>
           {fileName && <p className="mt-2 text-[11px] text-copper/70">已载入：{fileName}</p>}
+          {pendingImport && <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="确认字幕导入方式">
+            <div className="w-full max-w-sm rounded-2xl border border-border bg-background p-5 shadow-2xl">
+              <h4 className="text-sm font-semibold text-foreground">当前已有 {subs.length} 条字幕</h4>
+              <p className="mt-1 text-xs text-muted-foreground">{pendingImport.sourceName ? `${pendingImport.sourceName} · ${pendingImport.mapped.length} 条` : `新字幕共 ${pendingImport.mapped.length} 条`}</p>
+              <div className="mt-4 grid gap-2">
+                <button type="button" onClick={() => applyImport(pendingImport.mapped, "replace", pendingImport.sourceName)} className="rounded-xl bg-mint px-4 py-3 text-sm font-semibold text-background">替换当前字幕</button>
+                <button type="button" onClick={() => applyImport(pendingImport.mapped, "append", pendingImport.sourceName)} className="rounded-xl border border-border px-4 py-3 text-sm text-foreground">追加字幕</button>
+                <button type="button" onClick={() => setPendingImport(null)} className="rounded-xl px-4 py-2 text-sm text-muted-foreground">取消</button>
+              </div>
+            </div>
+          </div>}
         </div>
       )}
 

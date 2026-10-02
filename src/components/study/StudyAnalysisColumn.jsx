@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { ListVideo, Loader2, RefreshCw, AlertCircle } from "lucide-react";
 import SubtitleAnalysisPanel from "./SubtitleAnalysisPanel";
+import { AISettingsButton } from "@/components/AISettingsPanel";
 
 // Right rail: AI close-read of the active subtitle line. Shares state with
 // the subtitle list under the video via the `study` object from useEpisodeStudy.
-export default function StudyAnalysisColumn({ study, movieTitle, movieId, videoId }) {
-  const { loading, subs, pinnedId, analyses, analyzingId, failedIds, retry, processingStatus } = study;
+export default function StudyAnalysisColumn({ study, movieTitle, movieId, videoId, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId }) {
+  const { loading, subs, pinnedId, analyses, analyzingId, failedIds, retry } = study;
   const active = subs.find((s) => s.id === pinnedId) || null;
   const [slow, setSlow] = useState(false);
 
@@ -18,8 +19,7 @@ export default function StudyAnalysisColumn({ study, movieTitle, movieId, videoI
   if (loading) {
     return (
       <div>
-        <h2 className="font-display text-lg text-foreground">实时台词精读</h2>
-        {processingStatus?.phase === "processing" && <p className="mt-1 text-[11px] text-muted-foreground">正在准备智能翻译… {processingStatus.completed || 0}/{processingStatus.total || 0}</p>}
+        <div className="flex items-center justify-between gap-2"><h2 className="font-display text-lg text-foreground">实时台词精读</h2><AISettingsButton className="text-xs text-muted-foreground hover:text-copper">AI 设置</AISettingsButton></div>
         <p className="mt-3 text-sm text-muted-foreground">加载精读…</p>
       </div>
     );
@@ -28,7 +28,7 @@ export default function StudyAnalysisColumn({ study, movieTitle, movieId, videoI
   if (subs.length === 0) {
     return (
       <div>
-        <h2 className="font-display text-lg text-foreground">实时台词精读</h2>
+        <div className="flex items-center justify-between gap-2"><h2 className="font-display text-lg text-foreground">实时台词精读</h2><AISettingsButton className="text-xs text-muted-foreground hover:text-copper">AI 设置</AISettingsButton></div>
         <p className="mt-1 text-xs text-muted-foreground">点击下方某句台词即可开始 AI 精读。本集暂无台词。</p>
       </div>
     );
@@ -36,7 +36,7 @@ export default function StudyAnalysisColumn({ study, movieTitle, movieId, videoI
 
   return (
     <div>
-      {processingStatus?.phase === "processing" && <p className="mb-2 text-[11px] text-muted-foreground">正在准备智能翻译… {processingStatus.completed || 0}/{processingStatus.total || 0}</p>}
+      <div className="mb-2 flex items-center justify-between gap-2"><h2 className="font-display text-base text-foreground">实时台词精读</h2><AISettingsButton className="text-xs text-muted-foreground hover:text-copper">AI 设置</AISettingsButton></div>
       <div className="mt-2">
         {active ? (
           analyzingId === active.id && !analyses[active.id] ? (
@@ -65,6 +65,11 @@ export default function StudyAnalysisColumn({ study, movieTitle, movieId, videoI
                 movieId={movieId}
                 videoId={videoId}
                 sceneId={active.scene_id || null}
+                episodeId={episodeId}
+                episodeTitle={episodeTitle}
+          sourceType={sourceType}
+          sourceUrl={sourceUrl}
+          sourceRecordId={sourceRecordId}
               />
             </div>
           )

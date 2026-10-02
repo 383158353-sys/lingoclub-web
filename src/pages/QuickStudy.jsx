@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useSearchParams, Link } from "react-router-dom";
+import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useAuth } from "@/lib/AuthContext";
 import { useLocalStudy } from "@/hooks/useLocalStudy";
@@ -18,9 +18,11 @@ import { transcribeYouTubeClient, extractYouTubeId } from "@/lib/youtubeTranscri
 import { cleanSubtitleText } from "@/lib/subtitleCleaner";
 import { isBilibiliUrl } from "@/lib/bilibiliTranscriptClient";
 import { useToast } from "@/components/ui/use-toast";
-import { ArrowLeft, Maximize2, Loader2, EyeOff, Play, Pause, AlertCircle, BookOpen, ExternalLink } from "lucide-react";
+import { Maximize2, Loader2, EyeOff, Play, Pause, AlertCircle, BookOpen, ExternalLink } from "lucide-react";
+import PageBackButton from "@/components/common/PageBackButton";
 import { useGlobalVideoSpace } from "@/hooks/useGlobalVideoSpace";
 import { toSec } from "@/lib/timecode";
+import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { useTranscriptCueFocus } from "@/hooks/useTranscriptCueFocus";
 
 // 快速导入学习页：由浏览器扩展跳转进入。
@@ -33,6 +35,7 @@ import { useTranscriptCueFocus } from "@/hooks/useTranscriptCueFocus";
 // 无 subs 时回退到站内 transcribeYouTubeClient / transcribeBilibiliClient 抓取。
 // 字幕就绪后自动创建 LocalMovieMeta 记录，可在「我的影片」中找到。
 export default function QuickStudy() {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const videoUrl = searchParams.get("url");
   const title = searchParams.get("title") || "快速导入视频";
@@ -271,26 +274,11 @@ export default function QuickStudy() {
   }, [clockRunning, currentTime, isBili, simTime]);
 
   const onStudyEnter = useCallback((sub) => {
-    const start = toSec(sub.time_start);
-    const end = toSec(sub.time_end);
-    if (Number.isNaN(start)) return;
-    let safeEnd = !Number.isNaN(end) && end > start ? end : NaN;
-    if (Number.isNaN(safeEnd)) {
-      let nextStart = NaN;
-      for (const item of materials?.subtitles || []) {
-        const candidate = toSec(item.time_start);
-        if (!Number.isNaN(candidate) && candidate > start && (Number.isNaN(nextStart) || candidate < nextStart)) nextStart = candidate;
-      }
-      if (!Number.isNaN(nextStart) && nextStart > start) safeEnd = nextStart;
-    }
-    if (Number.isNaN(safeEnd) || safeEnd <= start) {
-      const wordCount = (sub.text_en || "").split(/\s+/).filter(Boolean).length;
-      safeEnd = start + Math.max(3, wordCount * 0.45);
-    }
-    const nextLoop = { start, end: safeEnd + 0.3 };
+    const nextLoop = getStudyCueLoopRange(sub, materials?.subtitles || []);
+    if (!nextLoop) return;
     loopRangeRef.current = nextLoop;
     setLoopRange(nextLoop);
-    playFromLine(start);
+    playFromLine(nextLoop.start);
   }, [materials?.subtitles, playFromLine]);
   const onStudyExit = useCallback(() => {
     loopRangeRef.current = null;
@@ -327,11 +315,19 @@ export default function QuickStudy() {
     if (activeLoop && loopRange && studyTime != null && studyTime >= activeLoop.end) playFromLine(activeLoop.start);
   }, [loopRange, playFromLine, studyTime]);
 
-  const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, setActiveId: study.setActiveId });
+  const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, setActiveId: study.setActiveId, setSelectedCueId: study.setSelectedCueId });
   const startCloseReadingFromKeyboard = useCallback(() => {
     const cue = transcriptFocus.focusCurrentTranscriptCue();
     if (cue) study.toggleCloseReading(cue);
   }, [study.toggleCloseReading, transcriptFocus.focusCurrentTranscriptCue]);
+  const navigateTranscriptCue = useCallback((direction) => {
+    const cue = transcriptFocus.focusAdjacentTranscriptCue(direction);
+    if (!cue) return;
+    const start = toSec(cue.time_start);
+    if (!Number.isFinite(start)) return;
+    if (study.isCloseReadingLoop) study.toggleCloseReading(cue);
+    else playFromLine(start);
+  }, [playFromLine, study.isCloseReadingLoop, study.toggleCloseReading, transcriptFocus.focusAdjacentTranscriptCue]);
   useGlobalVideoSpace({
     togglePlayback: toggleClock,
     enabled: Boolean(materials?.videoUrl),
@@ -339,6 +335,7 @@ export default function QuickStudy() {
     exitCloseReading: study.exitCloseReading,
     startCloseReading: startCloseReadingFromKeyboard,
     focusCurrentCue: transcriptFocus.focusCurrentTranscriptCue,
+    navigateTranscriptCue,
   });
 
   const openTheater = useCallback(async () => {
@@ -522,9 +519,7 @@ export default function QuickStudy() {
   return (
     <div className="mx-auto w-full max-w-[1600px] px-5 lg:px-10 pt-28 pb-20">
       <div className="flex items-center justify-between">
-        <Link to="/local-study" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-copper">
-          <ArrowLeft size={15} /> 返回我的影片
-        </Link>
+        <PageBackButton onClick={() => navigate("/local-study")} />
         <Link to="/extension" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-copper">
           <BookOpen size={14} /> 扩展指南
         </Link>

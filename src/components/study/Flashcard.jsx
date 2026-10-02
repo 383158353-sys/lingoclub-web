@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Volume2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Volume2 } from "lucide-react";
 import { invokeAI } from "@/lib/localApi";
 import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer } from "@/lib/reviewDistractors";
+import { WordDetailOverlay } from "@/components/vocab/WordDetailDialog";
 
 function speak(text) {
   try {
@@ -21,6 +22,7 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack }) {
   const [questionState, setQuestionState] = useState({ key: null, question: null });
   const questionCache = useRef({ key: null, question: null });
   const autoTimer = useRef(null);
+  const startedAt = useRef(Date.now());
   const expr = card.expression_en || card.text_en || "";
   const meaning = card.meaning_zh || card.text_zh || "";
   const ts = card.timestamp || "";
@@ -67,6 +69,7 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack }) {
     setPicked(null);
     setCorrect(null);
     setShowAnswer(false);
+    startedAt.current = Date.now();
     return () => { if (autoTimer.current) clearTimeout(autoTimer.current); };
   }, [card.id, mode]);
 
@@ -85,15 +88,24 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack }) {
     const isCorrect = isCorrectReviewAnswer(question, option);
     setPicked(option.id);
     setCorrect(isCorrect);
-    if (isCorrect) autoTimer.current = setTimeout(() => onAnswer?.(card, true), mode === "r3" ? 1600 : 700);
+    const correctOption = question.options.find((candidate) => candidate.id === question.correctAnswerId);
+    const answerDetails = { question_type: mode, user_answer: option.value, correct_answer: correctOption?.value, rating: isCorrect ? 4 : 0, response_time_ms: Date.now() - startedAt.current };
+    if (isCorrect) autoTimer.current = setTimeout(() => onAnswer?.(card, true, answerDetails), mode === "r3" ? 1600 : 700);
     else setShowAnswer(true);
+    setAnswerDetails(answerDetails);
   };
+
+  const [answerDetails, setAnswerDetails] = useState(null);
 
   const continueAfterWrong = () => {
     if (autoTimer.current) clearTimeout(autoTimer.current);
     setShowAnswer(false);
-    onAnswer?.(card, false);
+    onAnswer?.(card, false, answerDetails);
   };
+
+  if (showAnswer && !correct) {
+    return <WordDetailOverlay vocabulary={card} onContinue={continueAfterWrong} returnContext="review" />;
+  }
 
   const answerClass = (option, revealed) => {
     if (!revealed) return "border-white/10 bg-background-elev text-foreground hover:border-mint/40 hover:bg-background-elev/80";
@@ -103,32 +115,30 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack }) {
   };
 
   return (
-    <div className="mx-auto w-full max-w-xl">
-      <div className="mb-4 flex items-center justify-center gap-2 text-[11px] uppercase tracking-luxe">
+    <div className="mx-auto flex min-h-[calc(100dvh-8rem)] w-full max-w-xl flex-col px-3 pb-3 md:min-h-0 md:px-0">
+      <div className="mb-2 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-luxe md:mb-4 md:gap-2 md:text-[11px]">
         <span className={mode === "r1" ? "text-mint" : "text-muted-foreground/60"}>① 英译中</span><ArrowRight size={11} className="text-muted-foreground/40" />
         <span className={mode === "r2" ? "text-mint" : "text-muted-foreground/60"}>② 中译英</span><ArrowRight size={11} className="text-muted-foreground/40" />
         <span className={mode === "r3" ? "text-mint" : "text-muted-foreground/60"}>③ 听音选词</span>
       </div>
-      <p className="mb-2 text-center text-[10px] text-muted-foreground/50">键盘 1-4 快速选答案</p>
-      <div className="min-h-[340px] rounded-2xl border border-white/10 bg-card p-6">
+      <p className="mb-1 text-center text-[10px] text-muted-foreground/50 md:mb-2">键盘 1-4 快速选答案</p>
+      <div className="flex flex-1 flex-col rounded-2xl border border-white/10 bg-card p-4 md:min-h-[340px] md:flex-none md:p-6">
         <p className="text-[11px] uppercase tracking-luxe text-mint/80">{card.source_movie_title || "语料复习"} · {mode === "r1" ? "第一轮 · 英译中" : mode === "r2" ? "第二轮 · 中译英" : "第三轮 · 听音选词"}</p>
         {mode === "r1" && <><div className="mt-4 flex items-center justify-between gap-3"><h3 className="break-words font-display text-3xl font-bold leading-snug text-foreground">{expr}</h3><button onClick={() => speak(expr)} className="rounded-full border border-white/10 p-2.5 text-muted-foreground hover:border-mint/40 hover:text-mint" aria-label="朗读"><Volume2 size={18} /></button></div>{ts && <p className="mt-1.5 font-mono text-[11px] text-mint/70">{ts}</p>}<p className="mt-4 text-sm text-muted-foreground">选择正确的中文词义</p></>}
         {mode === "r2" && <><h3 className="mt-4 break-words font-display text-3xl font-bold leading-snug text-foreground">{meaning}</h3>{ts && <p className="mt-1.5 font-mono text-[11px] text-mint/70">{ts}</p>}<p className="mt-4 text-sm text-muted-foreground">选择对应的英文表达</p></>}
-        {mode === "r3" && <><button onClick={() => speak(expr)} className="mt-6 flex w-full flex-col items-center justify-center rounded-xl border border-mint/30 bg-mint/5 py-8 text-mint hover:bg-mint/10"><Volume2 size={30} /><span className="mt-2 text-sm">重新播放英文，再选择中文释义</span></button></>}
-        {hasCompleteOptions ? <div className="mt-4 grid grid-cols-2 gap-3">
-          {options.map((option, index) => <button key={option.id} onClick={() => choose(option)} disabled={picked !== null} className={`rounded-xl border p-4 transition-colors ${answerClass(option, picked !== null)} ${mode === "r2" ? "text-center font-display text-base" : "text-left text-sm"}`}><span className="mr-1.5 text-[10px] text-muted-foreground/40">{index + 1}</span>{option.value || "—"}</button>)}
+        {mode === "r3" && <><button onClick={() => speak(expr)} className="mt-3 flex w-full flex-col items-center justify-center rounded-xl border border-mint/30 bg-mint/5 py-4 text-mint hover:bg-mint/10 md:mt-6 md:py-8"><Volume2 size={26} /><span className="mt-2 text-sm">重新播放英文，再选择中文释义</span></button></>}
+        {hasCompleteOptions ? <div className="mt-auto grid grid-cols-2 gap-2 pt-4 md:mt-4 md:gap-3 md:pt-0">
+          {options.map((option, index) => <button key={`${questionKey}:${option.id}`} onClick={(event) => { choose(option); if (event.detail > 0) event.currentTarget.blur(); }} disabled={picked !== null} className={`min-h-[4.25rem] touch-manipulation rounded-xl border p-3 transition-colors [-webkit-tap-highlight-color:transparent] focus-visible:outline focus-visible:outline-2 focus-visible:outline-copper ${answerClass(option, picked !== null)} ${mode === "r2" ? "text-center font-display text-base" : "text-left text-sm"}`}><span className="mr-1.5 text-[10px] text-muted-foreground/40">{index + 1}</span>{option.value || "—"}</button>)}
         </div> : <div className="mt-4 rounded-xl border border-mint/20 bg-mint/5 p-5 text-center text-sm text-muted-foreground">正在准备相近干扰项，请稍候…</div>}
-        {mode === "r3" && picked !== null && <div className={`mt-4 rounded-xl border p-4 ${correct ? "border-mint/20 bg-mint/5" : "border-rose-400/20 bg-rose-500/5"}`}>
-          <div className={`flex items-center gap-2 text-sm ${correct ? "text-mint" : "text-rose-300"}`}>{correct ? <Check size={16} /> : <X size={16} />}{correct ? "回答正确" : "回答错误 · 正确释义"}</div>
+        {mode === "r3" && picked !== null && correct && <div className="mt-4 rounded-xl border border-mint/20 bg-mint/5 p-4">
+          <div className="flex items-center gap-2 text-sm text-mint"><Check size={16} />回答正确</div>
           <p className="mt-2 font-display text-lg text-foreground">{expr}</p>
           {presentation.phonetic && <p className="mt-1 font-mono text-sm text-muted-foreground">{presentation.phonetic}</p>}
           <p className="mt-1 text-sm text-muted-foreground">{presentation.answerText}</p>
-          {!correct && <button onClick={continueAfterWrong} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-mint px-4 py-2.5 text-sm font-semibold text-background">继续复习 <ArrowRight size={14} /></button>}
         </div>}
-        {showAnswer && mode !== "r3" && <div className="mt-4 rounded-xl border border-rose-400/20 bg-rose-500/5 p-4"><div className="flex items-center gap-2 text-sm text-rose-300"><X size={16} /> 正确答案</div><p className="mt-2 font-display text-lg text-foreground">{mode === "r1" ? meaning : expr}</p><p className="mt-1 text-sm text-muted-foreground">{mode === "r1" ? expr : meaning}</p><button onClick={continueAfterWrong} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-mint px-4 py-2.5 text-sm font-semibold text-background">继续复习 <ArrowRight size={14} /></button></div>}
         {picked !== null && correct && !showAnswer && <p className="mt-4 flex items-center gap-1.5 text-sm text-mint"><Check size={16} /> 正确，即将进入下一张…</p>}
       </div>
-      <div className="mt-5 flex items-center justify-between"><button onClick={() => onBack?.()} className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-sm text-muted-foreground hover:border-mint/40 hover:text-mint"><ArrowLeft size={14} /> 上一张</button></div>
+      <div className="mt-3 flex items-center justify-between md:mt-5"><button onClick={() => onBack?.()} className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-sm text-muted-foreground hover:border-mint/40 hover:text-mint"><ArrowLeft size={14} /> 上一张</button></div>
     </div>
   );
 }

@@ -1,9 +1,9 @@
 const HEAVY_LOCAL_FIELDS = [
   "video_blob", "videoBlob", "video_file", "videoFile", "poster_blob", "posterBlob", "cover_blob", "coverBlob",
-  "subtitle_text", "subtitleText", "subtitle_cues", "subtitleCues", "poster_data", "posterData", "cover_data", "coverData", "file",
+  "poster_data", "posterData", "cover_data", "coverData", "file",
   "video_data", "videoData", "video_base64", "videoBase64", "poster_base64", "posterBase64", "cover_base64", "coverBase64",
-  "subtitle_file", "subtitleFile", "subtitle_data", "subtitleData", "cue_array", "cueArray",
-  "video_handle", "videoHandle", "subtitle_handle", "subtitleHandle", "directory_handle", "directoryHandle", "subtitleDirectoryHandle",
+  "subtitle_file", "subtitleFile", "subtitle_handle", "subtitleHandle", "directory_handle", "directoryHandle", "subtitleDirectoryHandle",
+  "video_handle", "videoHandle",
 ];
 
 function isBlob(value) {
@@ -17,7 +17,7 @@ function isLocalMovie(movie) {
   return !url || url.startsWith("blob:") || movie?.media_type === "episode";
 }
 
-export function safeMovie(movie, { dropLocalSubtitles = Boolean(movie?.subtitle_id) } = {}) {
+export function safeMovie(movie) {
   const result = { ...movie };
   for (const key of HEAVY_LOCAL_FIELDS) delete result[key];
   for (const [key, value] of Object.entries(result)) {
@@ -26,16 +26,6 @@ export function safeMovie(movie, { dropLocalSubtitles = Boolean(movie?.subtitle_
   if (typeof result.video_url === "string" && result.video_url.startsWith("blob:")) result.video_url = "";
   if (isLocalMovie(result)) {
     if (typeof result.poster_url === "string" && /^(?:blob:|data:image\/)/i.test(result.poster_url)) result.poster_url = "";
-    if (dropLocalSubtitles) {
-      const count = Array.isArray(result.subtitles) ? result.subtitles.length : Number(result.subtitle_count) || 0;
-      delete result.subtitles;
-      delete result.subtitle_text;
-      delete result.subtitleText;
-      delete result.subtitle_cues;
-      delete result.subtitleCues;
-      if (count && !result.subtitle_id) result.subtitle_id = result.id;
-      if (count) result.subtitle_count = count;
-    }
   }
   return result;
 }
@@ -53,9 +43,16 @@ export function safeFolder(folder) {
 }
 
 export function lightweightCloudState(state = {}) {
+  const movies = Array.isArray(state.movies) ? state.movies.map(safeMovie) : [];
+  for (const movie of movies) {
+    // Device-local file status is retained in local metadata, but never sent to
+    // another device as account state.
+    delete movie.local_video_temporary;
+    delete movie.local_video_storage;
+  }
   return {
     ...state,
-    movies: Array.isArray(state.movies) ? state.movies.map((movie) => safeMovie(movie, { dropLocalSubtitles: isLocalMovie(movie) })) : [],
+    movies,
     folders: Array.isArray(state.folders) ? state.folders.map(safeFolder) : [],
   };
 }

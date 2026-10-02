@@ -40,6 +40,52 @@
       "type": "string",
       "title": "\u6765\u6e90\u53f0\u8bcdID"
     },
+    "source_episode_id": {
+      "type": "string",
+      "title": "\u6765\u6e90\u5267\u96c6ID"
+    },
+    "source_episode_title": {
+      "type": "string",
+      "title": "\u6765\u6e90\u5267\u96c6"
+    },
+    "source_sentence_en": {
+      "type": "string",
+      "title": "\u539f\u59cb\u82f1\u6587\u53f0\u8bcd\u5feb\u7167"
+    },
+    "source_sentence_zh": {
+      "type": "string",
+      "title": "\u539f\u59cb\u4e2d\u6587\u53f0\u8bcd\u5feb\u7167"
+    },
+    "source_timestamp_seconds": {
+      "type": "number",
+      "title": "\u6765\u6e90\u53f0\u8bcd\u79d2\u6570"
+    },
+    "source_timestamp_text": {
+      "type": "string",
+      "title": "\u6765\u6e90\u65f6\u95f4\u6587\u672c"
+    },
+    "source_type": {
+      "type": "string",
+      "title": "\u6765\u6e90\u7c7b\u578b"
+    },
+    "source_record_id": {
+      "type": "string",
+      "title": "\u6765\u6e90\u8bb0\u5f55 ID"
+    },
+    "source_url": {
+      "type": "string",
+      "title": "\u539f\u7247 URL"
+    },
+    "source_video_id": {
+      "type": "string",
+      "title": "YouTube video ID"
+    },
+    "sources": {
+      "type": "array",
+      "title": "\u591a\u4e2a\u771f\u5b9e\u8bed\u6599\u6765\u6e90",
+      "items": { "type": "object", "additionalProperties": true },
+      "description": "\u540c\u4e00\u4e2a\u8bcd\u6761\u53ef\u4ee5\u7d2f\u79ef\u591a\u6761\u5f71\u89c6\u53f0\u8bcd\u6765\u6e90\u548c\u5feb\u7167\u3002"
+    },
     "timestamp": {
       "type": "string",
       "title": "\u51fa\u73b0\u65f6\u95f4"
@@ -66,16 +112,23 @@
       "title": "\u590d\u4e60\u6b21\u6570",
       "default": 0
     },
+    "reviewCount": { "type": "number", "default": 0 },
     "correct_count": {
       "type": "number",
       "title": "\u7b54\u5bf9\u6b21\u6570",
       "default": 0
     },
+    "correctCount": { "type": "number", "default": 0 },
     "error_count": {
       "type": "number",
       "title": "\u7b54\u9519\u6b21\u6570",
       "default": 0
     },
+    "wrongCount": { "type": "number", "default": 0 },
+    "lastReviewedAt": { "type": "string", "format": "date-time" },
+    "nextReviewAt": { "type": "string", "format": "date-time" },
+    "intervalDays": { "type": "number", "default": 0 },
+    "status": { "type": "string" },
     "review_history": {
       "type": "array",
       "title": "\u590d\u4e60\u5386\u53f2",

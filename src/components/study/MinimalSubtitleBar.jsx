@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
-import { guestVocab } from "@/lib/guestVocab";
+import { saveVocabularyEntry } from "@/lib/vocabularySources";
 import { invokeAI } from "@/lib/localApi";
 import { Loader2, Bookmark, BookmarkCheck, BookOpen, Repeat } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { toPosEn } from "@/lib/posMap";
 import { getCachedProfile, setCachedProfile } from "@/lib/vocabCache";
+import WordDetailDialog from "@/components/vocab/WordDetailDialog";
+import { AISettingsButton } from "@/components/AISettingsPanel";
+import { safeAIErrorMessage } from "@/lib/aiSettings";
+import { normalizeSourceCue } from "@/lib/vocabularySourceCue";
 
 // 悬浮字幕：只渲染当前激活的那一句台词（随播放进度自动切换），
 // 浮在视频区域上方。显示完整台词（不截断，自动换行）。
@@ -20,6 +24,11 @@ export default function MinimalSubtitleBar({
   movieId,
   videoId = movieId,
   movieTitle,
+  episodeId,
+  episodeTitle,
+  sourceType,
+  sourceUrl,
+  sourceRecordId,
   storageKey = "min_sub_pos",
   storageSizeKey = "min_sub_size",
   onToggleAnalysis,
@@ -46,6 +55,7 @@ export default function MinimalSubtitleBar({
 
   const [word, setWord] = useState(null);
   const [saved, setSaved] = useState(false);
+  const [detailWord, setDetailWord] = useState(null);
   const { toast } = useToast();
   const pillRef = useRef(null);
   const textRef = useRef(null);
@@ -123,7 +133,6 @@ export default function MinimalSubtitleBar({
   const lookupWord = async (w) => {
     setSaved(false);
     setWord({ text: w, loading: true, profile: null, err: "" });
-    if (guestVocab.has(w)) setSaved(true);
     // 内存缓存命中 → 秒弹
     const cached = getCachedProfile(w);
     if (cached) {
@@ -148,13 +157,12 @@ export default function MinimalSubtitleBar({
       setCachedProfile(w, profile);
       setWord({ text: w, loading: false, profile, err: "" });
     } catch (e) {
-      setWord({ text: w, loading: false, profile: null, err: e?.message || "查询失败" });
+      setWord({ text: w, loading: false, profile: null, err: safeAIErrorMessage(e) });
     }
   };
 
   const saveWord = async (w, meaning) => {
-    // 防重复收藏
-    if (guestVocab.has(w)) { setSaved(true); toast({ title: "已在你的单词库中", description: w }); return; }
+    const cue = normalizeSourceCue(active || {});
     const payload = {
       text_en: w,
       text_zh: meaning || "",
@@ -164,7 +172,21 @@ export default function MinimalSubtitleBar({
       tag: "划词",
       tags: ["划词"],
       source_movie_id: movieId,
+      source_record_id: sourceRecordId || movieId,
+      source_url: sourceUrl || "",
+      source_video_id: youtubeIdFromUrl(sourceUrl),
       source_movie_title: movieTitle,
+      source_episode_id: episodeId,
+      source_episode_title: episodeTitle,
+      source_sentence_en: cue.textEn,
+      source_sentence_zh: cue.textZh,
+      source_subtitle_id: cue.id,
+      source_time_start: cue.start,
+      source_time_end: cue.end,
+      source_timestamp_seconds: cue.start,
+      source_timestamp_end_seconds: cue.end,
+      source_timestamp_text: cue.start ?? "",
+      source_type: sourceType || (episodeId ? "episode" : "local"),
       mastery_level: "new",
       review_count: 0,
       correct_count: 0,
@@ -173,8 +195,8 @@ export default function MinimalSubtitleBar({
       profile: word.profile || null,
     };
     try {
-      await guestVocab.create(payload);
-      toast({ title: "已加入我的单词库", description: w });
+      await saveVocabularyEntry(payload);
+      toast({ title: "已保存这一条语境", description: w });
       setSaved(true);
     } catch (e) {
       toast({ title: "收藏失败", description: e?.message, variant: "destructive" });
@@ -276,7 +298,7 @@ export default function MinimalSubtitleBar({
           className={`absolute left-0 w-fit max-w-[90vw] rounded-xl border border-border bg-card px-3 py-2 text-left shadow-xl ${popoverBelow ? "top-full mt-2" : "bottom-full mb-2"}`}
         >
           {word.loading && <p className="flex items-center gap-1 text-xs text-muted-foreground"><Loader2 size={11} className="animate-spin" /> 查询中…</p>}
-          {word.err && !word.loading && <p className="text-xs text-rose-300">{word.err}</p>}
+          {word.err && !word.loading && <div className="space-y-1"><p className="text-xs text-rose-300">{word.err}</p>{word.err === "AI 解析尚未配置" && <AISettingsButton className="text-[11px] text-copper underline">设置 AI →</AISettingsButton>}</div>}
           {word.profile && !word.loading && (
             <div className="flex flex-col gap-0">
               <div className="flex items-center justify-between gap-2">
@@ -294,10 +316,14 @@ export default function MinimalSubtitleBar({
                 {toPosEn(word.profile.pos) && <span className="text-[11px] italic text-mint/80">{toPosEn(word.profile.pos)}</span>}
               </div>
               {word.profile.meaning && <p className="mt-0.5 text-xs leading-snug text-foreground/90">{word.profile.meaning}</p>}
+              <button type="button" onClick={() => { const cue = normalizeSourceCue(active || {}); setDetailWord({ id: `lookup:${word.text}`, expression_en: word.text, text_en: word.text, meaning_zh: word.profile.meaning || "", text_zh: word.profile.meaning || "", profile: word.profile, source_sentence_en: cue.textEn, source_sentence_zh: cue.textZh, source_movie_id: movieId, source_record_id: sourceRecordId || movieId, source_url: sourceUrl || "", source_video_id: youtubeIdFromUrl(sourceUrl), source_movie_title: movieTitle, source_episode_id: episodeId, source_episode_title: episodeTitle, source_subtitle_id: cue.id, source_time_start: cue.start, source_time_end: cue.end, source_timestamp_seconds: cue.start, source_timestamp_end_seconds: cue.end, source_timestamp_text: cue.start ?? "", source_type: sourceType || (episodeId ? "episode" : "local") }); }} className="mt-2 text-left text-[10px] text-copper hover:underline">查看完整词条</button>
             </div>
           )}
         </div>
       )}
+      <WordDetailDialog vocabulary={detailWord} open={Boolean(detailWord)} onOpenChange={(open) => { if (!open) setDetailWord(null); }} />
     </div>
   );
 }
+
+function youtubeIdFromUrl(value) { try { const url = new URL(value); return url.hostname.endsWith("youtu.be") ? url.pathname.slice(1).split("/")[0] : url.searchParams.get("v") || ""; } catch { return ""; } }

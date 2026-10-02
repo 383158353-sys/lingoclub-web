@@ -6,8 +6,8 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { base44 } from '@/api/base44Client';
 import { vocabTypeLabel } from '@/lib/srs';
+import { saveVocabularyEntry } from '@/lib/vocabularySources';
 
 export default function SaveVocabDialog({
   open, onOpenChange,
@@ -35,22 +35,33 @@ export default function SaveVocabDialog({
     if (!textEn.trim()) return;
     setSaving(true);
     try {
-      await base44.entities.Vocabulary.create({
+      const cue = source?.sourceCue || source?.source_cue || {};
+      await saveVocabularyEntry({
         type,
+        expression_en: textEn.trim(),
         text_en: textEn.trim(),
         text_zh: textZh.trim(),
+        meaning_zh: textZh.trim(),
         explanation: explanation.trim(),
         tags: tags.split(',').map(t => t.trim()).filter(Boolean),
         source_movie_id: source?.movie_id,
+        source_record_id: source?.source_record_id || source?.movie_id,
         source_movie_title: source?.movie_title,
         source_episode_id: source?.episode_id,
         source_subtitle_id: source?.subtitle_id,
+        source_time_start: cue.start ?? source?.source_time_start,
+        source_time_end: cue.end ?? source?.source_time_end,
+        source_sentence_en: cue.textEn || source?.text_en || textEn.trim(),
+        source_sentence_zh: cue.textZh || source?.text_zh || textZh.trim(),
+        sourceCue: cue,
+        source_url: source?.source_url || "",
+        source_type: source?.source_type || "local",
         timestamp: source?.timestamp,
         review_status: 'new',
         review_count: 0,
         ease_factor: 2.5,
         interval_days: 0,
-        next_review: new Date().toISOString(),
+        next_review_date: new Date().toISOString(),
       });
       onOpenChange(false);
     } finally { setSaving(false); }

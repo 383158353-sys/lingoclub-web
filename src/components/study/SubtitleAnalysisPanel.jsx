@@ -4,9 +4,11 @@ import { useToast } from "@/components/ui/use-toast";
 import { Sparkles, Loader2, Volume2, BookOpen, Globe, Languages, Quote } from "lucide-react";
 import VocabSaveButton from "./VocabSaveButton";
 import SelectionBubble from "./SelectionBubble";
+import { AISettingsButton } from "@/components/AISettingsPanel";
+import { safeAIErrorMessage } from "@/lib/aiSettings";
 
 // Renders the structured AI language + cultural analysis for one subtitle line.
-export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, videoId = "local", sceneId, onSaved }) {
+export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, videoId = "local", sceneId, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, onSaved }) {
   const stored = subtitle.analysis_status === "done" && subtitle.ai_analysis ? subtitle.ai_analysis : null;
   const [analysis, setAnalysis] = useState(stored);
   const [loading, setLoading] = useState(false);
@@ -30,8 +32,9 @@ export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, v
       if (!a) throw new Error("解析未返回内容");
       setAnalysis(a);
     } catch (e) {
-      setError(e.message || "解析失败");
-      toast({ title: "AI 解析失败", description: e.message, variant: "destructive" });
+      const safeMessage = safeAIErrorMessage(e);
+      setError(safeMessage);
+      toast({ title: e?.code === "AI_NOT_CONFIGURED" ? "AI 解析尚未配置" : "AI 解析失败", description: safeMessage, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -43,6 +46,8 @@ export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, v
         <Sparkles size={22} className="text-copper" />
         <p className="mt-3 text-sm text-muted-foreground">让 AI 解构这句台词的单词、语法、发音与文化背景。</p>
         {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+        {error === "AI 解析尚未配置" && <AISettingsButton className="mt-2 text-xs text-copper underline">设置 AI →</AISettingsButton>}
+        <div className="mt-2"><AISettingsButton className="text-xs text-muted-foreground hover:text-copper">AI 设置</AISettingsButton></div>
         <button
           onClick={generate}
           className="mt-4 inline-flex items-center gap-2 rounded-full bg-copper px-5 py-2 text-sm font-medium text-copper-foreground transition-transform hover:scale-[1.02]"
@@ -63,7 +68,8 @@ export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, v
   }
 
   const a = analysis;
-  const translation = a?.translation || subtitle.text_zh || "";
+  const translation = a?.translation || subtitle.ai_processing?.translation || subtitle.text_zh || "";
+  const sourceCue = { id: subtitle.id, start: subtitle.time_start, end: subtitle.time_end, textEn: subtitle.text_en, textZh: translation };
   return (
     <div className="space-y-5">
       {/* header line */}
@@ -71,13 +77,22 @@ export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, v
         <div className="min-w-0">
           <SelectionBubble
             text={subtitle.text_en}
+            translation={translation}
             className="select-text font-display text-lg leading-snug text-foreground"
             title="可拖动选中单词或短语加入收藏"
             movieId={movieId}
+            sourceUrl={sourceUrl}
+            sourceRecordId={sourceRecordId}
             movieTitle={movieTitle}
             sceneId={sceneId}
             subtitleId={subtitle.id}
+            sourceCue={sourceCue}
             timestamp={subtitle.timestamp}
+            sourceSentenceEn={subtitle.text_en}
+            sourceSentenceZh={translation}
+            episodeId={episodeId}
+            episodeTitle={episodeTitle}
+            sourceType={sourceType}
           />
           {translation && <p className="mt-1.5 flex items-start gap-1.5 text-[15px] leading-relaxed text-muted-foreground"><Languages size={13} className="mt-1 shrink-0 text-copper/60" />{translation}</p>}
           {subtitle.speaker && <p className="mt-1 text-xs text-copper/80">— {subtitle.speaker}</p>}
@@ -93,7 +108,16 @@ export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, v
               movieTitle={movieTitle}
               sceneId={sceneId}
               subtitleId={subtitle.id}
+              sourceCue={sourceCue}
               timestamp={subtitle.timestamp}
+              timestampSeconds={subtitle.time_start}
+              sourceSentenceEn={subtitle.text_en}
+              sourceSentenceZh={translation}
+              episodeId={episodeId}
+              episodeTitle={episodeTitle}
+              sourceType={sourceType}
+              sourceUrl={sourceUrl}
+              sourceRecordId={sourceRecordId}
               onSaved={onSaved}
             />
           )}
@@ -114,7 +138,7 @@ export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, v
                     <span className="block text-xs text-muted-foreground">{w.meaning}</span>
                     {w.contextMeaning && <span className="block text-[11px] text-muted-foreground/70">{w.contextMeaning}</span>}
                   </p>
-                  <VocabSaveButton expression={w.word} meaning={w.meaning} tag="生词" type="word" movieId={movieId} movieTitle={movieTitle} sceneId={sceneId} subtitleId={subtitle.id} timestamp={subtitle.timestamp} onSaved={onSaved} />
+                  <VocabSaveButton expression={w.word} meaning={w.meaning} tag="生词" type="word" movieId={movieId} movieTitle={movieTitle} sceneId={sceneId} subtitleId={subtitle.id} sourceCue={sourceCue} timestamp={subtitle.timestamp} timestampSeconds={subtitle.time_start} timestampEnd={subtitle.time_end} sourceSentenceEn={subtitle.text_en} sourceSentenceZh={translation} episodeId={episodeId} episodeTitle={episodeTitle} sourceType={sourceType} sourceUrl={sourceUrl} sourceRecordId={sourceRecordId} onSaved={onSaved} />
                 </li>
               ))}
             </ul>
@@ -130,7 +154,7 @@ export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, v
                     <span className="block text-xs text-muted-foreground">{p.meaning}</span>
                     {p.usage && <span className="block text-[11px] text-muted-foreground/70">{p.usage}</span>}
                   </p>
-                  <VocabSaveButton expression={p.phrase} meaning={p.meaning} tag="短语" type="phrase" movieId={movieId} movieTitle={movieTitle} sceneId={sceneId} subtitleId={subtitle.id} timestamp={subtitle.timestamp} onSaved={onSaved} />
+                  <VocabSaveButton expression={p.phrase} meaning={p.meaning} tag="短语" type="phrase" movieId={movieId} movieTitle={movieTitle} sceneId={sceneId} subtitleId={subtitle.id} sourceCue={sourceCue} timestamp={subtitle.timestamp} timestampSeconds={subtitle.time_start} timestampEnd={subtitle.time_end} sourceSentenceEn={subtitle.text_en} sourceSentenceZh={translation} episodeId={episodeId} episodeTitle={episodeTitle} sourceType={sourceType} sourceUrl={sourceUrl} sourceRecordId={sourceRecordId} onSaved={onSaved} />
                 </li>
               ))}
             </ul>
@@ -153,7 +177,7 @@ export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, v
                 <p className="text-sm text-foreground">{e.expression}</p>
                 {e.meaning && <p className="mt-1 text-xs text-muted-foreground">{e.meaning}</p>}
                 <div className="mt-2">
-                  <VocabSaveButton expression={e.expression} meaning={e.meaning} tag="扩展表达" type="phrase" movieId={movieId} movieTitle={movieTitle} sceneId={sceneId} subtitleId={subtitle.id} timestamp={subtitle.timestamp} onSaved={onSaved} />
+                  <VocabSaveButton expression={e.expression} meaning={e.meaning} tag="扩展表达" type="phrase" movieId={movieId} movieTitle={movieTitle} sceneId={sceneId} subtitleId={subtitle.id} sourceCue={sourceCue} timestamp={subtitle.timestamp} timestampSeconds={subtitle.time_start} timestampEnd={subtitle.time_end} sourceSentenceEn={subtitle.text_en} sourceSentenceZh={translation} episodeId={episodeId} episodeTitle={episodeTitle} sourceType={sourceType} sourceUrl={sourceUrl} sourceRecordId={sourceRecordId} onSaved={onSaved} />
                 </div>
               </div>
             ))}

@@ -19,7 +19,7 @@ import { getCueContext, subtitleHash } from "@/lib/subtitleAiProcessing";
 // It does NOT check visibility or trigger scrolls. All scrolling happens in the
 // activeId useEffect, guarded by programmaticRef so our own scrolls don't
 // trigger the listener.
-export default function SubtitleScrubber({ study, movieId, movieTitle, videoId = movieId, editable, listHeight, focusRequest }) {
+export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest }) {
   const { loading, subs, activeId, analyzingId, hasAnyTs, onLineClick, onStudyClick, loopingId, updateSub } = study;
   const listRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
@@ -197,8 +197,17 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, videoId =
                           movieId={movieId}
                           videoId={videoId}
                           movieTitle={movieTitle}
+                          episodeId={episodeId}
+                          episodeTitle={episodeTitle}
+                          sourceType={sourceType || (episodeId ? "episode" : "local")}
+                          sourceUrl={sourceUrl}
+                          sourceRecordId={sourceRecordId || movieId}
                           subtitleId={s.id}
                           timestamp={s.time_start}
+                          timestampSeconds={s.time_start}
+                          timestampEnd={s.time_end}
+                          sourceCue={{ id: s.id, start: s.time_start, end: s.time_end, textEn: s.text_en, textZh: s.text_zh }}
+                          translation={s.text_zh}
                           aiProcessing={s.ai_processing}
                           subtitleHash={processingHash}
                           contextText={[...cueContext.previous, cueContext.target, ...cueContext.next].filter(Boolean).map((cue) => cue.text).join("\n")}
@@ -262,7 +271,7 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, videoId =
               title={showChinese ? "隐藏中文" : "显示中文"}
               aria-label={showChinese ? "隐藏中文" : "显示中文"}
               aria-pressed={showChinese}
-              className="inline-flex h-7 min-w-8 items-center justify-center gap-1 rounded-full px-1.5 text-[11px] font-semibold transition-colors hover:bg-white/15"
+              className={`inline-flex h-7 min-w-8 items-center justify-center gap-1 rounded-full px-1.5 text-[11px] font-semibold transition-colors hover:bg-white/15 ${showChinese ? "text-mint" : "text-white"}`}
             >
               <Languages size={13} />
             </button>

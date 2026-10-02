@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { lightweightCloudState, safeMovie } from "../src/lib/localCloudPayload.js";
 
-test("cloud local-library payload keeps metadata while excluding heavy media and subtitle data", () => {
+test("cloud local-library payload keeps subtitles and metadata while excluding video and heavy assets", () => {
   const state = lightweightCloudState({
     movies: [{
       id: "episode-1",
@@ -31,11 +31,11 @@ test("cloud local-library payload keeps metadata while excluding heavy media and
   });
   const [movie] = state.movies;
   assert.equal(movie.name, "S01E01");
-  assert.equal(movie.subtitle_id, "episode-1");
-  assert.equal(movie.subtitle_count, 1);
+  assert.deepEqual(movie.subtitles, [{ text_en: "large subtitle text", cue: { start: 0 } }]);
   assert.equal(movie.learning_progress.lastCue, 8);
   assert.equal(movie.video_url, "");
-  for (const key of ["subtitles", "subtitle_text", "video_blob", "poster_blob", "videoHandle", "directoryHandle", "subtitleDirectoryHandle"]) assert.equal(key in movie, false);
+  assert.equal(movie.subtitle_text, "full SRT payload");
+  for (const key of ["video_blob", "poster_blob", "videoHandle", "directoryHandle", "subtitleDirectoryHandle"]) assert.equal(key in movie, false);
   assert.ok(!String(movie.poster_url || "").startsWith("data:image/"));
   assert.deepEqual(state.folders[0].episodeIds, ["episode-1"]);
   assert.equal(state.folders[0].cover_id, "season-1");
@@ -52,4 +52,22 @@ test("local subtitle data remains available during migration/hydration, and YouT
   }, { dropLocalSubtitles: true });
   assert.equal(youtube.subtitles.length, 1);
   assert.equal(youtube.poster_url, "https://img.youtube.com/poster.jpg");
+});
+
+test("device-local video persistence status never syncs with account state", () => {
+  const source = {
+    id: "local-video",
+    local_video_temporary: true,
+    local_video_storage: "temporary",
+    videoBlob: new Blob(["private local media"]),
+    videoHandle: { kind: "file" },
+  };
+  const local = safeMovie(source);
+  assert.equal(local.local_video_temporary, true);
+  assert.equal(local.local_video_storage, "temporary");
+  const [cloud] = lightweightCloudState({ movies: [source] }).movies;
+  assert.equal("local_video_temporary" in cloud, false);
+  assert.equal("local_video_storage" in cloud, false);
+  assert.equal("videoBlob" in cloud, false);
+  assert.equal("videoHandle" in cloud, false);
 });

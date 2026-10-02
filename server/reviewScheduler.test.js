@@ -5,7 +5,10 @@ import {
   dailyQueueSnapshot,
   restoreDailyQueue,
   scheduleStage,
+  classifyMistakeTiers,
+  normalizeVocabularyProgress,
 } from "../src/lib/srs.js";
+import { createReviewLog } from "../src/lib/reviewLogModel.js";
 
 const date = (day) => new Date(2026, 0, day, 12, 0, 0);
 const makeCard = (id, fields = {}) => ({
@@ -89,7 +92,7 @@ test("correct answers advance through 1/3/7/14/30/60 day intervals", () => {
   assert.equal(card.status, "mastered");
 });
 
-test("wrong answers downgrade intervals without resetting history and same-day grading is idempotent", () => {
+test("wrong answers downgrade intervals without resetting history and each same-day answer counts", () => {
   const cases = [[60, 14], [30, 7], [14, 3], [7, 1], [3, 1], [1, 1]];
   for (const [previous, expected] of cases) {
     const card = makeCard(`wrong-${previous}`, { reviewCount: 4, correctCount: 3, wrongCount: 1, intervalDays: previous });
@@ -98,8 +101,8 @@ test("wrong answers downgrade intervals without resetting history and same-day g
     assert.equal(first.reviewCount, 5);
     assert.equal(first.wrongCount, 2);
     const duplicate = scheduleStage({ ...card, ...first }, false, new Date(date(10).getTime() + 5 * 3600000));
-    assert.equal(duplicate.reviewCount, first.reviewCount);
-    assert.equal(duplicate.nextReviewAt, first.nextReviewAt);
+    assert.equal(duplicate.reviewCount, first.reviewCount + 1);
+    assert.equal(duplicate.wrongCount, first.wrongCount + 1);
   }
 });
 
@@ -119,4 +122,52 @@ test("daily queue and review progress survive user_state JSON serialization and 
   assert.equal(decoded.reviewSession.phase, "r2");
   assert.equal(decoded.reviewSession.reviewed, 3);
   assert.equal(decoded.vocab[1].reviewCount, 1);
+});
+
+test("every answer log keeps the durable review fields and normalizes the review mode", () => {
+  const log = createReviewLog({
+    vocabularyId: "word-1", reviewedAt: date(5), sessionId: "00000000-0000-4000-8000-000000000001",
+    questionType: "r2", userAnswer: "wrong", correctAnswer: "right", isCorrect: false,
+    rating: 0, responseTimeMs: 843, previousMastery: "learning", newMastery: "learning",
+    previousNextReviewAt: date(6), newNextReviewAt: date(6), reviewMode: "weak",
+  });
+  assert.equal(log.vocabulary_id, "word-1");
+  assert.equal(log.is_correct, false);
+  assert.equal(log.review_mode, "weak");
+  assert.equal(log.response_time_ms, 843);
+  assert.equal(log.user_answer, "wrong");
+  assert.equal(log.correct_answer, "right");
+  assert.ok(log.id);
+});
+
+test("legacy vocabulary progress normalizes old counters and review history without losing data", () => {
+  const normalized = normalizeVocabularyProgress({
+    id: "legacy", review_count: 3, correct_count: 2, error_count: 1,
+    interval_days: 7, last_reviewed_date: "2026-01-02T00:00:00.000Z",
+    review_history: [{ date: "2026-01-01", result: "wrong" }], stage: 3,
+  });
+  assert.equal(normalized.reviewCount, 3);
+  assert.equal(normalized.correctCount, 2);
+  assert.equal(normalized.wrongCount, 1);
+  assert.equal(normalized.intervalDays, 7);
+  assert.equal(normalized.review_history.length, 1);
+  assert.equal(normalized.last_reviewed_at, "2026-01-02T00:00:00.000Z");
+});
+
+test("a single miss enters mistake tiers and recent stable results downgrade old weakness", () => {
+  const logs = [
+    { vocabulary_id: "occasional", reviewed_at: "2026-01-01", is_correct: false },
+    ...[2, 3, 4, 5].map((day) => ({ vocabulary_id: "occasional", reviewed_at: `2026-01-0${day}`, is_correct: true })),
+    { vocabulary_id: "weak", reviewed_at: "2026-01-05", is_correct: false },
+    { vocabulary_id: "focus", reviewed_at: "2026-01-04", is_correct: false },
+    { vocabulary_id: "focus", reviewed_at: "2026-01-05", is_correct: false },
+  ];
+  const tiers = classifyMistakeTiers([
+    makeCard("occasional", { reviewCount: 5, wrongCount: 1, nextReviewAt: "2026-01-10" }),
+    makeCard("weak", { reviewCount: 3, wrongCount: 1 }),
+    makeCard("focus", { reviewCount: 3, wrongCount: 2 }),
+  ], logs, date(6));
+  assert.deepEqual(tiers.occasional.map((card) => card.id), ["occasional"]);
+  assert.deepEqual(tiers.weak.map((card) => card.id), ["weak"]);
+  assert.deepEqual(tiers.focus.map((card) => card.id), ["focus"]);
 });

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useAuth } from "@/lib/AuthContext";
 import VideoPlayer from "@/components/study/VideoPlayer";
@@ -18,14 +18,18 @@ import SubListResizer from "@/components/study/SubListResizer";
 import BilibiliScrubber from "@/components/study/BilibiliScrubber";
 
 import { toSec, fromSec } from "@/lib/timecode";
+import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { useToast } from "@/components/ui/use-toast";
-import { ArrowLeft, ArrowRight, Clock, Play, Pause, Loader2, Pencil, Check, X as XIcon, Send, EyeOff, ExternalLink, Info, Maximize2 } from "lucide-react";
+import { ArrowRight, Clock, Play, Pause, Loader2, Pencil, Check, X as XIcon, Send, EyeOff, ExternalLink, Info, Maximize2 } from "lucide-react";
+import PageBackButton from "@/components/common/PageBackButton";
 import { useGlobalVideoSpace } from "@/hooks/useGlobalVideoSpace";
 import { useTranscriptCueFocus } from "@/hooks/useTranscriptCueFocus";
 
 export default function EpisodePage() {
+  const navigate = useNavigate();
   // (布局重构：Box1 调视频宽度等比缩放 / Box2 调台词列表高度 / 手机横屏影院模式)
   const { episodeId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [episode, setEpisode] = useState(null);
   const [movie, setMovie] = useState(null);
   const [scenes, setScenes] = useState([]);
@@ -227,26 +231,11 @@ export default function EpisodePage() {
   }, [isBilibili, clockRunning]);
   const studyTime = isBilibili ? simTime : currentTime;
   const onStudyEnter = useCallback((sub) => {
-    const start = toSec(sub.time_start);
-    const end = toSec(sub.time_end);
-    if (Number.isNaN(start)) return;
-    let safeEnd = !Number.isNaN(end) && end > start ? end : NaN;
-    if (Number.isNaN(safeEnd)) {
-      let nextStart = NaN;
-      for (const item of studySubsRef.current) {
-        const candidate = toSec(item.time_start);
-        if (!Number.isNaN(candidate) && candidate > start && (Number.isNaN(nextStart) || candidate < nextStart)) nextStart = candidate;
-      }
-      if (!Number.isNaN(nextStart) && nextStart > start) safeEnd = nextStart;
-    }
-    if (Number.isNaN(safeEnd) || safeEnd <= start) {
-      const wordCount = (sub.text_en || "").split(/\s+/).filter(Boolean).length;
-      safeEnd = start + Math.max(3, wordCount * 0.45);
-    }
-    const nextLoop = { start, end: safeEnd + 0.3 };
+    const nextLoop = getStudyCueLoopRange(sub, studySubsRef.current);
+    if (!nextLoop) return;
     loopRangeRef.current = nextLoop;
     setLoopRange(nextLoop);
-    playFromLine(start);
+    playFromLine(nextLoop.start);
   }, [playFromLine]);
   const onStudyExit = useCallback(() => {
     loopRangeRef.current = null;
@@ -259,15 +248,39 @@ export default function EpisodePage() {
   }, [study.exitCloseReading]);
   const studySubsRef = useRef(study.subs);
   studySubsRef.current = study.subs;
+  const sourceDeepLinkHandledRef = useRef("");
   useEffect(() => {
     const activeLoop = loopRangeRef.current;
     if (activeLoop && loopRange && studyTime != null && studyTime >= activeLoop.end) playFromLine(activeLoop.start);
   }, [loopRange, playFromLine, studyTime]);
-  const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, setActiveId: study.setActiveId });
+  const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, setActiveId: study.setActiveId, setSelectedCueId: study.setSelectedCueId });
+  useEffect(() => {
+    const at = Number(searchParams.get("t") ?? searchParams.get("at"));
+    if (!episode?.id || !Number.isFinite(at) || !study.subs?.length) return;
+    const marker = `${episode.id}:${searchParams.get("cue") || ""}:${at}`;
+    if (sourceDeepLinkHandledRef.current === marker) return;
+    const cue = transcriptFocus.focusTranscriptCueByIdOrTime(searchParams.get("cue"), at);
+    if (!cue) return;
+    sourceDeepLinkHandledRef.current = marker;
+    const cueStart = cue?.time_start == null ? at : toSec(cue.time_start);
+    if (searchParams.get("closeReading") === "1") study.toggleCloseReading(cue);
+    else playFromLine(Number.isFinite(cueStart) ? cueStart : at);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("at"); nextParams.delete("t"); nextParams.delete("cue"); nextParams.delete("closeReading");
+    setSearchParams(nextParams, { replace: true });
+  }, [episode?.id, playFromLine, searchParams, setSearchParams, study.subs?.length, study.toggleCloseReading, transcriptFocus.focusTranscriptCueByIdOrTime]);
   const startCloseReadingFromKeyboard = useCallback(() => {
     const cue = transcriptFocus.focusCurrentTranscriptCue();
     if (cue) study.toggleCloseReading(cue);
   }, [study.toggleCloseReading, transcriptFocus.focusCurrentTranscriptCue]);
+  const navigateTranscriptCue = useCallback((direction) => {
+    const cue = transcriptFocus.focusAdjacentTranscriptCue(direction);
+    if (!cue) return;
+    const start = toSec(cue.time_start);
+    if (!Number.isFinite(start)) return;
+    if (study.isCloseReadingLoop) study.toggleCloseReading(cue);
+    else playFromLine(start);
+  }, [playFromLine, study.isCloseReadingLoop, study.toggleCloseReading, transcriptFocus.focusAdjacentTranscriptCue]);
   useGlobalVideoSpace({
     togglePlayback: toggleClock,
     enabled: Boolean(episode?.video_url),
@@ -275,6 +288,7 @@ export default function EpisodePage() {
     exitCloseReading: study.exitCloseReading,
     startCloseReading: startCloseReadingFromKeyboard,
     focusCurrentCue: transcriptFocus.focusCurrentTranscriptCue,
+    navigateTranscriptCue,
   });
 
   // 全屏切换后 VideoPlayer 会被重新挂载，需要恢复播放进度（不影响视频播放和台词滚动）
@@ -387,9 +401,14 @@ export default function EpisodePage() {
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-5 lg:px-10 pt-28 pb-20">
-      <Link to={movie ? `/movie/${movie.id}` : "/communities"} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-copper">
-        <ArrowLeft size={15} /> 返回小组
-      </Link>
+      <PageBackButton onClick={() => {
+        const context = searchParams.get("returnContext");
+        if (context === "review") navigate("/collection?resumeReview=1");
+        else if (context === "mistakes") navigate("/collection?tab=errors&restore=1");
+        else if (context === "collection") navigate("/collection?restore=1");
+        else if (movie) navigate(`/movie/${movie.id}`);
+        else navigate("/communities");
+      }} className="mb-3" />
 
       <div className="mt-6 border-b border-border/50 pb-8">
         <p className="text-[11px] uppercase tracking-luxe text-copper/80">
@@ -572,7 +591,7 @@ export default function EpisodePage() {
                 onRelease={(v) => { study.exitCloseReading(); if (clockRunning) playFromLine(v); else seekAndPause(v); }}
               />
             )}
-            <SubtitleScrubber study={study} movieId={movie?.id} movieTitle={movie?.title} editable={canEdit} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} />
+            <SubtitleScrubber study={study} movieId={movie?.id} sourceRecordId={episode?.id} sourceUrl={episode?.video_url || movie?.video_url} movieTitle={movie?.title} episodeId={episode?.id} episodeTitle={episode?.title} sourceType="episode" editable={canEdit} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} />
             <SubListResizer height={subHeight} onChange={setSubHeight} />
           </div>
         ) : null;
@@ -580,7 +599,7 @@ export default function EpisodePage() {
         // —— 台词精读区 ——
         const analysisSlot = hasVideo ? (
           <div className={`h-full rounded-2xl border border-border/60 bg-background-elev/30 p-4 scrollbar-none ${theater ? "overflow-y-auto" : "lg:sticky lg:top-24 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto"}`}>
-            <StudyAnalysisColumn study={study} movieTitle={movie?.title} movieId={movie?.id} />
+            <StudyAnalysisColumn study={study} movieTitle={movie?.title} movieId={movie?.id} sourceRecordId={episode?.id} sourceUrl={episode?.video_url || movie?.video_url} episodeId={episode?.id} episodeTitle={episode?.title} sourceType="episode" />
           </div>
         ) : null;
 
@@ -596,7 +615,7 @@ export default function EpisodePage() {
               videoSlot={videoSlot}
               analysisSlot={analysisSlot}
               subtitleSlot={subtitleSlot}
-              minimalSubSlot={<MinimalSubtitleBar study={study} movieId={movie?.id} movieTitle={movie?.title} storageKey="theater_group_min_sub_y" storageSizeKey="theater_group_min_sub_size" />}
+              minimalSubSlot={<MinimalSubtitleBar study={study} movieId={movie?.id} sourceRecordId={episode?.id} sourceUrl={episode?.video_url || movie?.video_url} movieTitle={movie?.title} episodeId={episode?.id} episodeTitle={episode?.title} sourceType="episode" storageKey="theater_group_min_sub_y" storageSizeKey="theater_group_min_sub_size" />}
             />
           );
         }

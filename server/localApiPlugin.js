@@ -1,4 +1,7 @@
 import { handleAI } from "./ai.js";
+import { handleAICredentials } from "./aiCredentialsApi.js";
+import { sendCredentialFailure } from "./aiCredentialErrors.js";
+import { sendAIError } from "./aiErrorResponse.js";
 import { handleYouTubeTranscript } from "./youtubeTranscript.js";
 import { fetchDoubanPoster, searchLocalPosters } from "./posterSearch.js";
 
@@ -41,15 +44,27 @@ function middleware(env) {
       }
       return;
     }
+    if (path === "/api/ai-credentials") {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      try {
+        const body = req.method === "GET" ? {} : await readBody(req);
+        await handleAICredentials(req, res, body, env);
+      } catch (error) {
+        sendCredentialFailure(res, error, "credential_endpoint");
+      }
+      return;
+    }
     if (req.method !== "POST" || !["/api/ai", "/api/youtube-transcript"].includes(path)) return next();
     res.setHeader("Content-Type", "application/json; charset=utf-8");
+    let body;
     try {
-      const body = await readBody(req);
+      body = await readBody(req);
       if (path === "/api/ai") await handleAI(req, res, body, env);
       else await handleYouTubeTranscript(req, res, body, env);
     } catch (error) {
-      res.statusCode = error instanceof SyntaxError ? 400 : 500;
-      res.end(JSON.stringify({ error: error?.message || "请求失败" }));
+      if (path === "/api/ai") sendAIError(res, error, { task: body?.task, credentialId: body?.credential_id });
+      else { res.statusCode = error instanceof SyntaxError ? 400 : 500; res.end(JSON.stringify({ error: error instanceof SyntaxError ? "请求格式无效" : "请求失败" })); }
     }
   };
 }

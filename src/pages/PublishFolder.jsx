@@ -6,7 +6,8 @@ import { useRequireAuth } from "@/hooks/useRequireAuth";
 import ImageUploadField from "@/components/common/ImageUploadField";
 import AiCoverGenerator from "@/components/common/AiCoverGenerator";
 import AiMetaFill from "@/components/common/AiMetaFill";
-import { ArrowLeft, Plus, Loader2, Send, Film, ExternalLink, Trash2, Library, Search } from "lucide-react";
+import { Plus, Loader2, Send, Film, ExternalLink, Trash2, Library, Search } from "lucide-react";
+import PageBackButton from "@/components/common/PageBackButton";
 import { Image as BaseImage } from "@/components/ui/image";
 
 // 发布文件夹为共享小组：
@@ -208,9 +209,7 @@ export default function PublishFolder() {
 
   return (
     <div className="mx-auto max-w-7xl px-5 lg:px-8 pt-28 pb-20">
-      <button type="button" onClick={() => navigate("/local-study")} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-copper">
-        <ArrowLeft size={15} /> 返回我的视频
-      </button>
+      <PageBackButton onClick={() => navigate("/local-study")} className="mb-3" />
 
       <div className="mt-6 border-b border-border/50 pb-8">
         <p className="text-[11px] uppercase tracking-luxe text-copper/80">发布视频单</p>

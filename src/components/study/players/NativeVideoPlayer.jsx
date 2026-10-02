@@ -4,7 +4,7 @@ import React, { forwardRef, useRef, useImperativeHandle } from "react";
  * 原生视频播放器：处理本地文件（MP4 / WebM / MOV 等）。
  * 完全独立，不依赖 YouTube / B站 逻辑。
  */
-const NativeVideoPlayer = forwardRef(function NativeVideoPlayer({ url, className = "", onTimeUpdate, onPlaybackError, onSeeking }, ref) {
+const NativeVideoPlayer = forwardRef(function NativeVideoPlayer({ url, className = "", onTimeUpdate, onPlaybackError, onSeeking, autoPlayFrom, controls = true }, ref) {
   const videoRef = useRef(null);
 
   useImperativeHandle(ref, () => ({
@@ -42,8 +42,15 @@ const NativeVideoPlayer = forwardRef(function NativeVideoPlayer({ url, className
     <video
       ref={videoRef}
       src={url}
-      controls
+      controls={controls}
       playsInline
+      onLoadedMetadata={(event) => {
+        if (!Number.isFinite(autoPlayFrom)) return;
+        const video = event.currentTarget;
+        try { video.currentTime = autoPlayFrom; } catch { /* browser may not be seekable yet */ }
+        const playResult = video.play?.();
+        playResult?.catch?.(() => {});
+      }}
       onTimeUpdate={onTimeUpdate ? (e) => onTimeUpdate(e.currentTarget.currentTime) : undefined}
       onSeeking={onSeeking ? (e) => onSeeking(e.currentTarget.currentTime) : undefined}
       onError={onPlaybackError ? () => onPlaybackError(url) : undefined}

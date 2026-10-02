@@ -3,6 +3,12 @@ import { toSec } from "./timecode.js";
 
 export const SUBTITLE_BATCH_SIZE = 36;
 export const SUBTITLE_BATCH_OVERLAP = 4;
+export const SUBTITLE_TRANSLATION_BATCH_SIZE = 100;
+export const SUBTITLE_TRANSLATION_BATCH_OVERLAP = 4;
+export const SUBTITLE_TRANSLATION_CONCURRENCY = 3;
+export const SUBTITLE_LEARNING_PRELOAD_BEFORE = 20;
+export const SUBTITLE_LEARNING_PRELOAD_AFTER = 40;
+export const SUBTITLE_LEARNING_BATCH_SIZE = 20;
 export const CLOSE_READING_VERSION = 2;
 const CACHE_PREFIX = "lingoclub:subtitle-ai:v2:";
 const BASIC_WORDS = new Set("a an the i you he she it we they me him her us them my your his its our their this that these those be am is are was were been being do does did have has had can could will would should may might must and or but if so to of in on at by for with from as into about up down out off over under good get got go know think see look make take say said tell call want need like just really very here there then now".split(" "));
@@ -36,7 +42,7 @@ function expressionMatchesText(expression, text) {
   }
   return true;
 }
-function emptyCache() { return { contextSummary: "", cues: {}, terms: {}, diagnostics: { totalCues: 0, batches: 0, uniqueDifficultWords: 0, uniquePhrases: 0, cacheHits: 0, cacheMisses: 0, batchTranslationCalls: 0, fallbackWordCalls: 0, closeReadingCalls: 0 } }; }
+function emptyCache() { return { contextSummary: "", cues: {}, translations: {}, terms: {}, diagnostics: { totalCues: 0, batches: 0, uniqueDifficultWords: 0, uniquePhrases: 0, cacheHits: 0, cacheMisses: 0, batchTranslationCalls: 0, fallbackWordCalls: 0, closeReadingCalls: 0 } }; }
 function readCache(key) {
   try { return { ...emptyCache(), ...(typeof localStorage === "undefined" ? {} : JSON.parse(localStorage.getItem(key) || "null") || {}) }; } catch { return emptyCache(); }
 }
@@ -110,6 +116,24 @@ export function buildSubtitleBatches(cues) {
   return blocks;
 }
 
+export function buildSubtitleTranslationBatches(cues) {
+  const batches = [];
+  for (let start = 0; start < cues.length; start += SUBTITLE_TRANSLATION_BATCH_SIZE) {
+    const end = Math.min(start + SUBTITLE_TRANSLATION_BATCH_SIZE, cues.length);
+    const contextStart = Math.max(0, start - SUBTITLE_TRANSLATION_BATCH_OVERLAP);
+    const contextEnd = Math.min(cues.length, end + SUBTITLE_TRANSLATION_BATCH_OVERLAP);
+    const targetIds = new Set(cues.slice(start, end).map((cue) => cue.id));
+    batches.push({
+      id: `t${start}-${end}`,
+      start: toSec(cues[start]?.time_start) || 0,
+      end: toSec(cues[end - 1]?.time_end || cues[end - 1]?.time_start) || 0,
+      coreCues: cues.slice(start, end),
+      cues: cues.slice(contextStart, contextEnd).map((cue) => ({ ...cue, target: targetIds.has(cue.id) })),
+    });
+  }
+  return batches;
+}
+
 function sanitizeLearning(items = [], type, cueId) {
   return (Array.isArray(items) ? items : []).map((item) => {
     const expression = String(item.expression || item.word || item.phrase || "").trim();
@@ -130,102 +154,250 @@ function sanitizeLearning(items = [], type, cueId) {
   }).filter((item) => item?.basicMeaning || item?.contextMeaning);
 }
 
-export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTime, signal, onProgress }) {
+export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTime, signal, onProgress, onPriorityTranslationReady, translateBatch = invokeAI }) {
+  const startedAt = Date.now();
   const hashValue = subtitleHash(subtitles);
   const key = cacheKey(videoId, hashValue);
   const cache = readCache(key);
   for (const cue of subtitles) {
     if (cue.ai_episode_context?.subtitleHash === hashValue) cache.contextSummary = cue.ai_episode_context.summary || cache.contextSummary;
-    if (cue.ai_processing?.subtitleHash === hashValue) cache.cues[cue.id] = cue.ai_processing;
+    if (cue.ai_processing?.subtitleHash === hashValue) {
+      cache.cues[cue.id] = cue.ai_processing;
+      if (cue.ai_processing.translation) cache.translations[cue.id] ||= { subtitleHash: hashValue, translation: cue.ai_processing.translation };
+    }
   }
   let preparedSubtitles = subtitles.map((cue) => {
     const cached = cache.cues[cue.id];
+    const cachedTranslation = cache.translations[cue.id];
     if (cached?.subtitleHash === hashValue) {
       for (const item of [...(cached.difficultWords || []), ...(cached.phrases || [])]) {
         const termKey = `${normalizeExpression(item.expression)}|${normalizeExpression(item.contextMeaning)}`;
         cache.terms[termKey] ||= item;
       }
     }
-    if (!cached || cached.subtitleHash !== hashValue) return cue;
-    return { ...cue, text_zh: cue.text_zh || cached.translation || "", ai_processing: cached };
+    const translation = cue.text_zh || (cachedTranslation?.subtitleHash === hashValue ? cachedTranslation.translation : "") || (cached?.subtitleHash === hashValue ? cached.translation : "");
+    if (!translation && (!cached || cached.subtitleHash !== hashValue)) return cue;
+    return { ...cue, text_zh: translation, ...(cached?.subtitleHash === hashValue ? { ai_processing: cached } : {}) };
   });
   const cues = preparedSubtitles.filter((cue) => String(cue.text_en || "").trim());
   cache.diagnostics.totalCues = cues.length;
-  const pending = new Map(cues.map((cue) => [cue.id, cue]).filter(([id]) => !cache.cues[id]));
-  const allBlocks = buildSubtitleBatches(cues);
-  const blocks = allBlocks.filter((block) => block.coreCues.some((cue) => pending.has(cue.id)));
-  cache.diagnostics.batches = allBlocks.length;
-  cache.diagnostics.cacheHits += cues.length - pending.size;
+  const pending = new Map(cues.filter((cue) => !String(cue.text_zh || "").trim()).map((cue) => [cue.id, cue]));
+  const allBatches = buildSubtitleTranslationBatches(cues);
+  const batches = allBatches.filter((batch) => batch.coreCues.some((cue) => pending.has(cue.id)));
+  const completedIds = new Set(cues.filter((cue) => cue.text_zh?.trim()).map((cue) => cue.id));
+  for (const cue of cues) if (!cue.text_zh?.trim() && cache.translations[cue.id]?.subtitleHash === hashValue && cache.translations[cue.id]?.translation) completedIds.add(cue.id);
+  const run = { totalCues: cues.length, missingTranslationCues: pending.size, batchSize: SUBTITLE_TRANSLATION_BATCH_SIZE, totalBatches: batches.length, concurrency: SUBTITLE_TRANSLATION_CONCURRENCY, completedCues: completedIds.size, apiCalls: 0, durationMs: 0 };
+  cache.diagnostics.batches = batches.length;
+  cache.diagnostics.cacheHits += completedIds.size - cues.filter((cue) => cue.text_zh?.trim()).length;
   cache.diagnostics.cacheMisses = pending.size;
-  onProgress?.({ phase: pending.size ? "processing" : "ready", completed: cues.length - pending.size, total: cues.length, diagnostics: cache.diagnostics, subtitles: preparedSubtitles, contextSummary: cache.contextSummary, hash: hashValue });
-  const attemptedBlocks = new Set();
+  const report = async (phase, error = "") => {
+    run.completedCues = completedIds.size;
+    run.durationMs = Date.now() - startedAt;
+    await onProgress?.({ phase, ...(error ? { error } : {}), completed: run.completedCues, total: run.totalCues, diagnostics: { ...cache.diagnostics, ...run }, subtitles: preparedSubtitles, hash: hashValue });
+  };
+  await report(pending.size ? "processing" : "ready");
+  if (!pending.size) return { subtitles: preparedSubtitles, cache, hash: hashValue, diagnostics: run };
 
-  while (blocks.some((block) => !attemptedBlocks.has(block.id) && block.coreCues.some((cue) => pending.has(cue.id)))) {
-    if (signal?.aborted) return { subtitles: preparedSubtitles, cache, hash: hashValue, cancelled: true };
-    const currentTime = Number(getCurrentTime?.()) || 0;
-    const distance = (block) => currentTime < block.start ? block.start - currentTime : currentTime > block.end ? currentTime - block.end : 0;
-    blocks.sort((a, b) => distance(a) - distance(b));
-    const block = blocks.find((item) => !attemptedBlocks.has(item.id) && item.coreCues.some((cue) => pending.has(cue.id)));
-    if (!block) break;
-    attemptedBlocks.add(block.id);
-    const targetIds = new Set(block.coreCues.filter((cue) => pending.has(cue.id)).map((cue) => cue.id));
-    const payloadCues = block.cues.map((cue) => ({ cueId: cue.id, start: cue.time_start || "", duration: cue.time_end || "", text: cue.text_en, target: targetIds.has(cue.id) }));
-    const knownExpressions = Object.values(cache.terms)
-      .filter((item) => block.cues.some((cue) => expressionMatchesText(item.expression, cue.text_en)))
-      .slice(0, 30);
+  const currentTime = Number(getCurrentTime?.()) || 0;
+  const distance = (batch) => currentTime < batch.start ? batch.start - currentTime : currentTime > batch.end ? currentTime - batch.end : 0;
+  const nearestFirst = [...batches].sort((a, b) => distance(a) - distance(b));
+  const nearestBatch = nearestFirst.shift();
+  const farthestFirst = nearestFirst.sort((a, b) => distance(b) - distance(a));
+  const orderedBatches = [nearestBatch, ...farthestFirst.slice(0, 2), ...farthestFirst.slice(2).sort((a, b) => distance(a) - distance(b))].filter(Boolean);
+  const priorityBatchId = orderedBatches[0]?.id;
+  let priorityLearningScheduled = false;
+  const failedCues = new Set();
+  let cursor = 0;
+
+  const translateChunk = async (targetCues, contextCues, blockId) => {
+    if (signal?.aborted) throw Object.assign(new Error("cancelled"), { name: "AbortError" });
+    const targetIds = new Set(targetCues.map((cue) => cue.id));
     cache.diagnostics.batchTranslationCalls += 1;
+    const response = await translateBatch("subtitle_translate_batch", {
+      video_id: videoId,
+      subtitle_hash: hashValue,
+      block_id: blockId,
+      cache_key: `${hashValue}|${blockId}|${[...targetIds].join(",")}`,
+      subtitle_text: `${hashValue}|${blockId}|${[...targetIds].join(",")}`,
+      cues: contextCues.map((cue) => ({ cueId: cue.id, text: cue.text_en, target: targetIds.has(cue.id) })),
+    }, {
+      signal,
+      cacheVersion: "subtitle-translation-v1",
+      onDiagnostics: (diagnostics) => {
+        if (!diagnostics.cacheHit && !diagnostics.deduped) run.apiCalls += Number(diagnostics.networkRequests) || 0;
+      },
+    });
+    const translated = response?.translation_batch?.cues || [];
+    const translations = new Map(translated.map((cue) => [cue.cueId, String(cue.translation || "").trim()]));
+    const missingIds = targetCues.filter((cue) => !translations.get(cue.id));
+    if (missingIds.length) throw new Error(`Batch translation omitted ${missingIds.length} cue(s)`);
+    for (const cue of targetCues) {
+      const translation = translations.get(cue.id);
+      cache.translations[cue.id] = { subtitleHash: hashValue, translation };
+      completedIds.add(cue.id);
+      pending.delete(cue.id);
+    }
+    preparedSubtitles = preparedSubtitles.map((cue) => {
+      const translation = translations.get(cue.id);
+      return translation && !cue.text_zh?.trim() ? { ...cue, text_zh: translation } : cue;
+    });
+    writeCache(key, cache);
+    await report("processing");
+    if (!priorityLearningScheduled && priorityBatchId && (blockId === priorityBatchId || blockId.startsWith(`${priorityBatchId}-`))) {
+      priorityLearningScheduled = true;
+      onPriorityTranslationReady?.();
+    }
+  };
+
+  const translateWithFallback = async (targetCues, contextCues, blockId) => {
     try {
-      const response = await invokeAI("subtitle_batch", {
+      await translateChunk(targetCues, contextCues, blockId);
+    } catch (error) {
+      if (signal?.aborted || error?.name === "AbortError") throw error;
+      const isRetryable = error?.name === "TimeoutError" || error instanceof TypeError || error?.status === 429 || error?.status >= 500;
+      let finalError = error;
+      if (isRetryable) {
+        try {
+          await translateChunk(targetCues, contextCues, blockId);
+          return;
+        } catch (retryError) {
+          if (signal?.aborted || retryError?.name === "AbortError") throw retryError;
+          finalError = retryError;
+        }
+      }
+      const shouldSplit = targetCues.length > SUBTITLE_TRANSLATION_BATCH_SIZE / 2 && (
+        finalError?.status === 413
+        || /timeout|token|context|payload|too long|truncat|omitted|parse|json/i.test(String(finalError?.message || ""))
+        || isRetryable
+      );
+      if (shouldSplit) {
+        const middle = Math.ceil(targetCues.length / 2);
+        const first = targetCues.slice(0, middle);
+        const second = targetCues.slice(middle);
+        const targetSet = new Set(targetCues.map((cue) => cue.id));
+        const contextFor = (items) => {
+          const from = Math.max(0, cues.findIndex((cue) => cue.id === items[0].id) - SUBTITLE_TRANSLATION_BATCH_OVERLAP);
+          const to = Math.min(cues.length, cues.findIndex((cue) => cue.id === items.at(-1).id) + SUBTITLE_TRANSLATION_BATCH_OVERLAP + 1);
+          return cues.slice(from, to).filter((cue) => targetSet.has(cue.id) || !pending.has(cue.id));
+        };
+        await translateWithFallback(first, contextFor(first), `${blockId}-a`);
+        await translateWithFallback(second, contextFor(second), `${blockId}-b`);
+        return;
+      }
+      for (const cue of targetCues) failedCues.add(cue.id);
+    }
+  };
+
+  const worker = async () => {
+    while (!signal?.aborted) {
+      const batch = orderedBatches[cursor++];
+      if (!batch) return;
+      const targets = batch.coreCues.filter((cue) => pending.has(cue.id));
+      if (!targets.length) continue;
+      await translateWithFallback(targets, batch.cues, batch.id);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SUBTITLE_TRANSLATION_CONCURRENCY, orderedBatches.length) }, () => worker()));
+  if (signal?.aborted) return { subtitles: preparedSubtitles, cache, hash: hashValue, cancelled: true, diagnostics: run };
+  const hadFailures = failedCues.size > 0;
+  await report(hadFailures ? "error" : "ready", hadFailures ? "部分字幕翻译失败，可以重试未完成部分" : "");
+  return { subtitles: preparedSubtitles, cache, hash: hashValue, ...(hadFailures ? { error: new Error("部分字幕翻译失败"), failedCueIds: [...failedCues] } : {}), diagnostics: run };
+}
+
+export async function processSubtitleLearningWindow({ videoId, subtitles, getCurrentTime, signal, onProgress, analyzeBatch = invokeAI }) {
+  const hashValue = subtitleHash(subtitles);
+  const key = cacheKey(videoId, hashValue);
+  const cache = readCache(key);
+  let preparedSubtitles = subtitles.map((cue) => {
+    if (cue.ai_processing?.subtitleHash === hashValue) cache.cues[cue.id] = cue.ai_processing;
+    const cached = cache.cues[cue.id];
+    if (!cached || cached.subtitleHash !== hashValue) return cue;
+    return { ...cue, ai_processing: { ...cached, ...(cue.ai_processing || {}) } };
+  });
+  const cues = preparedSubtitles.filter((cue) => String(cue.text_en || "").trim());
+  if (!cues.length) return { subtitles: preparedSubtitles, total: 0, completed: 0 };
+
+  const currentTime = Number(getCurrentTime?.()) || 0;
+  let currentIndex = 0;
+  let closestDistance = Infinity;
+  cues.forEach((cue, index) => {
+    const start = toSec(cue.time_start);
+    if (!Number.isFinite(start)) return;
+    const d = Math.abs(start - currentTime);
+    if (d < closestDistance) { closestDistance = d; currentIndex = index; }
+  });
+  const windowCues = cues.slice(
+    Math.max(0, currentIndex - SUBTITLE_LEARNING_PRELOAD_BEFORE),
+    Math.min(cues.length, currentIndex + SUBTITLE_LEARNING_PRELOAD_AFTER + 1),
+  );
+  const needsLearning = (cue) => {
+    const item = cue.ai_processing || cache.cues[cue.id];
+    return !(item?.subtitleHash === hashValue && Array.isArray(item.difficultWords) && Array.isArray(item.phrases));
+  };
+  const pending = new Set(windowCues.filter(needsLearning).map((cue) => cue.id));
+  const batches = [];
+  for (let start = 0; start < windowCues.length; start += SUBTITLE_LEARNING_BATCH_SIZE) {
+    const coreCues = windowCues.slice(start, start + SUBTITLE_LEARNING_BATCH_SIZE);
+    const contextStart = Math.max(0, start - 3);
+    const contextEnd = Math.min(windowCues.length, start + SUBTITLE_LEARNING_BATCH_SIZE + 3);
+    batches.push({
+      id: `l${start}`,
+      coreCues,
+      cues: windowCues.slice(contextStart, contextEnd).map((cue) => ({ ...cue, target: coreCues.some((target) => target.id === cue.id) })),
+      start: toSec(coreCues[0]?.time_start) || 0,
+      end: toSec(coreCues.at(-1)?.time_end || coreCues.at(-1)?.time_start) || 0,
+    });
+  }
+  const work = batches.filter((batch) => batch.coreCues.some((cue) => pending.has(cue.id)));
+  const distance = (batch) => currentTime < batch.start ? batch.start - currentTime : currentTime > batch.end ? currentTime - batch.end : 0;
+  const currentCueId = cues[currentIndex]?.id;
+  work.sort((a, b) => {
+    const aContainsCurrent = a.coreCues.some((cue) => cue.id === currentCueId);
+    const bContainsCurrent = b.coreCues.some((cue) => cue.id === currentCueId);
+    if (aContainsCurrent !== bContainsCurrent) return aContainsCurrent ? -1 : 1;
+    return distance(a) - distance(b);
+  });
+  let completed = windowCues.length - pending.size;
+  const total = windowCues.length;
+  const report = async (phase) => onProgress?.({ phase, completed, total, subtitles: preparedSubtitles, hash: hashValue });
+  await report(pending.size ? "processing" : "ready");
+
+  for (const batch of work) {
+    if (signal?.aborted) return { subtitles: preparedSubtitles, total, completed, cancelled: true };
+    const targets = batch.coreCues.filter((cue) => pending.has(cue.id));
+    if (!targets.length) continue;
+    const blockId = batch.id;
+    let response;
+    try {
+      response = await analyzeBatch("subtitle_learning_batch", {
         video_id: videoId,
         subtitle_hash: hashValue,
-        block_id: block.id,
-        subtitle_text: `${hashValue}|${block.id}|${[...targetIds].join(",")}`,
-        episode_context: cache.contextSummary,
-        known_expressions: knownExpressions,
-        cues: payloadCues,
-      }, { signal });
-      const result = response?.batch || {};
-      if (result.episodeContext) cache.contextSummary = String(result.episodeContext).slice(0, 500);
-      const results = new Map((result.cues || []).map((cue) => [cue.cueId, cue]));
-      const updated = preparedSubtitles.map((original) => {
-        if (!targetIds.has(original.id)) return original;
-        const translated = results.get(original.id);
-        if (!translated) return original;
-        const words = sanitizeLearning(translated.difficultWords, "word", original.id);
-        const phrases = sanitizeLearning(translated.phrases, "phrase", original.id);
-        const alreadyKnown = knownExpressions.filter((item) => expressionMatchesText(item.expression, original.text_en)).map((item) => ({ ...item, cueId: original.id }));
-        for (const known of alreadyKnown) {
-          const destination = known.type === "word" ? words : phrases;
-          if (!destination.some((item) => normalizeExpression(item.expression) === normalizeExpression(known.expression))) destination.push(known);
-        }
-        const translation = String(translated.translation || "").trim();
-        if (!translation) return original;
-        const unique = (items) => items.map((item) => {
-          const termKey = `${normalizeExpression(item.expression)}|${normalizeExpression(item.contextMeaning)}`;
-          if (!cache.terms[termKey]) cache.terms[termKey] = item;
-          return { ...cache.terms[termKey], cueId: item.cueId };
-        });
-        const cueCache = {
-          subtitleHash: hashValue,
-          translation,
-          difficultWords: unique(words),
-          phrases: unique(phrases),
-        };
-        cache.cues[original.id] = cueCache;
-        pending.delete(original.id);
-        return { ...original, text_zh: original.text_zh || cueCache.translation, ai_processing: cueCache };
-      });
-      preparedSubtitles = updated.map((cue, index) => index === 0 ? { ...cue, ai_episode_context: { subtitleHash: hashValue, summary: cache.contextSummary } } : cue);
-      cache.diagnostics.uniqueDifficultWords = new Set(Object.values(cache.terms).filter((term) => term.type === "word").map((term) => normalizeExpression(term.expression))).size;
-      cache.diagnostics.uniquePhrases = new Set(Object.values(cache.terms).filter((term) => term.type !== "word").map((term) => normalizeExpression(term.expression))).size;
-      writeCache(key, cache);
-      onProgress?.({ phase: "processing", completed: cues.length - pending.size, total: cues.length, diagnostics: { ...cache.diagnostics }, subtitles: preparedSubtitles, contextSummary: cache.contextSummary, hash: hashValue });
+        block_id: blockId,
+        subtitle_text: `${hashValue}|learning|${blockId}|${targets.map((cue) => cue.id).join(",")}`,
+        cues: batch.cues.map((cue) => ({ cueId: cue.id, text: cue.text_en, target: targets.some((target) => target.id === cue.id) })),
+      }, { signal, cacheVersion: "subtitle-learning-v1" });
     } catch (error) {
-      if (signal?.aborted) return { subtitles: preparedSubtitles, cache, hash: hashValue, cancelled: true };
-      onProgress?.({ phase: "error", error: error?.message || "字幕处理失败", completed: cues.length - pending.size, total: cues.length, diagnostics: { ...cache.diagnostics } });
-      return { subtitles: preparedSubtitles, cache, hash: hashValue, error };
+      if (signal?.aborted) return { subtitles: preparedSubtitles, total, completed, cancelled: true };
+      continue;
     }
+    const results = new Map((response?.learning_batch?.cues || []).map((cue) => [cue.cueId, cue]));
+    preparedSubtitles = preparedSubtitles.map((cue) => {
+      if (!targets.some((target) => target.id === cue.id)) return cue;
+      const result = results.get(cue.id);
+      const existing = cue.ai_processing || cache.cues[cue.id] || {};
+      const learning = {
+        ...existing,
+        subtitleHash: hashValue,
+        difficultWords: Array.isArray(result?.difficultWords) ? result.difficultWords.slice(0, 2) : [],
+        phrases: Array.isArray(result?.phrases) ? result.phrases.slice(0, 2) : [],
+      };
+      cache.cues[cue.id] = learning;
+      pending.delete(cue.id);
+      completed += 1;
+      return { ...cue, ai_processing: learning };
+    });
+    writeCache(key, cache);
+    await report(pending.size ? "processing" : "ready");
   }
-  onProgress?.({ phase: pending.size ? "partial" : "ready", completed: cues.length - pending.size, total: cues.length, diagnostics: { ...cache.diagnostics }, subtitles: preparedSubtitles, contextSummary: cache.contextSummary, hash: hashValue });
-  return { subtitles: preparedSubtitles, cache, hash: hashValue };
+  return { subtitles: preparedSubtitles, total, completed, partial: pending.size > 0 };
 }

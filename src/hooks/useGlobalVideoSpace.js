@@ -11,12 +11,13 @@ const EDITABLE_TARGET_SELECTOR = [
 ].join(",");
 
 /** Bind study keyboard controls without owning playback or close-reading state. */
-export function useGlobalVideoSpace({ togglePlayback, enabled = true, isCloseReadingLoop, exitCloseReading, startCloseReading, focusCurrentCue }) {
+export function useGlobalVideoSpace({ togglePlayback, enabled = true, isCloseReadingLoop, exitCloseReading, startCloseReading, focusCurrentCue, navigateTranscriptCue }) {
   const toggleRef = useRef(togglePlayback);
   const loopingRef = useRef(isCloseReadingLoop);
   const exitRef = useRef(exitCloseReading);
   const startRef = useRef(startCloseReading);
   const focusRef = useRef(focusCurrentCue);
+  const navigateRef = useRef(navigateTranscriptCue);
   const altPressedRef = useRef(false);
   const altChordRef = useRef(false);
   toggleRef.current = togglePlayback;
@@ -24,6 +25,7 @@ export function useGlobalVideoSpace({ togglePlayback, enabled = true, isCloseRea
   exitRef.current = exitCloseReading;
   startRef.current = startCloseReading;
   focusRef.current = focusCurrentCue;
+  navigateRef.current = navigateTranscriptCue;
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -53,6 +55,14 @@ export function useGlobalVideoSpace({ togglePlayback, enabled = true, isCloseRea
       if (altPressedRef.current) {
         altChordRef.current = true;
         if (event.altKey) event.preventDefault();
+      }
+
+      if ((event.code === "ArrowUp" || event.code === "ArrowDown")
+        && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+        event.preventDefault();
+        if (event.repeat) return;
+        navigateRef.current?.(event.code === "ArrowUp" ? -1 : 1);
+        return;
       }
 
       if (event.code === "Space" && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {

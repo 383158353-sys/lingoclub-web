@@ -21,17 +21,24 @@ async function diagnosticFetch(input, init = {}) {
 
   const response = await nativeFetch(input, init);
   let responseBody = "";
-  try { responseBody = await response.clone().text(); } catch { /* noop */ }
+  if (import.meta.env.DEV) { try { responseBody = await response.clone().text(); } catch { /* noop */ } }
   if (typeof window !== "undefined") {
-    window.__LINGOCLUB_SYNC_DIAGNOSTIC__ = {
-      ...(window.__LINGOCLUB_SYNC_DIAGNOSTIC__ || {}),
+    const diagnostic = {
       method,
+      httpStatus: response.status,
+      stage: "user_state",
+      payloadCount: Array.isArray(rawBody) ? rawBody.length : rawBody ? 1 : 0,
+      recordedAt: new Date().toISOString(),
+    };
+    if (import.meta.env.DEV) Object.assign(diagnostic, {
       requestUrl: url,
       accessTokenAttached: /^Bearer\s+\S+/i.test(headers.get("authorization") || ""),
       payloadUserId: payloadUserId || null,
-      httpStatus: response.status,
       responseBody,
-      recordedAt: new Date().toISOString(),
+    });
+    window.__LINGOCLUB_SYNC_DIAGNOSTIC__ = {
+      ...(window.__LINGOCLUB_SYNC_DIAGNOSTIC__ || {}),
+      ...diagnostic,
     };
   }
   return response;

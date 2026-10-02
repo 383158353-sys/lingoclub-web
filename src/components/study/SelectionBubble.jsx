@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from "react";
-import { guestVocab } from "@/lib/guestVocab";
+import { saveVocabularyEntry } from "@/lib/vocabularySources";
 import { Plus, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { normalizeSourceCue } from "@/lib/vocabularySourceCue";
 
 // 包装一段可选中文本;鼠标选中其中的单词/短语时,在选区上方弹出小气泡,
 // 点击即可把选中文本加入"我的单词库"(Vocabulary),供后续复习。
 // 选区用 window.getSelection 取得,气泡以 fixed 定位贴在选区正上方中心。
-export default function SelectionBubble({ text, movieId, movieTitle, sceneId, subtitleId, timestamp, className, title, children }) {
+export default function SelectionBubble({ text, translation, movieId, movieTitle, sceneId, subtitleId, timestamp, sourceCue, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, className, title, children }) {
   const wrapRef = useRef(null);
   const [bubble, setBubble] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -30,7 +31,8 @@ export default function SelectionBubble({ text, movieId, movieTitle, sceneId, su
     if (!t) return;
     setSaving(true);
     try {
-      await guestVocab.create({
+      const cue = normalizeSourceCue(sourceCue || { id: subtitleId, start: timestamp, textEn: text, textZh: translation });
+      await saveVocabularyEntry({
         text_en: t,
         text_zh: "",
         expression_en: t,
@@ -39,9 +41,22 @@ export default function SelectionBubble({ text, movieId, movieTitle, sceneId, su
         tag: "划词",
         tags: ["划词"],
         source_movie_id: movieId,
+        source_record_id: sourceRecordId || movieId,
+        source_url: sourceUrl || "",
+        source_video_id: youtubeIdFromUrl(sourceUrl),
         source_movie_title: movieTitle,
         source_scene_id: sceneId,
-        source_subtitle_id: subtitleId,
+        source_subtitle_id: cue.id || subtitleId,
+        source_episode_id: episodeId,
+        source_episode_title: episodeTitle,
+        source_sentence_en: cue.textEn || text,
+        source_sentence_zh: cue.textZh || translation || "",
+        source_time_start: cue.start,
+        source_time_end: cue.end,
+        source_timestamp_seconds: cue.start,
+        source_timestamp_end_seconds: cue.end,
+        source_type: sourceType,
+        source_timestamp_text: cue.start ?? timestamp ?? "",
         timestamp: timestamp || "",
         mastery_level: "new",
         review_count: 0,
@@ -92,4 +107,8 @@ export default function SelectionBubble({ text, movieId, movieTitle, sceneId, su
       )}
     </div>
   );
+}
+
+function youtubeIdFromUrl(value) {
+  try { const url = new URL(value); return url.hostname.endsWith("youtu.be") ? url.pathname.slice(1).split("/")[0] : url.searchParams.get("v") || ""; } catch { return ""; }
 }

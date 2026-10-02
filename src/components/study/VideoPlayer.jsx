@@ -29,18 +29,18 @@ function detectType(url) {
   }
 }
 
-const VideoPlayer = forwardRef(function VideoPlayer({ url, className = "", onTimeUpdate, onPlaybackError, onUserSeek }, ref) {
+const VideoPlayer = forwardRef(function VideoPlayer({ url, className = "", onTimeUpdate, onPlaybackError, onUserSeek, autoPlayFrom, controls = true }, ref) {
   const type = useMemo(() => detectType(url), [url]);
 
   if (type === "youtube") {
-    return <YouTubePlayer ref={ref} url={url} className={className} onTimeUpdate={onTimeUpdate} onUserSeek={onUserSeek} />;
+    return <YouTubePlayer ref={ref} url={url} className={className} onTimeUpdate={onTimeUpdate} onUserSeek={onUserSeek} autoPlayFrom={autoPlayFrom} />;
   }
 
   if (type === "bilibili") {
     return <BilibiliPlayer ref={ref} url={url} className={className} onUserSeek={onUserSeek} />;
   }
 
-  return <NativeVideoPlayer ref={ref} url={url} className={className} onTimeUpdate={onTimeUpdate} onPlaybackError={onPlaybackError} onSeeking={onUserSeek} />;
+  return <NativeVideoPlayer ref={ref} url={url} className={className} onTimeUpdate={onTimeUpdate} onPlaybackError={onPlaybackError} onSeeking={onUserSeek} autoPlayFrom={autoPlayFrom} controls={controls} />;
 });
 
 export default VideoPlayer;

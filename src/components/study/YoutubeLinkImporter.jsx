@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
-import { Play, Loader2, ArrowLeft, CheckCircle2, AlertCircle, Link2, Smartphone, Monitor, RotateCw } from "lucide-react";
+import { Play, Loader2, CheckCircle2, AlertCircle, Link2, Smartphone, Monitor, RotateCw } from "lucide-react";
+import PageBackButton from "@/components/common/PageBackButton";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchYouTubeMeta } from "@/lib/localApi";
 import { extractYouTubeId, normalizeYouTubeUrl, transcribeYouTubeClient } from "@/lib/youtubeTranscriptClient";
@@ -126,6 +127,7 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
 
   return (
     <div className="mx-auto w-full max-w-2xl px-5 pt-28 pb-20">
+      {onCancel && <PageBackButton onClick={onCancel} disabled={saving} className="mb-3" />}
       <p className="text-[11px] uppercase tracking-luxe text-copper/80">工具箱 · 我的视频</p>
       <h1 className="mt-2 font-display text-3xl leading-tight text-foreground md:text-4xl">导入 YouTube 视频</h1>
       <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
@@ -233,16 +235,6 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
           {/* 下方教程 */}
           <MobileTutorial />
 
-          {onCancel && (
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-            >
-              <ArrowLeft size={15} /> 返回我的视频
-            </button>
-          )}
         </div>
       )}
 
@@ -250,16 +242,6 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
       {tab === "desktop" && (
         <div className="mt-8 space-y-8">
           <DesktopTutorial />
-          {onCancel && (
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-            >
-              <ArrowLeft size={15} /> 返回我的视频
-            </button>
-          )}
         </div>
       )}
     </div>

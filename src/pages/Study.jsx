@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { Loader2, ArrowLeft, MessagesSquare, Send, Play, ChevronRight, Clock } from 'lucide-react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { Loader2, MessagesSquare, Send, Play, ChevronRight, Clock } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import SubtitleCard from '@/components/SubtitleCard';
 import SaveVocabDialog from '@/components/SaveVocabDialog';
+import PageBackButton from '@/components/common/PageBackButton';
 
 export default function Study() {
   const { episodeId } = useParams();
+  const navigate = useNavigate();
   const [episode, setEpisode] = useState(null);
   const [movie, setMovie] = useState(null);
   const [allEpisodes, setAllEpisodes] = useState([]);
@@ -98,6 +100,18 @@ export default function Study() {
       episode_id: episode?.id,
       subtitle_id: sub.id,
       timestamp: sub.timestamp,
+      source_record_id: movie?.id,
+      source_url: movie?.video_url || "",
+      source_type: "episode",
+      source_time_start: sub.time_start ?? sub.start ?? sub.timestamp,
+      source_time_end: sub.time_end ?? sub.end,
+      sourceCue: {
+        id: sub.id,
+        start: sub.time_start ?? sub.start ?? sub.timestamp,
+        end: sub.time_end ?? sub.end,
+        textEn: sub.text_en || "",
+        textZh: sub.text_zh || "",
+      },
       tags: ['影视表达'],
     });
   }
@@ -129,9 +143,7 @@ export default function Study() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-8 py-8">
-      <Link to={movie ? `/community/${movie.id}` : '/browse'} className="inline-flex items-center gap-1.5 text-sm text-foreground/55 hover:text-primary mb-6">
-        <ArrowLeft size={15} /> {movie?.title || '影视社区'}
-      </Link>
+      <PageBackButton onClick={() => navigate(movie ? `/community/${movie.id}` : '/browse')} className="mb-6" />
 
       <div className="grid lg:grid-cols-[260px_1fr] gap-8">
         {/* LEFT: episode list */}

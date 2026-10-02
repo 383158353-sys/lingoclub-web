@@ -159,13 +159,115 @@ function hasRecentWrong(card, now) {
   return Number.isFinite(time) && time <= now && now - time <= 7 * 86400000;
 }
 
-function hasHighErrorRate(card) {
+function hasHighErrorRate(card, now) {
+  const history = Array.isArray(card?.review_history) ? card.review_history : [];
+  const recent = history.slice(-5);
+  if (recent.length >= 2) {
+    const wrong = recent.filter((item) => item?.result === "wrong" || item?.correct === false).length;
+    return wrong / recent.length >= 0.4;
+  }
   const reviews = reviewCountOf(card);
-  return reviews >= 2 && wrongCountOf(card) / reviews >= 0.4;
+  const last = Date.parse(lastReviewedOf(card) || "");
+  return reviews >= 2 && wrongCountOf(card) / reviews >= 0.4
+    && Number.isFinite(last) && now - last <= 30 * 86400000;
+}
+
+function dailyTieBreak(card, date) {
+  // Stable for the current day (including refreshes), but changes the ranking
+  // between days so a large pool does not keep serving the same first IDs.
+  const input = `${date}:${card?.id || card?.expression_en || ""}`;
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) hash = Math.imul(hash ^ input.charCodeAt(i), 16777619);
+  return hash >>> 0;
 }
 
 export function isNewReviewItem(card) {
   return reviewCountOf(card) <= 0;
+}
+
+export function normalizeVocabularyProgress(card = {}) {
+  const history = Array.isArray(card.review_history) ? card.review_history : [];
+  const historyCorrect = history.filter((item) => item?.result === "correct" || item?.correct === true).length;
+  const historyWrong = history.filter((item) => item?.result === "wrong" || item?.correct === false).length;
+  const reviewCount = Math.max(reviewCountOf(card), history.length, Number(card.stage) || 0);
+  const correctCount = Math.max(correctCountOf(card), historyCorrect);
+  const wrongCount = Math.max(wrongCountOf(card), historyWrong);
+  const intervalDays = Number(card.intervalDays ?? card.interval_days ?? STAGE_INTERVALS[stageOf(card)] ?? 0);
+  const lastReviewedAt = lastReviewedOf(card);
+  const nextReviewAt = nextReviewOf(card);
+  const mastery = card.mastery_level || card.masteryLevel
+    || (intervalDays >= 60 ? "mastered" : intervalDays >= 14 ? "familiar" : reviewCount ? "learning" : "new");
+  const status = card.status || card.review_status || mastery;
+  return {
+    ...card,
+    reviewCount,
+    correctCount,
+    wrongCount,
+    lastReviewedAt,
+    nextReviewAt,
+    intervalDays,
+    status,
+    review_count: reviewCount,
+    correct_count: correctCount,
+    error_count: wrongCount,
+    last_reviewed_at: lastReviewedAt,
+    last_reviewed_date: lastReviewedAt,
+    next_review_at: nextReviewAt,
+    next_review_date: nextReviewAt,
+    interval_days: intervalDays,
+    mastery_level: mastery,
+    review_status: status,
+    review_history: history,
+  };
+}
+
+function normalizedLogHistory(card, logsByVocabulary) {
+  const logs = logsByVocabulary?.get(card.id) || [];
+  const history = logs.map((log) => ({
+    date: log.reviewed_at,
+    result: log.is_correct ? "correct" : "wrong",
+    rating: log.rating,
+  }));
+  if (history.length) return history;
+  return Array.isArray(card.review_history) ? card.review_history : [];
+}
+
+/** A single historical miss is always included, but the tier decays with recent mastery. */
+export function classifyMistakeTiers(vocab, reviewLogs = [], now = Date.now()) {
+  const instant = now instanceof Date ? now.getTime() : Number(now);
+  const byVocabulary = new Map();
+  for (const log of reviewLogs || []) {
+    const list = byVocabulary.get(log.vocabulary_id) || [];
+    list.push(log);
+    byVocabulary.set(log.vocabulary_id, list);
+  }
+  const tiers = { occasional: [], weak: [], focus: [] };
+  for (const card of vocab || []) {
+    const history = normalizedLogHistory(card, byVocabulary).slice().sort((a, b) => Date.parse(a.reviewed_at || a.date || 0) - Date.parse(b.reviewed_at || b.date || 0));
+    const wrongs = history.filter((item) => item?.result === "wrong" || item?.correct === false);
+    if (!wrongs.length && wrongCountOf(card) <= 0) continue;
+    const recent = history.slice(-10);
+    const recentWrong = recent.filter((item) => item?.result === "wrong" || item?.correct === false).length;
+    const recentHard = recent.filter((item) => Number(item?.rating) === 3).length;
+    const recentRate = recent.length ? (recent.length - recentWrong) / recent.length : 1;
+    let consecutiveWrong = 0;
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      if (history[i]?.result === "wrong" || history[i]?.correct === false) consecutiveWrong += 1;
+      else break;
+    }
+    const lastReviewed = Date.parse(history.at(-1)?.reviewed_at || history.at(-1)?.date || lastReviewedOf(card) || 0);
+    const overdueDays = Date.parse(nextReviewOf(card) || 0) < instant
+      ? Math.floor((instant - Date.parse(nextReviewOf(card))) / 86400000)
+      : 0;
+    const stableNow = recent.length >= 3 && recentRate >= 0.8 && consecutiveWrong === 0
+      && (instant - (Number.isFinite(lastReviewed) ? lastReviewed : instant) < 30 * 86400000);
+    const item = { ...card, mistakeStats: { totalWrong: Math.max(wrongs.length, wrongCountOf(card)), recent, recentRate, consecutiveWrong, overdueDays } };
+    if (stableNow) tiers.occasional.push(item);
+    else if (consecutiveWrong >= 2 || (recent.length >= 3 && recentRate < 0.5) || (overdueDays >= 30 && recentRate < 0.8)) tiers.focus.push(item);
+    else if (recentWrong > 0 || (recent.length && recentHard / recent.length >= 0.3) || recentRate < 0.8) tiers.weak.push(item);
+    else tiers.occasional.push(item);
+  }
+  return tiers;
 }
 
 export function classifyReviewPools(vocab, now = Date.now()) {
@@ -178,7 +280,7 @@ export function classifyReviewPools(vocab, now = Date.now()) {
       pools.new.push(card);
       continue;
     }
-    if (hasRecentWrong(card, instant) || hasHighErrorRate(card)) {
+    if (hasRecentWrong(card, instant) || hasHighErrorRate(card, instant)) {
       pools.weak.push(card);
       continue;
     }
@@ -186,13 +288,13 @@ export function classifyReviewPools(vocab, now = Date.now()) {
     const due = !nextReview || !Date.parse(nextReview) || localDateKey(nextReview) <= today;
     if (due) pools.due.push(card);
   }
-  const byId = (a, b) => String(a?.id || "").localeCompare(String(b?.id || ""));
-  pools.new.sort((a, b) => String(a.created_date || a.createdAt || "").localeCompare(String(b.created_date || b.createdAt || "")) || byId(a, b));
-  pools.due.sort((a, b) => Date.parse(nextReviewOf(a) || 0) - Date.parse(nextReviewOf(b) || 0) || byId(a, b));
+  const byDailyTieBreak = (a, b) => dailyTieBreak(a, today) - dailyTieBreak(b, today);
+  pools.new.sort(byDailyTieBreak);
+  pools.due.sort((a, b) => Date.parse(nextReviewOf(a) || 0) - Date.parse(nextReviewOf(b) || 0) || byDailyTieBreak(a, b));
   pools.weak.sort((a, b) => {
     const aRate = wrongCountOf(a) / Math.max(reviewCountOf(a), 1);
     const bRate = wrongCountOf(b) / Math.max(reviewCountOf(b), 1);
-    return bRate - aRate || Date.parse(lastWrongAt(b) || lastReviewedOf(b) || 0) - Date.parse(lastWrongAt(a) || lastReviewedOf(a) || 0) || byId(a, b);
+    return bRate - aRate || Date.parse(lastWrongAt(b) || lastReviewedOf(b) || 0) - Date.parse(lastWrongAt(a) || lastReviewedOf(a) || 0) || byDailyTieBreak(a, b);
   });
   return pools;
 }
@@ -219,33 +321,13 @@ function stageForInterval(intervalDays) {
 export function scheduleStage(card, correct, reviewedAt = new Date()) {
   const at = reviewedAt instanceof Date ? reviewedAt : new Date(reviewedAt);
   const iso = at.toISOString();
-  const oldLastReviewed = lastReviewedOf(card);
-  const oldNextReview = nextReviewOf(card);
   const oldReviewCount = reviewCountOf(card);
   const oldCorrectCount = correctCountOf(card);
   const oldWrongCount = wrongCountOf(card);
   const previousInterval = Number(card?.intervalDays ?? card?.interval_days ?? 0);
-  if (oldLastReviewed && localDateKey(oldLastReviewed) === localDateKey(at)) {
-    const status = card.status || card.review_status || (oldReviewCount > 0 ? "learning" : "new");
-    return {
-      stage: stageOf(card),
-      reviewCount: oldReviewCount,
-      correctCount: oldCorrectCount,
-      wrongCount: oldWrongCount,
-      lastReviewedAt: oldLastReviewed,
-      nextReviewAt: oldNextReview,
-      intervalDays: previousInterval,
-      status,
-      review_count: oldReviewCount,
-      correct_count: oldCorrectCount,
-      error_count: oldWrongCount,
-      last_reviewed_date: oldLastReviewed,
-      next_review_date: oldNextReview,
-      interval_days: previousInterval,
-      review_status: status,
-    };
-  }
-
+  // Each submitted answer is a persisted review event, including answers in
+  // different question modes on the same day. Keep the prior due date for the
+  // log separately; the vocabulary summary always reflects the latest answer.
   const intervalDays = nextIntervalDays(previousInterval, Boolean(correct));
   const nextReviewAt = new Date(at.getTime() + intervalDays * 86400000).toISOString();
   const reviewCount = oldReviewCount + 1;
@@ -276,6 +358,8 @@ export function scheduleStage(card, correct, reviewedAt = new Date()) {
     review_status: status,
     review_history: history,
     mastery_level: mastery,
+    last_reviewed_at: iso,
+    next_review_at: nextReviewAt,
   };
 }
 

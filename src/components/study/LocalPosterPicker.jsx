@@ -52,12 +52,12 @@ export default function LocalPosterPicker({ title, type = "movie", onSelect, sel
   };
 
   return (
-    <section className="rounded-xl border border-border/70 p-3" aria-label="封面">
-      <div className="flex items-center gap-2">
+    <section className="min-w-0 max-w-full overflow-hidden rounded-xl border border-border/70 p-3" aria-label="封面">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <ImagePlus size={15} className="text-copper" />
         <span className="text-xs font-medium text-foreground">封面（可选）</span>
-        <div className="ml-auto flex items-center gap-2">
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={type === "tv" ? title || "项目名称" : title || "输入影片名"} className="w-36 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground" />
+        <div className="flex min-w-0 max-w-full flex-1 items-center gap-2 sm:ml-auto sm:flex-none">
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={type === "tv" ? title || "项目名称" : title || "输入影片名"} className="min-w-0 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground sm:w-36" />
           <button type="button" onClick={search} disabled={busy} className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1.5 text-xs text-foreground disabled:opacity-50">
             {busy ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />} 自动查找
           </button>
@@ -65,7 +65,7 @@ export default function LocalPosterPicker({ title, type = "movie", onSelect, sel
       </div>
       {message && <p className="mt-2 text-xs text-muted-foreground">{message}</p>}
       {!!candidates.length && (
-        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+        <div className="mt-3 flex min-w-0 max-w-full gap-2 overflow-x-auto pb-1">
           {candidates.map((candidate) => (
             <button type="button" key={candidate.id} disabled={cacheBusy} onClick={() => chooseCandidate(candidate)} className={`w-20 shrink-0 overflow-hidden rounded-lg border text-left disabled:opacity-60 ${selectedUrl === candidate.imageUrl ? "border-copper" : "border-border"}`} title={`使用：${candidate.title}`}>
               <img src={candidate.imageUrl} alt={candidate.title} className="aspect-[2/3] w-full object-cover" />
