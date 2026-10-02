@@ -12,3 +12,8 @@ test("subtitle archive round-trips cue data and compresses repeated text", async
   assert.equal(archive.encoding, "gzip-base64");
   assert.ok(archive.data.length < JSON.stringify(source).length / 2);
 });
+
+test("subtitle archive reads the database trigger's JSON compatibility format", async () => {
+  const source = { subtitles: [{ id: "cue-1", text_en: "kept" }], subtitle_text: null };
+  assert.deepEqual(await decodeSubtitleArchive({ encoding: "json", data: source }), source);
+});

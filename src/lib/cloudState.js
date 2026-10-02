@@ -153,12 +153,9 @@ export async function readMovieSubtitles(userId, movieId) {
   const resolvedUserId = userId || getActiveStorageUser();
   if (!supabase || !resolvedUserId || !movieId) return null;
   const { data, error } = await supabase
-    .from("user_state")
-    .select("movie_subtitles")
-    .eq("user_id", resolvedUserId)
-    .maybeSingle();
+    .rpc("get_movie_subtitle_archive", { p_movie_id: movieId });
   if (error) throw error;
-  return decodeSubtitleArchive(data?.movie_subtitles?.[movieId]);
+  return decodeSubtitleArchive(data);
 }
 
 export function mergeState(local = {}, remote = {}) {
