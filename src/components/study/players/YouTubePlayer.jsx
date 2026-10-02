@@ -1,4 +1,5 @@
-import React, { useRef, useEffect, forwardRef, useImperativeHandle, useMemo } from "react";
+import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle, useMemo } from "react";
+import { createYouTubeEmbedUrl, createYouTubePlayerVars } from "@/lib/youtubePlayerConfig";
 
 /**
  * YouTube 播放器：通过 IFrame Player API 嵌入。
@@ -46,6 +47,7 @@ function parseYouTube(url) {
 
 const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", onTimeUpdate, onUserSeek, autoPlayFrom }, ref) {
   const embed = useMemo(() => parseYouTube(url), [url]);
+  const [playerErrorCode, setPlayerErrorCode] = useState(null);
 
   // Host container React owns but renders NO JSX children into — so React never
   // tries to reconcile the iframe the YT API injects/destroys inside it.
@@ -69,6 +71,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
 
   useEffect(() => {
     if (!embed?.videoId) return;
+    setPlayerErrorCode(null);
     let cancelled = false;
     const host = ytHostRef.current;
     if (!host) return;
@@ -85,11 +88,11 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
       if (cancelled || ytPlayerRef.current) return;
       host.innerHTML = "";
       const iframe = document.createElement("iframe");
-      const params = new URLSearchParams({ rel: "0", modestbranding: "1", playsinline: "1", enablejsapi: "1" });
-      if (origin) params.set("origin", origin);
-      iframe.src = `https://www.youtube.com/embed/${embed.videoId}?${params}`;
+      iframe.src = createYouTubeEmbedUrl(embed.videoId, origin);
       iframe.style.cssText = "width:100%;height:100%;border:0";
       iframe.allow = "autoplay; fullscreen; encrypted-media";
+      iframe.referrerPolicy = "strict-origin-when-cross-origin";
+      iframe.title = "YouTube video player";
       iframe.setAttribute("allowfullscreen", "");
       host.appendChild(iframe);
     }, 6000);
@@ -110,7 +113,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
         videoId: embed.videoId,
         width: "100%",
         height: "100%",
-        playerVars: { rel: 0, modestbranding: 1, autoplay: 0, playsinline: 1, origin },
+        playerVars: createYouTubePlayerVars(origin),
         events: {
           onReady: (e) => {
             if (cancelled) return;
@@ -136,7 +139,10 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
             }
           },
           onError: (e) => {
-            if (host) host.dataset.ytError = String(e.data);
+            const code = Number(e?.data) || 0;
+            setPlayerErrorCode(code);
+            if (host) host.dataset.ytError = String(code);
+            console.info("[YouTubePlayer] embedded playback error", { code, videoId: embed.videoId, origin });
           },
         },
       });
@@ -217,6 +223,18 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
       <div className="relative w-full overflow-hidden rounded-2xl border border-border bg-black" style={{ aspectRatio: "16 / 9" }}>
         <div ref={ytHostRef} className="absolute inset-0 h-full w-full" />
       </div>
+      {playerErrorCode !== null && <p role="status" className="mt-2 text-xs text-amber-300/90">
+        {playerErrorCode === 153
+          ? "YouTube 未收到来源识别信息（153），这不是 LingoClub 登录失败。"
+          : playerErrorCode === 101 || playerErrorCode === 150
+            ? "该视频不允许嵌入播放。"
+            : playerErrorCode === 100
+              ? "该视频可能已删除或设为私密。"
+              : `YouTube 嵌入播放器无法播放（${playerErrorCode}）。`}
+      </p>}
+      <a href={`https://www.youtube.com/watch?v=${encodeURIComponent(embed.videoId)}`} target="_blank" rel="noopener" referrerPolicy="strict-origin-when-cross-origin" className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:text-copper hover:underline md:hidden">
+        {playerErrorCode === null ? "手机无法播放？在 YouTube 打开" : "在 YouTube 打开视频"}
+      </a>
     </div>
   );
 });

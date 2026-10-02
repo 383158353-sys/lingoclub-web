@@ -311,6 +311,7 @@ test("YouTube URL parsing and json3 event conversion preserve timing", () => {
     "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     "https://m.youtube.com/watch?v=dQw4w9WgXcQ&feature=shared",
     "https://youtube.com/shorts/dQw4w9WgXcQ?t=12",
+    "https://www.youtube.com/live/dQw4w9WgXcQ?feature=shared",
     "分享给你 https://youtu.be/dQw4w9WgXcQ?si=xxx 从 00:12 开始",
   ]) assert.equal(videoId(url), "dQw4w9WgXcQ", url);
   assert.equal(videoId("https://example.com/video"), null);
@@ -355,19 +356,19 @@ test("YouTube handler prefers the independent transcript service and returns its
   globalThis.fetch = async (url, options) => {
     request = { url: String(url), options };
     return new Response(JSON.stringify({
-      videoId: "LCAY3PGHZyw",
+      videoId: "A1B2C3D4E5F",
       subtitles: [{ start: 0.24, duration: 4.32, text: "Hello everyone" }],
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
   try {
     const res = responseRecorder();
-    await handleYouTubeTranscript({}, res, { url: "https://youtu.be/LCAY3PGHZyw" }, {
+    await handleYouTubeTranscript({}, res, { url: "https://youtu.be/A1B2C3D4E5F" }, {
       TRANSCRIPT_SERVICE_URL: "https://transcript.example",
       TRANSCRIPT_SERVICE_TOKEN: "temporary-test-token",
     });
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
-    assert.equal(body.videoId, "LCAY3PGHZyw");
+    assert.equal(body.videoId, "A1B2C3D4E5F");
     assert.deepEqual(body.subtitles, [{ start: 0.24, duration: 4.32, text: "Hello everyone" }]);
     assert.deepEqual(body.lines, [{ text_en: "Hello everyone", time_start: "0:00.240", time_end: "0:04.560" }]);
     assert.equal(body.diagnostics.extractor, "independent-transcript-service");
@@ -401,31 +402,114 @@ test("standalone service retries YouTube challenges up to three rounds and stops
   assert.equal(result.attempts.at(-1).status, "success");
 });
 
-test("configured production transcript service never falls back to Vercel YouTube requests", async () => {
+test("Vercel without a transcript service falls back to the built-in multi-client extractor", async () => {
   const previousFetch = globalThis.fetch;
-  const previousVercel = process.env.VERCEL;
-  process.env.VERCEL = "1";
-  let requestCount = 0;
-  globalThis.fetch = async () => {
-    requestCount += 1;
-    return new Response("Cloudflare origin error", { status: 502, headers: { "Content-Type": "text/html" } });
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), options });
+    if (String(url).includes("youtubei/v1/player")) return new Response(JSON.stringify({
+      videoDetails: { title: "Built-in fallback test" },
+      captions: { playerCaptionsTracklistRenderer: { captionTracks: [{ languageCode: "en", baseUrl: "https://caption.example/direct-fallback" }] } },
+    }), { status: 200 });
+    if (String(url).includes("youtube.com/watch")) return new Response("<html>no captions here</html>", { status: 200 });
+    if (String(url).startsWith("https://caption.example/direct-fallback")) return new Response(JSON.stringify({ events: [{ tStartMs: 250, dDurationMs: 900, segs: [{ utf8: "Fallback works" }] }] }), { status: 200 });
+    return new Response("unexpected", { status: 500 });
   };
   try {
     const res = responseRecorder();
-    await handleYouTubeTranscript({}, res, { url: "https://youtu.be/LCAY3PGHZyw" }, {
-      VERCEL: process.env.VERCEL,
-      TRANSCRIPT_SERVICE_URL: "https://transcript.example",
-      TRANSCRIPT_SERVICE_TOKEN: "test-token",
-    });
+    await handleYouTubeTranscript({}, res, { url: "https://youtu.be/Z9Y8X7W6V5U" }, { VERCEL: "1" });
     const body = JSON.parse(res.body);
-    assert.equal(res.statusCode, 502);
-    assert.equal(body.reason, "transcript_tunnel_http_error");
-    assert.equal(body.diagnostics.transcriptService.status, 502);
-    assert.equal(requestCount, 1);
+    assert.equal(res.statusCode, 200);
+    assert.equal(body.lines[0].text_en, "Fallback works");
+    assert.equal(body.diagnostics.transcriptService.configured, false);
+    assert.ok(requests.some((request) => request.url.includes("youtubei/v1/player")));
+    assert.equal(requests.some((request) => request.url.includes("transcript.example/transcript")), false);
   } finally {
     globalThis.fetch = previousFetch;
-    if (previousVercel === undefined) delete process.env.VERCEL;
-    else process.env.VERCEL = previousVercel;
+  }
+});
+
+test("built-in transcript extraction retries twice with bounded short backoff", async () => {
+  const previousFetch = globalThis.fetch;
+  let upstreamCalls = 0;
+  globalThis.fetch = async (url) => {
+    upstreamCalls += 1;
+    const value = String(url);
+    if (upstreamCalls <= 12) return new Response("temporarily blocked", { status: 503 });
+    if (value.includes("youtubei/v1/player")) return new Response(JSON.stringify({
+      captions: { playerCaptionsTracklistRenderer: { captionTracks: [{ languageCode: "en", baseUrl: "https://caption.example/retry-success" }] } },
+    }), { status: 200 });
+    if (value.includes("youtube.com/watch")) return new Response("<html>no captions here</html>", { status: 200 });
+    if (value.startsWith("https://caption.example/retry-success")) return new Response(JSON.stringify({ events: [{ tStartMs: 100, dDurationMs: 1000, segs: [{ utf8: "Retry succeeded" }] }] }), { status: 200 });
+    return new Response("unexpected", { status: 500 });
+  };
+  try {
+    const res = responseRecorder();
+    await handleYouTubeTranscript({}, res, { url: "https://youtu.be/R1T2Y3U4I5O" }, { VERCEL: "1" });
+    const body = JSON.parse(res.body);
+    assert.equal(res.statusCode, 200);
+    assert.equal(body.lines[0].text_en, "Retry succeeded");
+    assert.equal(body.diagnostics.attempt, 3);
+    assert.ok(upstreamCalls > 12);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("failed independent transcript service falls through to built-in extraction", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value.includes("transcript.example/transcript")) return new Response("service unavailable", { status: 503 });
+    if (value.includes("youtubei/v1/player")) return new Response(JSON.stringify({
+      captions: { playerCaptionsTracklistRenderer: { captionTracks: [{ languageCode: "en", baseUrl: "https://caption.example/service-fallback" }] } },
+    }), { status: 200 });
+    if (value.includes("youtube.com/watch")) return new Response("<html>no captions here</html>", { status: 200 });
+    if (value.startsWith("https://caption.example/service-fallback")) return new Response(JSON.stringify({ events: [{ tStartMs: 1000, dDurationMs: 1000, segs: [{ utf8: "Service fallback" }] }] }), { status: 200 });
+    return new Response("unexpected", { status: 500 });
+  };
+  try {
+    const res = responseRecorder();
+    await handleYouTubeTranscript({}, res, { url: "https://youtube.com/shorts/Q1W2E3R4T5Y" }, { VERCEL: "1", TRANSCRIPT_SERVICE_URL: "https://transcript.example" });
+    const body = JSON.parse(res.body);
+    assert.equal(res.statusCode, 200);
+    assert.equal(body.lines[0].text_en, "Service fallback");
+    assert.equal(body.diagnostics.transcriptService.used, true);
+    assert.equal(body.diagnostics.transcriptService.status, 503);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("YouTube transcript requests dedupe concurrently and cache successes", async () => {
+  const previousFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url) => {
+    requests.push(String(url));
+    if (String(url).includes("youtubei/v1/player")) return new Response(JSON.stringify({
+      captions: { playerCaptionsTracklistRenderer: { captionTracks: [{ languageCode: "en", baseUrl: "https://caption.example/deduped" }] } },
+    }), { status: 200 });
+    if (String(url).includes("youtube.com/watch")) return new Response("<html>no captions here</html>", { status: 200 });
+    if (String(url).startsWith("https://caption.example/deduped")) return new Response(JSON.stringify({ events: [{ tStartMs: 500, dDurationMs: 1000, segs: [{ utf8: "One fetch" }] }] }), { status: 200 });
+    return new Response("unexpected", { status: 500 });
+  };
+  try {
+    const first = responseRecorder();
+    const second = responseRecorder();
+    const url = "https://youtu.be/M1N2B3V4C5X";
+    await Promise.all([
+      handleYouTubeTranscript({}, first, { url }, { VERCEL: "1" }),
+      handleYouTubeTranscript({}, second, { url }, { VERCEL: "1" }),
+    ]);
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+    assert.equal(requests.filter((request) => request.includes("youtubei/v1/player")).length, 5);
+    const cached = responseRecorder();
+    await handleYouTubeTranscript({}, cached, { url }, { VERCEL: "1" });
+    assert.equal(JSON.parse(cached.body).diagnostics.cached, true);
+    assert.equal(requests.filter((request) => request.includes("youtubei/v1/player")).length, 5);
+  } finally {
+    globalThis.fetch = previousFetch;
   }
 });
 
@@ -471,7 +555,7 @@ test("YouTube bot challenge is reported as inaccessible existing transcript, not
     assert.equal(res.statusCode, 502);
     const body = JSON.parse(res.body);
     assert.equal(body.reason, "youtube_bot_challenge");
-    assert.match(body.error, /Vercel 服务器被 YouTube bot challenge 拦截/);
+    assert.match(body.error, /服务器端 bot challenge/);
     assert.equal(body.diagnostics.subtitleCount, 0);
   } finally {
     globalThis.fetch = previousFetch;

@@ -196,13 +196,13 @@ export class TranscriptExtractionError extends Error {
   }
 }
 
-export async function extractYouTubeTranscriptDetailed(input) {
+export async function extractYouTubeTranscriptDetailed(input, { attempts = 2, retryDelayMs = 500, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
   const id = videoId(input);
   if (!id) throw new TranscriptExtractionError("不是有效的 YouTube 链接或 videoId", { statusCode: 400 });
   const diagnostics = [];
   const errors = [];
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, 500));
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (attempt > 1) await wait(retryDelayMs * (attempt - 1));
     try {
       const found = await meaningfulAttempt(id, diagnostics, attempt);
       const track = pickEnglishTrack(found.tracks);

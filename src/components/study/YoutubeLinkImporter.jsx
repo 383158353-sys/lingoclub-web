@@ -98,7 +98,7 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
 
   const isValid = !!extractYouTubeId(url);
   const hasSubs = subtitles && subtitles.length > 0;
-  const busy = fetchingMeta || fetchingSubs;
+  const busy = fetchingSubs;
 
   const start = () => {
     const finalUrl = normalizeYouTubeUrl(url);
@@ -186,10 +186,16 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
             <p className="mt-2 text-[11px] text-muted-foreground/70">
               YouTube「分享」按钮的短链 (youtu.be/…) 与网址栏长链 (youtube.com/watch?v=…) 均可直接粘贴，两种都能识别。
             </p>
-            {busy && (
+            {fetchingMeta && (
               <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
                 <Loader2 size={13} className="animate-spin text-copper" />
-                <span>{fetchingMeta ? "正在获取标题和封面…" : "正在提取 CC 字幕（含时间戳）…"}</span>
+                <span>正在获取标题和封面…</span>
+              </div>
+            )}
+            {fetchingSubs && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 size={13} className="animate-spin text-copper" />
+                <span>正在提取 CC 字幕（含时间戳）…</span>
               </div>
             )}
             {!busy && !hasSubs && isValid && (

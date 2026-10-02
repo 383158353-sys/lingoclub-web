@@ -11,6 +11,17 @@ import { classifyMistakeTiers, classifyReviewPools, normalizeVocabularyProgress 
 import WordDetailDialog from "@/components/vocab/WordDetailDialog";
 import { useAuth } from "@/lib/AuthContext";
 import { openVocabularySource } from "@/lib/vocabularySourceNavigation";
+import { advanceReviewQuestion, createAnswerCommitGate, createReviewQuestionToken } from "@/lib/reviewFlow";
+
+const REVIEW_FONT_SCALES = [0.85, 1, 1.15];
+const reviewFontStorageKey = (userId) => `lingoclub:review-font-scale:${userId || "guest"}`;
+
+function loadReviewFontScale(userId) {
+  try {
+    const saved = Number(localStorage.getItem(reviewFontStorageKey(userId)));
+    return REVIEW_FONT_SCALES.includes(saved) ? saved : 1;
+  } catch { return 1; }
+}
 
 const MASTERY = {
   new: { label: "未学", className: "text-muted-foreground bg-background-elev" },
@@ -77,10 +88,23 @@ export default function Collection() {
   const [mistakeFilter, setMistakeFilter] = useState(() => searchParams.get("filter") || "all");
   const [otherReviewOpen, setOtherReviewOpen] = useState(false);
   const [reviewSessionId, setReviewSessionId] = useState(() => loadSession()?.sessionId || createSessionId());
+  const [reviewFontScale, setReviewFontScale] = useState(1);
+  const answerCommitGate = useRef(createAnswerCommitGate());
+  const reviewQuestionToken = useRef(null);
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
   const VocabApi = vocabRepository;
+
+  useEffect(() => {
+    setReviewFontScale(loadReviewFontScale(user?.id));
+  }, [user?.id]);
+
+  const changeReviewFontScale = (scale) => {
+    if (!REVIEW_FONT_SCALES.includes(scale)) return;
+    setReviewFontScale(scale);
+    try { localStorage.setItem(reviewFontStorageKey(user?.id), String(scale)); } catch { /* local preference is optional */ }
+  };
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -280,7 +304,13 @@ export default function Collection() {
     setPhase(p);
   };
 
+  const baseQuestionToken = `${reviewSessionId}:${phase}:${idx}:${queue[idx]}`;
+  reviewQuestionToken.current = createReviewQuestionToken(baseQuestionToken, reviewQuestionToken.current);
+  const activeQuestionToken = reviewQuestionToken.current.token;
+  answerCommitGate.current.activate(activeQuestionToken);
+
   const onAnswer = (card, correct, answer = {}) => {
+    if (!answerCommitGate.current.tryCommit(activeQuestionToken)) return;
     const id = card.id;
     const map = phase === "r1" ? r1Res : phase === "r2" ? r2Res : r3Res;
     const isFirst = map[id] === undefined;
@@ -325,16 +355,10 @@ export default function Collection() {
     }
 
     setReviewed((r) => r + 1);
-    const next = idx + 1;
-    if (next < nextQueue.length) {
-      setIdx(next);
-    } else if (phase === "r1") {
-      enterPhase("r2");
-    } else if (phase === "r2") {
-      enterPhase("r3");
-    } else {
-      setPhase("done");
-    }
+    const next = advanceReviewQuestion({ phase, idx, queueLength: nextQueue.length });
+    if (next.phase === "done") setPhase("done");
+    else if (next.phase !== phase) enterPhase(next.phase);
+    else setIdx(next.idx);
   };
 
   const goBack = () => setIdx((i) => Math.max(0, i - 1));
@@ -346,7 +370,7 @@ export default function Collection() {
     const errorRate = totalReviews ? Math.round((totalErrors / totalReviews) * 100) : 0;
     return (
       <div className="mx-auto flex min-h-[100dvh] max-w-7xl flex-col px-3 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+4.75rem)] sm:px-5 md:min-h-0 md:px-8 md:pb-20 md:pt-28">
-        <ReviewHeader reviewed={reviewed} total={originalQueue.length} phase={phase} stage={stageOf(activeCard)} errorRate={errorRate} onExit={() => { setTab("list"); }} />
+        <ReviewHeader reviewed={reviewed} total={originalQueue.length} phase={phase} stage={stageOf(activeCard)} errorRate={errorRate} fontScale={reviewFontScale} onFontScaleChange={changeReviewFontScale} onExit={() => { setTab("list"); }} />
         {sessionMeta && (sessionMeta.newCount > 0 || sessionMeta.reviewCount > 0) && (
           <p className="mt-2 text-[11px] text-muted-foreground/70">今日队列：复习 {sessionMeta.reviewCount} · 新词 {sessionMeta.newCount}{sessionMeta.deferred > 0 ? ` · 顺延 ${sessionMeta.deferred} 至明日` : ""}</p>
         )}
@@ -359,6 +383,7 @@ export default function Collection() {
             onAnswer={onAnswer}
             reviewMode={reviewMode}
             onBack={goBack}
+            fontScale={reviewFontScale}
           />
         </div>
       </div>
@@ -543,7 +568,7 @@ function DeleteChip({ id, onGone, onDelete }) {
   );
 }
 
-function ReviewHeader({ reviewed, total, phase, stage, errorRate, onExit }) {
+function ReviewHeader({ reviewed, total, phase, stage, errorRate, fontScale, onFontScaleChange, onExit }) {
   const pct = total ? Math.min(100, Math.round((reviewed / total) * 100)) : 0;
   const labelMap = { r1: "第一轮 · 英译中", r2: "第二轮 · 中译英", r3: "第三轮 · 听音选词" };
   const label = labelMap[phase] || "复习";
@@ -555,9 +580,18 @@ function ReviewHeader({ reviewed, total, phase, stage, errorRate, onExit }) {
           <h2 className="mt-1 font-display text-2xl text-foreground">已复习 {reviewed} / {total}</h2>
           <p className="mt-1 text-[11px] text-muted-foreground">当前单词 · {STAGE_LABELS[stage] || "新词"} · 历史错题率 {errorRate}%</p>
         </div>
-        <button onClick={onExit} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-copper">
-          退出 <ArrowRight size={14} />
-        </button>
+        <div className="flex flex-col items-end gap-2">
+          <button onClick={onExit} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-copper">
+            退出 <ArrowRight size={14} />
+          </button>
+          <div role="group" aria-label="复习题字号" className="flex items-center gap-0.5 rounded-full border border-border p-0.5 text-[11px]">
+            {[ [0.85, "A−"], [1, "A"], [1.15, "A+"] ].map(([scale, label]) => (
+              <button key={scale} type="button" aria-pressed={fontScale === scale} onClick={() => onFontScaleChange(scale)} className={`min-w-7 rounded-full px-2 py-1 ${fontScale === scale ? "bg-copper/20 text-copper" : "text-muted-foreground hover:text-foreground"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       <div className="mt-3 flex items-center justify-center gap-3 text-[11px] uppercase tracking-luxe">
         <span className={phase === "r1" ? "text-copper" : "text-muted-foreground/50"}>① 英译中</span>
