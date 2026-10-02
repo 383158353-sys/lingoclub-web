@@ -24,8 +24,24 @@ export function decryptCredentialSecret(encrypted, env = process.env) {
   return Buffer.concat([decipher.update(Buffer.from(textPart, "base64url")), decipher.final()]).toString("utf8");
 }
 
+function supabaseUrl(env) {
+  return String(env.VITE_SUPABASE_URL || "").trim();
+}
+
+function supabaseHost(env) {
+  try { return new URL(supabaseUrl(env)).host; }
+  catch { return ""; }
+}
+
+export function getAuthSupabase(env = process.env) {
+  const url = supabaseUrl(env);
+  const key = String(env.VITE_SUPABASE_PUBLISHABLE_KEY || "").trim();
+  if (!url || !key) { const error = new Error("Supabase authentication is not configured"); error.code = "SERVER_ENV_MISSING"; error.stage = "missing_server_env"; throw error; }
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
 export function getServerSupabase(env = process.env) {
-  const url = String(env.SUPABASE_URL || env.VITE_SUPABASE_URL || "").trim();
+  const url = supabaseUrl(env);
   const key = String(env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
   if (!url || !key) { const error = new Error("AI credentials storage is not configured"); error.code = "SERVER_ENV_MISSING"; error.stage = "missing_server_env"; throw error; }
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -33,14 +49,46 @@ export function getServerSupabase(env = process.env) {
 
 export async function authenticatedUser(req, env = process.env) {
   const auth = String(req.headers?.authorization || "");
-  const token = auth.match(/^Bearer\s+(.+)$/i)?.[1];
-  if (!token) { const error = new Error("Authentication required"); error.status = 401; error.code = "AUTH_REQUIRED"; error.stage = "auth"; throw error; }
-  const client = getServerSupabase(env);
+  const token = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  const diagnostic = {
+    bearerPresent: Boolean(token),
+    tokenLength: token?.length || 0,
+    supabaseHost: supabaseHost(env),
+    authErrorCode: null,
+    authErrorStatus: null,
+    userResolved: false,
+    serviceRoleClientInitialized: false,
+  };
+  if (!token) {
+    console.info("[/api/ai-credentials] auth diagnostic", diagnostic);
+    const error = new Error("Authentication required"); error.status = 401; error.code = "AUTH_REQUIRED"; error.stage = "auth"; throw error;
+  }
+  let authClient;
+  let client;
+  try {
+    authClient = getAuthSupabase(env);
+    client = getServerSupabase(env);
+    diagnostic.serviceRoleClientInitialized = true;
+  } catch (error) {
+    diagnostic.authErrorCode = String(error?.code || "CLIENT_INIT_FAILED");
+    diagnostic.authErrorStatus = Number.isInteger(error?.status) ? error.status : null;
+    console.info("[/api/ai-credentials] auth diagnostic", diagnostic);
+    throw error;
+  }
   let result;
-  try { result = await client.auth.getUser(token); }
-  catch (cause) { const error = new Error("Supabase authentication request failed"); error.stage = "supabase_connection"; error.code = "SUPABASE_CONNECTION_FAILED"; throw error; }
+  try { result = await authClient.auth.getUser(token); }
+  catch (cause) {
+    diagnostic.authErrorCode = String(cause?.code || "SUPABASE_CONNECTION_FAILED");
+    diagnostic.authErrorStatus = Number.isInteger(cause?.status) ? cause.status : null;
+    console.info("[/api/ai-credentials] auth diagnostic", diagnostic);
+    const error = new Error("Supabase authentication request failed"); error.stage = "supabase_connection"; error.code = "SUPABASE_CONNECTION_FAILED"; throw error;
+  }
   const { data, error } = result;
-  if (error || !data?.user?.id) { const unauthorized = new Error("Authentication required"); unauthorized.status = 401; unauthorized.code = "AUTH_REQUIRED"; unauthorized.stage = "auth"; throw unauthorized; }
+  diagnostic.authErrorCode = error?.code ? String(error.code) : null;
+  diagnostic.authErrorStatus = Number.isInteger(error?.status) ? error.status : null;
+  diagnostic.userResolved = Boolean(data?.user?.id);
+  console.info("[/api/ai-credentials] auth diagnostic", diagnostic);
+  if (error || !diagnostic.userResolved) { const unauthorized = new Error("Authentication required"); unauthorized.status = 401; unauthorized.code = "AUTH_REQUIRED"; unauthorized.stage = "auth"; throw unauthorized; }
   return { client, user: data.user };
 }
 
