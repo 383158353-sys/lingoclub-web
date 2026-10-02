@@ -179,12 +179,12 @@ async function performReadUserState(userId) {
     readPayloadBytes: serializedBytes(data?.data || null),
   });
   if (error) throw error;
-  if (typeof console !== "undefined") console.info("[LingoClub user_state performance]", {
+  if (typeof console !== "undefined") console.info("[LingoClub user_state performance]", JSON.stringify({
     operation: "read",
     durationMs: Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt),
     payloadBytes: serializedBytes(data?.data || null),
     found: Boolean(data),
-  });
+  }));
   return data || null;
 }
 

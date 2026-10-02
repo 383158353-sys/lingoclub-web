@@ -50,7 +50,7 @@ async function diagnosticFetch(input, init = {}) {
     const requests = window.__LINGOCLUB_USER_STATE_REQUESTS__ || [];
     requests.push(diagnostic);
     window.__LINGOCLUB_USER_STATE_REQUESTS__ = requests.slice(-20);
-    console.info("[LingoClub user_state request]", diagnostic);
+    console.info("[LingoClub user_state request]", JSON.stringify(diagnostic));
   }
   return response;
 }
