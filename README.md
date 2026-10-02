@@ -8,12 +8,18 @@ Requirements: Node.js 20 or newer and npm.
 
 ```bash
 npm ci
+```
+
+Create the ignored local environment file, fill in the required values described below, then start the dev server:
+
+```powershell
+Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Open <http://localhost:5173/>. The dev server listens on loopback at a fixed port, so this command is the same every time and Vite hot reloads source changes without a push or Vercel deployment.
+Open <http://127.0.0.1:5173/>. The dev server listens on loopback at a fixed port, so this command is the same every time and Vite hot reloads source changes without a push or Vercel deployment.
 
-For signed-in cloud features, copy `.env.example` to `.env.local` and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` to the same Supabase project used by the app. Restart the dev server after changing environment variables. Local sign-in uses the normal Supabase auth flow; a session from the production website is not shared with localhost.
+For signed-in cloud features, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in `.env.local` to the same Supabase project used by the app. Local sign-in uses the normal Supabase auth flow; a session from the production website is not shared with localhost.
 
 The Vite server includes local adapters for the repository's Vercel routes:
 
@@ -31,7 +37,7 @@ TRANSCRIPT_SERVICE_URL=
 TRANSCRIPT_SERVICE_TOKEN=
 ```
 
-Vite exposes `VITE_*` values to browser code. Never put service-role keys, master keys, transcript tokens, or provider API keys in browser-visible variables or commit `.env.local`. The example file contains placeholders only.
+Restart the dev server after changing environment variables. To test the account's existing encrypted AI credential, `AI_CREDENTIALS_MASTER_KEY` must exactly match the key used when that credential was stored. Vite exposes `VITE_*` values to browser code. Never put service-role keys, master keys, transcript tokens, or provider API keys in browser-visible variables or commit `.env.local`. The example file contains placeholders only.
 
 To run the standalone transcript service separately:
 

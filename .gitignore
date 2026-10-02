@@ -39,3 +39,4 @@ base44/.app.jsonc
 .codex/
 .tmp-*
 supabase/.temp/
+.vercel
