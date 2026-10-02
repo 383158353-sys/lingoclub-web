@@ -19,30 +19,25 @@ async function diagnosticFetch(input, init = {}) {
     const payload = typeof rawBody === "string" ? JSON.parse(rawBody) : rawBody;
     payloadUserId = Array.isArray(payload) ? payload[0]?.user_id : payload?.user_id;
   } catch { /* request may not have a JSON body */ }
-
-  const response = await nativeFetch(input, init);
-  const durationMs = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt);
   const requestBytes = typeof rawBody === "string" && rawBody ? new TextEncoder().encode(rawBody).byteLength : 0;
-  const responseBytes = Number(response.headers.get("content-length")) || null;
-  let responseBody = "";
-  if (import.meta.env.DEV) { try { responseBody = await response.clone().text(); } catch { /* noop */ } }
+  const diagnostic = {
+    method,
+    httpStatus: null,
+    stage: "user_state",
+    payloadCount: Array.isArray(rawBody) ? rawBody.length : rawBody ? 1 : 0,
+    durationMs: null,
+    requestBytes,
+    responseBytes: null,
+    startedAtMs: Math.round(startedAt),
+    completedAtMs: null,
+    recordedAt: new Date().toISOString(),
+  };
+  if (import.meta.env.DEV) Object.assign(diagnostic, {
+    requestUrl: url,
+    accessTokenAttached: /^Bearer\s+\S+/i.test(headers.get("authorization") || ""),
+    payloadUserId: payloadUserId || null,
+  });
   if (typeof window !== "undefined") {
-    const diagnostic = {
-      method,
-      httpStatus: response.status,
-      stage: "user_state",
-      payloadCount: Array.isArray(rawBody) ? rawBody.length : rawBody ? 1 : 0,
-      durationMs,
-      requestBytes,
-      responseBytes,
-      recordedAt: new Date().toISOString(),
-    };
-    if (import.meta.env.DEV) Object.assign(diagnostic, {
-      requestUrl: url,
-      accessTokenAttached: /^Bearer\s+\S+/i.test(headers.get("authorization") || ""),
-      payloadUserId: payloadUserId || null,
-      responseBody,
-    });
     window.__LINGOCLUB_SYNC_DIAGNOSTIC__ = {
       ...(window.__LINGOCLUB_SYNC_DIAGNOSTIC__ || {}),
       ...diagnostic,
@@ -50,8 +45,29 @@ async function diagnosticFetch(input, init = {}) {
     const requests = window.__LINGOCLUB_USER_STATE_REQUESTS__ || [];
     requests.push(diagnostic);
     window.__LINGOCLUB_USER_STATE_REQUESTS__ = requests.slice(-20);
-    console.info("[LingoClub user_state request]", JSON.stringify(diagnostic));
   }
+
+  let response;
+  try {
+    response = await nativeFetch(input, init);
+  } catch (error) {
+    diagnostic.networkError = true;
+    diagnostic.completedAtMs = Math.round(typeof performance !== "undefined" ? performance.now() : Date.now());
+    diagnostic.durationMs = diagnostic.completedAtMs - diagnostic.startedAtMs;
+    if (typeof window !== "undefined") console.info("[LingoClub user_state request]", JSON.stringify(diagnostic));
+    throw error;
+  }
+  const endedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  diagnostic.httpStatus = response.status;
+  diagnostic.durationMs = Math.round(endedAt - startedAt);
+  diagnostic.completedAtMs = Math.round(endedAt);
+  const resourceEntries = typeof performance !== "undefined" ? performance.getEntriesByName(url, "resource") : [];
+  const resourceEntry = resourceEntries[resourceEntries.length - 1];
+  diagnostic.responseBytes = Number(response.headers.get("content-length")) || resourceEntry?.encodedBodySize || null;
+  let responseBody = "";
+  if (import.meta.env.DEV) { try { responseBody = await response.clone().text(); } catch { /* noop */ } }
+  if (import.meta.env.DEV) diagnostic.responseBody = responseBody;
+  if (typeof window !== "undefined") console.info("[LingoClub user_state request]", JSON.stringify(diagnostic));
   return response;
 }
 

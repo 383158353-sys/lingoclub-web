@@ -35,4 +35,4 @@ The service applies CORS for `https://lingoclub.vercel.app` and `http://localhos
 
 ## LingoClub connection
 
-The Vercel `/api/youtube-transcript` adapter proxies to `TRANSCRIPT_SERVICE_URL` and uses the server-side `TRANSCRIPT_SERVICE_TOKEN` for authorization. In Vercel, configure the service URL and token only in the Preview environment first. When the independent service is unavailable or unconfigured, the Vercel adapter does not fall back to requesting YouTube directly.
+The Vercel `/api/youtube-transcript` adapter checks its 30-day process cache first, then uses `TRANSCRIPT_SERVICE_URL` when configured with `TRANSCRIPT_SERVICE_TOKEN` held server-side. If that service is missing or fails, the adapter falls back to the built-in multi-client YouTube extractor with bounded retries. If server extraction still fails, the browser client may try its historical proxy fallback. Successful results are cached on the client for 30 days as well. Test new service credentials in Preview before changing Production configuration.
