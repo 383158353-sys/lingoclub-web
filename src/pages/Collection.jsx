@@ -14,11 +14,11 @@ import { openVocabularySource } from "@/lib/vocabularySourceNavigation";
 import { advanceReviewQuestion, createAnswerCommitGate, createReviewQuestionToken } from "@/lib/reviewFlow";
 
 const REVIEW_FONT_SCALES = [0.85, 1, 1.15];
-const reviewFontStorageKey = (userId) => `lingoclub:review-font-scale:${userId || "guest"}`;
+const corpusFontStorageKey = (userId) => `lingoclub:corpus-preview-font-scale:${userId || "guest"}`;
 
-function loadReviewFontScale(userId) {
+function loadCorpusFontScale(userId) {
   try {
-    const saved = Number(localStorage.getItem(reviewFontStorageKey(userId)));
+    const saved = Number(localStorage.getItem(corpusFontStorageKey(userId)));
     return REVIEW_FONT_SCALES.includes(saved) ? saved : 1;
   } catch { return 1; }
 }
@@ -88,7 +88,7 @@ export default function Collection() {
   const [mistakeFilter, setMistakeFilter] = useState(() => searchParams.get("filter") || "all");
   const [otherReviewOpen, setOtherReviewOpen] = useState(false);
   const [reviewSessionId, setReviewSessionId] = useState(() => loadSession()?.sessionId || createSessionId());
-  const [reviewFontScale, setReviewFontScale] = useState(1);
+  const [corpusFontScale, setCorpusFontScale] = useState(1);
   const answerCommitGate = useRef(createAnswerCommitGate());
   const reviewQuestionToken = useRef(null);
   const { toast } = useToast();
@@ -97,13 +97,13 @@ export default function Collection() {
   const VocabApi = vocabRepository;
 
   useEffect(() => {
-    setReviewFontScale(loadReviewFontScale(user?.id));
+    setCorpusFontScale(loadCorpusFontScale(user?.id));
   }, [user?.id]);
 
-  const changeReviewFontScale = (scale) => {
+  const changeCorpusFontScale = (scale) => {
     if (!REVIEW_FONT_SCALES.includes(scale)) return;
-    setReviewFontScale(scale);
-    try { localStorage.setItem(reviewFontStorageKey(user?.id), String(scale)); } catch { /* local preference is optional */ }
+    setCorpusFontScale(scale);
+    try { localStorage.setItem(corpusFontStorageKey(user?.id), String(scale)); } catch { /* local preference is optional */ }
   };
 
   const reload = useCallback(() => {
@@ -370,7 +370,7 @@ export default function Collection() {
     const errorRate = totalReviews ? Math.round((totalErrors / totalReviews) * 100) : 0;
     return (
       <div className="mx-auto flex min-h-[100dvh] max-w-7xl flex-col px-3 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+4.75rem)] sm:px-5 md:min-h-0 md:px-8 md:pb-20 md:pt-28">
-        <ReviewHeader reviewed={reviewed} total={originalQueue.length} phase={phase} stage={stageOf(activeCard)} errorRate={errorRate} fontScale={reviewFontScale} onFontScaleChange={changeReviewFontScale} onExit={() => { setTab("list"); }} />
+        <ReviewHeader reviewed={reviewed} total={originalQueue.length} phase={phase} stage={stageOf(activeCard)} errorRate={errorRate} onExit={() => { setTab("list"); }} />
         {sessionMeta && (sessionMeta.newCount > 0 || sessionMeta.reviewCount > 0) && (
           <p className="mt-2 text-[11px] text-muted-foreground/70">今日队列：复习 {sessionMeta.reviewCount} · 新词 {sessionMeta.newCount}{sessionMeta.deferred > 0 ? ` · 顺延 ${sessionMeta.deferred} 至明日` : ""}</p>
         )}
@@ -383,7 +383,6 @@ export default function Collection() {
             onAnswer={onAnswer}
             reviewMode={reviewMode}
             onBack={goBack}
-            fontScale={reviewFontScale}
           />
         </div>
       </div>
@@ -435,6 +434,12 @@ export default function Collection() {
         <div className="flex min-h-10 items-center gap-1.5">
           <Seg active={tab === "list"} onClick={() => setTab("list")}>语料库</Seg>
           <Seg active={tab === "errors"} onClick={() => setTab("errors")}>错词本 {errorWords.length}</Seg>
+          <div role="group" aria-label="语料库预览字号" className="ml-auto flex items-center gap-0.5 rounded-full border border-border p-0.5 text-[11px]">
+            {REVIEW_FONT_SCALES.map((scale, index) => {
+              const label = ["A−", "A", "A+"][index];
+              return <button key={scale} type="button" aria-pressed={corpusFontScale === scale} onClick={() => changeCorpusFontScale(scale)} className={`min-w-7 rounded-full px-2 py-1 ${corpusFontScale === scale ? "bg-copper/20 text-copper" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>;
+            })}
+          </div>
         </div>
       </div>
       {otherReviewOpen && <div className="mt-3 flex min-h-12 flex-wrap gap-2 rounded-xl border border-border/60 bg-card p-3">
@@ -464,7 +469,7 @@ export default function Collection() {
               {[["all", "\u5168\u90e8", errorWords.length], ["occasional", "\u5076\u5c14\u5931\u8bef", mistakeTiers.occasional.length], ["weak", "\u8584\u5f31", mistakeTiers.weak.length], ["focus", "\u91cd\u70b9\u653b\u514b", mistakeTiers.focus.length]].map(([key, label, count]) => <button type="button" key={key} onClick={() => setMistakeFilter(key)} className={`rounded-full px-3 py-1.5 text-xs ${mistakeFilter === key ? "bg-copper/20 text-copper" : "border border-border text-muted-foreground"}`}>{label} {count}</button>)}
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-              {visibleMistakes.slice(0, visibleMistakeCount).map((c) => <VocabCard key={c.id} c={c} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+              {visibleMistakes.slice(0, visibleMistakeCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
             </div>
             {visibleMistakeCount < visibleMistakes.length && <div ref={mistakesSentinelRef} className="h-px" aria-hidden="true" />}
           </div>
@@ -477,7 +482,7 @@ export default function Collection() {
             <section>
               <h2 className="font-display text-base text-foreground md:text-lg">单词 · 短语 <span className="text-xs font-body text-muted-foreground md:text-sm">· {sectionWords.length}</span></h2>
               <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-                {sectionWords.slice(0, visibleWordCount).map((c) => <VocabCard key={c.id} c={c} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+                {sectionWords.slice(0, visibleWordCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
               </div>
               {visibleWordCount < sectionWords.length && <div ref={wordsSentinelRef} className="h-px" aria-hidden="true" />}
             </section>
@@ -486,7 +491,7 @@ export default function Collection() {
             <section>
               <h2 className="font-display text-base text-foreground md:text-lg">句子 <span className="text-xs font-body text-muted-foreground md:text-sm">· {sectionSentences.length}</span></h2>
               <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-                {sectionSentences.slice(0, visibleSentenceCount).map((c) => <VocabCard key={c.id} c={c} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+                {sectionSentences.slice(0, visibleSentenceCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
               </div>
               {visibleSentenceCount < sectionSentences.length && <div ref={sentencesSentinelRef} className="h-px" aria-hidden="true" />}
             </section>
@@ -531,15 +536,15 @@ function Seg({ active, onClick, children }) {
   );
 }
 
-function VocabCard({ c, onGone, onDelete, onSelect }) {
+function VocabCard({ c, onGone, onDelete, onSelect, fontScale = 1 }) {
   const m = MASTERY[c.mastery_level] || MASTERY.new;
   return (
     <div onClick={() => onSelect?.(c)} onKeyDown={(event) => { if (event.key === "Enter") onSelect?.(c); }} role="button" tabIndex={0} className="group cursor-pointer rounded-lg border border-border/60 bg-card p-2 md:rounded-xl md:p-4">
       <div className="flex items-start justify-between gap-1.5">
-        <p className="font-display text-xl font-semibold leading-snug text-foreground md:text-2xl">{c.expression_en || c.text_en}</p>
+        <p style={{ "--corpus-font-scale": fontScale }} className="font-display text-[calc(1.25rem*var(--corpus-font-scale))] font-semibold leading-snug text-foreground md:text-[calc(1.5rem*var(--corpus-font-scale))]">{c.expression_en || c.text_en}</p>
         <DeleteChip id={c.id} onGone={onGone} onDelete={onDelete} />
       </div>
-      {(c.meaning_zh || c.text_zh) && <p className="mt-1 text-sm leading-snug text-foreground/75 md:text-base">{c.meaning_zh || c.text_zh}</p>}
+      {(c.meaning_zh || c.text_zh) && <p style={{ "--corpus-font-scale": fontScale }} className="mt-1 text-[calc(0.875rem*var(--corpus-font-scale))] leading-snug text-foreground/75 md:text-[calc(1rem*var(--corpus-font-scale))]">{c.meaning_zh || c.text_zh}</p>}
       <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px] md:mt-2.5 md:gap-1.5 md:text-xs">
         <span className={`rounded-full px-1.5 py-0.5 md:px-2 ${m.className}`}>{m.label}</span>
         {c.type && <span className="rounded-full bg-background-elev px-1.5 py-0.5 md:px-2">{typeLabel(c.type)}</span>}
@@ -568,7 +573,7 @@ function DeleteChip({ id, onGone, onDelete }) {
   );
 }
 
-function ReviewHeader({ reviewed, total, phase, stage, errorRate, fontScale, onFontScaleChange, onExit }) {
+function ReviewHeader({ reviewed, total, phase, stage, errorRate, onExit }) {
   const pct = total ? Math.min(100, Math.round((reviewed / total) * 100)) : 0;
   const labelMap = { r1: "第一轮 · 英译中", r2: "第二轮 · 中译英", r3: "第三轮 · 听音选词" };
   const label = labelMap[phase] || "复习";
@@ -584,13 +589,6 @@ function ReviewHeader({ reviewed, total, phase, stage, errorRate, fontScale, onF
           <button onClick={onExit} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-copper">
             退出 <ArrowRight size={14} />
           </button>
-          <div role="group" aria-label="复习题字号" className="flex items-center gap-0.5 rounded-full border border-border p-0.5 text-[11px]">
-            {[ [0.85, "A−"], [1, "A"], [1.15, "A+"] ].map(([scale, label]) => (
-              <button key={scale} type="button" aria-pressed={fontScale === scale} onClick={() => onFontScaleChange(scale)} className={`min-w-7 rounded-full px-2 py-1 ${fontScale === scale ? "bg-copper/20 text-copper" : "text-muted-foreground hover:text-foreground"}`}>
-                {label}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
       <div className="mt-3 flex items-center justify-center gap-3 text-[11px] uppercase tracking-luxe">
