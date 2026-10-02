@@ -8,11 +8,30 @@ Requirements: Node.js 20 or newer and npm.
 
 ```bash
 npm ci
-cp .env.example .env.local
 npm run dev
 ```
 
-Fill in the needed values in `.env.local` before using authenticated cloud features or server-side transcript APIs. Per-account AI APIs are encrypted with `AI_CREDENTIALS_MASTER_KEY` and stored server-side; also configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` only in server environments. The example file contains placeholders only. Never commit `.env.local` or production credentials.
+Open <http://localhost:5173/>. The dev server listens on loopback at a fixed port, so this command is the same every time and Vite hot reloads source changes without a push or Vercel deployment.
+
+For signed-in cloud features, copy `.env.example` to `.env.local` and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` to the same Supabase project used by the app. Restart the dev server after changing environment variables. Local sign-in uses the normal Supabase auth flow; a session from the production website is not shared with localhost.
+
+The Vite server includes local adapters for the repository's Vercel routes:
+
+- `/api/ai-credentials` and `/api/ai` use the local Supabase settings plus server-only `SUPABASE_SERVICE_ROLE_KEY` and `AI_CREDENTIALS_MASTER_KEY`. Sign in locally and configure an AI credential in the app; AI calls are made from the local server to the selected provider.
+- `/api/poster-search` and `/api/douban-poster` are handled locally; upstream poster sources still require network access.
+- `/api/youtube-transcript` is handled locally. It can call `TRANSCRIPT_SERVICE_URL` (with optional server-only `TRANSCRIPT_SERVICE_TOKEN`) or use the local fallback extractor.
+- Other hosted Base44 endpoints remain backed by the configured Base44 app/backend; they are not implemented by the local Vercel-route adapter.
+
+No Vercel local simulator is needed for these five routes. Add server-only values to `.env.local` (never prefix them with `VITE_`):
+
+```dotenv
+SUPABASE_SERVICE_ROLE_KEY=
+AI_CREDENTIALS_MASTER_KEY=
+TRANSCRIPT_SERVICE_URL=
+TRANSCRIPT_SERVICE_TOKEN=
+```
+
+Vite exposes `VITE_*` values to browser code. Never put service-role keys, master keys, transcript tokens, or provider API keys in browser-visible variables or commit `.env.local`. The example file contains placeholders only.
 
 To run the standalone transcript service separately:
 
@@ -37,6 +56,6 @@ npm run build
 
 ## Environment variables
 
-See `.env.example` for the variable names used by the local app. `VITE_*` values are browser-visible; keep `AI_CREDENTIALS_MASTER_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `TRANSCRIPT_SERVICE_TOKEN` in server-side environment configuration only. Do not add Supabase service-role keys or provider API keys to the frontend or repository.
+See `.env.example` for variable names. `VITE_*` values are browser-visible; keep `AI_CREDENTIALS_MASTER_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `TRANSCRIPT_SERVICE_TOKEN` server-side only. Do not add Supabase service-role keys or provider API keys to the frontend or repository.
 
 For deployment, use the existing linked Vercel project and its configured environment variables. The production site is `https://lingoclub.vercel.app`.
