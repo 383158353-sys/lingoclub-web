@@ -311,6 +311,7 @@ export default function Collection() {
 
   const onAnswer = (card, correct, answer = {}) => {
     if (!answerCommitGate.current.tryCommit(activeQuestionToken)) return;
+    try {
     const id = card.id;
     const map = phase === "r1" ? r1Res : phase === "r2" ? r2Res : r3Res;
     const isFirst = map[id] === undefined;
@@ -323,7 +324,9 @@ export default function Collection() {
     const reviewedAt = new Date();
     const fields = scheduleStage(card, correct, reviewedAt);
     const updated = { ...card, ...fields };
-    VocabApi.update(id, fields).catch(() => toast({ title: "复习进度暂存本机", description: "云端更新稍后重试。" }));
+    Promise.resolve()
+      .then(() => VocabApi.updateReviewState(id, fields))
+      .catch(() => toast({ title: "复习进度暂存本机", description: "云端更新稍后重试。" }));
     setVocab((vs) => vs.map((c) => (c.id === id ? updated : c)));
     const logMode = ["daily", "due", "weak", "mistakes", "random", "new", "recent", "today", "all", "focus", "occasional"].includes(reviewMode)
       ? reviewMode
@@ -359,6 +362,10 @@ export default function Collection() {
     if (next.phase === "done") setPhase("done");
     else if (next.phase !== phase) enterPhase(next.phase);
     else setIdx(next.idx);
+    } catch (error) {
+      answerCommitGate.current.release(activeQuestionToken);
+      throw error;
+    }
   };
 
   const goBack = () => setIdx((i) => Math.max(0, i - 1));

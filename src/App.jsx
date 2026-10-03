@@ -104,6 +104,7 @@ function App() {
           <AuthenticatedApp />
         </Router>
         <Toaster />
+        {import.meta.env.DEV && <div className="fixed bottom-3 right-3 z-[99999] rounded-md border border-amber-300/50 bg-amber-950/90 px-2 py-1 text-[10px] font-bold tracking-widest text-amber-200 shadow-lg">DEV</div>}
       </QueryClientProvider>
     </AuthProvider>
   )

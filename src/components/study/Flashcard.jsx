@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, Volume2 } from "lucide-react";
 import { invokeAI } from "@/lib/localApi";
 import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer } from "@/lib/reviewDistractors";
-import { scheduleReviewAutoAdvance } from "@/lib/reviewFlow";
+import { commitReviewAnswer, scheduleReviewAutoAdvance } from "@/lib/reviewFlow";
 import { WordDetailOverlay } from "@/components/vocab/WordDetailDialog";
 
 function speak(text) {
@@ -39,14 +39,22 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
 
   const commitAnswer = useCallback((token) => {
     const pending = pendingAnswer.current;
-    if (!pending || pending.token !== token || pending.committed) return false;
-    pending.committed = true;
+    if (!pending || pending.token !== token || pending.committed || pending.committing) return false;
     if (autoTimer.current) {
       clearTimeout(autoTimer.current);
       autoTimer.current = null;
     }
-    onAnswerRef.current?.(pending.card, pending.correct, pending.details);
-    return true;
+    const result = commitReviewAnswer(pending, () => onAnswerRef.current?.(pending.card, pending.correct, pending.details));
+    if (!result.committed) {
+      console.error("[LingoClub review answer commit]", result.error);
+      if (pending.correct && (pending.retryCount || 0) < 1) {
+        pending.retryCount = (pending.retryCount || 0) + 1;
+        autoTimer.current = scheduleReviewAutoAdvance(mode, () => commitAnswer(token));
+      } else if (!pending.correct) {
+        setShowAnswer(true);
+      }
+    }
+    return result.committed;
   }, []);
 
   useEffect(() => {

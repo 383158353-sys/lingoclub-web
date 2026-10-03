@@ -6,14 +6,98 @@ import { handleYouTubeTranscript } from "./youtubeTranscript.js";
 import { fetchDoubanPoster, searchLocalPosters } from "./posterSearch.js";
 
 async function readBody(req) {
-  let raw = "";
-  for await (const chunk of req) raw += chunk;
+  const raw = await readRawBody(req);
   return raw ? JSON.parse(raw) : {};
 }
 
-function middleware(env) {
+async function readRawBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
+function shouldProxyToProduction(path, method, target) {
+  return Boolean(target) && (
+    (path === "/api/ai-credentials" && method === "GET")
+    || (path === "/api/ai" && method === "POST")
+  );
+}
+
+function safeProxyDiagnostics(path, status, durationMs, payload) {
+  const diagnostic = payload?.diagnostic || {};
+  const isAI = path === "/api/ai";
+  const upstreamRequestSent = isAI && (
+    status < 400
+    || Number.isFinite(Number(payload?.upstreamStatus))
+    || Number.isFinite(Number(diagnostic?.upstreamStatus))
+    || diagnostic?.stage === "upstream"
+    || payload?.stage === "upstream"
+  );
+  console.info("[dev production API proxy]", {
+    route: path,
+    status,
+    credentialLookup: path === "/api/ai-credentials" ? (status < 400 ? "success" : "failed") : undefined,
+    credentialDecrypt: isAI ? (upstreamRequestSent ? "success" : payload?.stage === "credential_lookup" || payload?.stage === "encryption" ? "failed" : "unknown") : undefined,
+    provider: String(diagnostic?.provider || payload?.provider || "").slice(0, 40) || undefined,
+    model: String(diagnostic?.model || payload?.model || "").slice(0, 120) || undefined,
+    upstreamRequestSent: isAI ? Boolean(upstreamRequestSent) : undefined,
+    upstreamStatus: Number(payload?.upstreamStatus || diagnostic?.upstreamStatus) || null,
+    errorStage: String(payload?.stage || diagnostic?.stage || "").slice(0, 60) || undefined,
+    elapsedMs: durationMs,
+  });
+}
+
+function createProductionAiProxy(target, fetchImpl = fetch) {
+  if (!target) return null;
+  const parsedTarget = new URL(target);
+  if (parsedTarget.protocol !== "https:") throw new Error("Production AI API proxy target must use HTTPS");
+
+  return async (req, res) => {
+    const path = String(req.url || "").split("?")[0];
+    const startedAt = Date.now();
+    try {
+      const response = await fetchImpl(new URL(req.url, parsedTarget), {
+        method: req.method,
+        headers: {
+          ...(req.headers?.authorization ? { authorization: req.headers.authorization } : {}),
+          ...(req.headers?.["content-type"] ? { "content-type": req.headers["content-type"] } : {}),
+          ...(req.headers?.accept ? { accept: req.headers.accept } : {}),
+        },
+        ...(req.method === "GET" ? {} : { body: await readRawBody(req) }),
+        redirect: "manual",
+      });
+      const responseBytes = Buffer.from(await response.arrayBuffer());
+      const responseText = responseBytes.toString("utf8");
+      let payload;
+      try { payload = JSON.parse(responseText); } catch { payload = null; }
+
+      res.statusCode = response.status;
+      for (const header of ["content-type", "retry-after"]) {
+        const value = response.headers.get(header);
+        if (value) res.setHeader(header, value);
+      }
+      res.setHeader("Cache-Control", "no-store");
+      safeProxyDiagnostics(path, response.status, Date.now() - startedAt, payload);
+      res.end(responseBytes);
+    } catch {
+      const payload = { code: "PRODUCTION_AI_PROXY_FAILED", stage: "proxy", error: "Production AI API 暂时不可达" };
+      res.statusCode = 502;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      safeProxyDiagnostics(path, 502, Date.now() - startedAt, payload);
+      res.end(JSON.stringify(payload));
+    }
+  };
+}
+
+function middleware(env, productionAiApiTarget = "", fetchImpl = fetch) {
+  const productionAiProxy = createProductionAiProxy(productionAiApiTarget, fetchImpl);
   return async (req, res, next) => {
     const path = String(req.url || "").split("?")[0];
+    if (shouldProxyToProduction(path, req.method, productionAiApiTarget)) {
+      await productionAiProxy(req, res);
+      return;
+    }
     if (path === "/api/poster-search" && req.method === "GET") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.setHeader("Cache-Control", "no-store");
@@ -69,10 +153,10 @@ function middleware(env) {
   };
 }
 
-export function localApiPlugin(env) {
+export function localApiPlugin(env, { productionAiApiTarget = "", fetchImpl } = {}) {
   return {
     name: "local-api",
-    configureServer(server) { server.middlewares.use(middleware(env)); },
+    configureServer(server) { server.middlewares.use(middleware(env, productionAiApiTarget, fetchImpl)); },
     configurePreviewServer(server) { server.middlewares.use(middleware(env)); },
   };
 }

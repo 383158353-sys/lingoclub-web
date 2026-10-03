@@ -339,7 +339,9 @@ export function MobileTutorial() {
 
 // 电脑端教程：书签一键导入
 export function DesktopTutorial() {
-  const [appUrl] = useState("https://lingoclub.vercel.app");
+  const [appUrl] = useState(() => import.meta.env.DEV && typeof window !== "undefined"
+    ? window.location.origin
+    : "https://lingoclub.vercel.app");
   const bookmarklet = useMemo(() => buildBookmarklet(appUrl), [appUrl]);
 
   return (

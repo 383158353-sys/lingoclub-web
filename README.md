@@ -10,20 +10,26 @@ Requirements: Node.js 20 or newer and npm.
 npm ci
 ```
 
-Create the ignored local environment file, fill in the required values described below, then start the dev server:
+Create the ignored local environment file, fill in the required values described below, then start the fixed-port LAN dev server:
 
 ```powershell
 Copy-Item .env.example .env.local
-npm run dev
+npm run dev:test
 ```
 
-Open <http://127.0.0.1:5173/>. The dev server listens on loopback at a fixed port, so this command is the same every time and Vite hot reloads source changes without a push or Vercel deployment.
+Computer: <http://127.0.0.1:5173/>. On the current Wi-Fi, the phone can use the computer's LAN IPv4 address on port 5173 (currently `http://192.168.0.103:5173/`; DHCP can change this address). The server binds to `0.0.0.0:5173` with strict port selection and Vite HMR.
+
+The fixed public test URL is pending Cloudflare setup. Do not use a Quick Tunnel because its URL is temporary. A Cloudflare named tunnel needs `cloudflared`, a Cloudflare account with DNS permission, and a domain/zone managed by that account. Once configured, set the hostname (without scheme) as `LINGOCLUB_DEV_HOST` in `.env.local`; Vite will allow only that hostname and use WSS HMR through the tunnel. No Cloudflare tunnel credentials belong in this repository.
+
+Run `.\start-lingoclub-dev.ps1` from PowerShell to start Vite and, when the named tunnel configuration is present, the tunnel. Add `-InstallStartup` only after the tunnel is configured to register this script for the current Windows user's login. Logs are written under ignored `logs/`.
+
+Development builds show a `DEV` badge. The bookmarklet generated from a development page points back to that same origin; production continues using the production origin. Do not push a feature change to `main` until it has been checked at the test URL and you explicitly accept it.
 
 For signed-in cloud features, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in `.env.local` to the same Supabase project used by the app. Local sign-in uses the normal Supabase auth flow; a session from the production website is not shared with localhost.
 
 The Vite server includes local adapters for the repository's Vercel routes:
 
-- `/api/ai-credentials` and `/api/ai` use the local Supabase settings plus server-only `SUPABASE_SERVICE_ROLE_KEY` and `AI_CREDENTIALS_MASTER_KEY`. Sign in locally and configure an AI credential in the app; AI calls are made from the local server to the selected provider.
+- In development only, `GET /api/ai-credentials` and `POST /api/ai` are proxied server-to-server to `https://lingoclub.vercel.app`. This lets a local sign-in use the existing Production credential and Production-only decryption key to test models. Credential create/update/delete requests are not proxied, so local credential-management actions cannot mutate Production. No Production master key is needed in `.env.local` for read-only credential lookup and AI requests. The rest of the local API adapter continues to use local configuration.
 - `/api/poster-search` and `/api/douban-poster` are handled locally; upstream poster sources still require network access.
 - `/api/youtube-transcript` is handled locally. It can call `TRANSCRIPT_SERVICE_URL` (with optional server-only `TRANSCRIPT_SERVICE_TOKEN`) or use the local fallback extractor.
 - Other hosted Base44 endpoints remain backed by the configured Base44 app/backend; they are not implemented by the local Vercel-route adapter.

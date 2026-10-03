@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceReviewQuestion, createAnswerCommitGate, createReviewQuestionToken, scheduleReviewAutoAdvance } from "../src/lib/reviewFlow.js";
+import { advanceReviewQuestion, commitReviewAnswer, createAnswerCommitGate, createReviewQuestionToken, scheduleReviewAutoAdvance } from "../src/lib/reviewFlow.js";
 
 for (const phase of ["r1", "r2", "r3"]) {
   test(`${phase} correct answer automatically advances to the next card`, () => {
@@ -34,6 +34,30 @@ test("rapid duplicate commits count the same answer only once", () => {
 
   gate.activate("session:r1:1:word-b");
   assert.equal(gate.tryCommit("session:r1:1:word-b"), true);
+});
+
+test("a thrown answer callback can release its gate and retry without counting twice", () => {
+  const gate = createAnswerCommitGate();
+  let commits = 0;
+  const token = "session:r3:0:word-a";
+  gate.activate(token);
+  assert.equal(gate.tryCommit(token), true);
+  gate.release(token);
+  assert.equal(gate.tryCommit(token), true);
+  commits += 1;
+  assert.equal(gate.tryCommit(token), false);
+  assert.equal(commits, 1);
+});
+
+test("a thrown parent callback does not permanently lock the pending answer", () => {
+  const pending = { token: "answer-1", committed: false, committing: false };
+  const failed = commitReviewAnswer(pending, () => { throw new Error("persistence failed synchronously"); });
+  assert.equal(failed.committed, false);
+  assert.equal(pending.committed, false);
+  assert.equal(pending.committing, false);
+  const retried = commitReviewAnswer(pending, () => {});
+  assert.equal(retried.committed, true);
+  assert.equal(commitReviewAnswer(pending, () => {}).duplicate, true);
 });
 
 test("revisiting the same card creates a new token so stale timers cannot commit", () => {

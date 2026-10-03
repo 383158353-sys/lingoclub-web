@@ -4,6 +4,20 @@ export function scheduleReviewAutoAdvance(phase, callback, schedule = setTimeout
   return schedule(callback, phase === "r3" ? 1600 : 700);
 }
 
+export function commitReviewAnswer(pending, commit) {
+  if (!pending || pending.committed || pending.committing) return { committed: false, duplicate: true };
+  pending.committing = true;
+  try {
+    commit?.();
+    pending.committing = false;
+    pending.committed = true;
+    return { committed: true };
+  } catch (error) {
+    pending.committing = false;
+    return { committed: false, error };
+  }
+}
+
 export function advanceReviewQuestion({ phase, idx, queueLength }) {
   const nextIndex = idx + 1;
   if (nextIndex < queueLength) return { phase, idx: nextIndex, done: false };
@@ -26,6 +40,9 @@ export function createAnswerCommitGate() {
       if (!token || token !== activeToken || committedToken === token) return false;
       committedToken = token;
       return true;
+    },
+    release(token) {
+      if (token && token === activeToken && committedToken === token) committedToken = null;
     },
   };
 }
