@@ -11,7 +11,6 @@ export const SUBTITLE_LEARNING_PRELOAD_AFTER = 40;
 export const SUBTITLE_LEARNING_BATCH_SIZE = 20;
 export const CLOSE_READING_VERSION = 2;
 const CACHE_PREFIX = "lingoclub:subtitle-ai:v2:";
-const SENTENCE_TRANSLATION_PREFIX = "lingoclub:sentence-translation:v1:";
 const BASIC_WORDS = new Set("a an the i you he she it we they me him her us them my your his its our their this that these those be am is are was were been being do does did have has had can could will would should may might must and or but if so to of in on at by for with from as into about up down out off over under good get got go know think see look make take say said tell call want need like just really very here there then now".split(" "));
 
 function hash(value) {
@@ -24,26 +23,14 @@ export function subtitleHash(subtitles = []) {
   return hash(subtitles.map((cue, index) => [cue.id || `cue-${index}`, cue.time_start || cue.start || "", cue.time_end || cue.duration || "", cue.text_en || ""].join("\u001f")).join("\u001e"));
 }
 
+export function resolveSubtitleTranslationState(cue, phase = "processing", failedCueIds = []) {
+  if (String(cue?.text_zh || "").trim()) return "success";
+  const failed = failedCueIds instanceof Set ? failedCueIds : new Set(failedCueIds || []);
+  return failed.has(cue?.id) && phase === "error" ? "error" : "loading";
+}
+
 function cacheKey(videoId, hashValue) { return `${CACHE_PREFIX}${encodeURIComponent(videoId || "local")}:${hashValue}`; }
 function normalizeExpression(value) { return String(value || "").toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim(); }
-function normalizedSentence(value) { return String(value || "").toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim(); }
-function sentenceTranslationKey(videoId, cue) {
-  const identity = cue.sentenceId || cue.id || "sentence";
-  const content = hash(normalizedSentence(cue.text_en || ""));
-  return `${SENTENCE_TRANSLATION_PREFIX}${encodeURIComponent(videoId || "local")}:${encodeURIComponent(identity)}:${content}`;
-}
-function readSentenceTranslation(videoId, cue) {
-  try {
-    const value = typeof localStorage === "undefined" ? null : localStorage.getItem(sentenceTranslationKey(videoId, cue));
-    const parsed = value ? JSON.parse(value) : null;
-    return typeof parsed?.translation === "string" ? parsed.translation : "";
-  } catch { return ""; }
-}
-function writeSentenceTranslation(videoId, cue, translation) {
-  try {
-    if (typeof localStorage !== "undefined") localStorage.setItem(sentenceTranslationKey(videoId, cue), JSON.stringify({ translation, savedAt: Date.now() }));
-  } catch { /* user subtitle persistence remains the fallback */ }
-}
 const PHRASE_PLACEHOLDERS = new Set(["someone", "somebody", "something", "anyone", "anybody", "a", "an", "the", "one", "ones"]);
 function expressionMatchesText(expression, text) {
   const normalizedExpression = normalizeExpression(expression);
@@ -65,7 +52,7 @@ function emptyCache() { return { contextSummary: "", cues: {}, translations: {},
 function readCache(key) {
   try { return { ...emptyCache(), ...(typeof localStorage === "undefined" ? {} : JSON.parse(localStorage.getItem(key) || "null") || {}) }; } catch { return emptyCache(); }
 }
-function writeCache(key, cache) { try { if (typeof localStorage !== "undefined") localStorage.setItem(key, JSON.stringify(cache)); } catch { /* local cache is opportunistic; cue data is also saved with the movie */ } }
+function writeCache(key, cache) { try { if (typeof localStorage !== "undefined") localStorage.setItem(key, JSON.stringify(cache)); return true; } catch { /* local cache is opportunistic; cue data is also saved with the movie */ return false; } }
 
 export function getSubtitleProcessingCache(videoId, hashValue) { return readCache(cacheKey(videoId, hashValue)); }
 export function recordSubtitleAICall(videoId, hashValue, metric) {
@@ -194,7 +181,7 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
         cache.terms[termKey] ||= item;
       }
     }
-    const translation = cue.text_zh || readSentenceTranslation(videoId, cue) || (cachedTranslation?.subtitleHash === hashValue ? cachedTranslation.translation : "") || (cached?.subtitleHash === hashValue ? cached.translation : "");
+    const translation = cue.text_zh || (cachedTranslation?.subtitleHash === hashValue ? cachedTranslation.translation : "") || (cached?.subtitleHash === hashValue ? cached.translation : "");
     if (!translation && (!cached || cached.subtitleHash !== hashValue)) return cue;
     return { ...cue, text_zh: translation, ...(cached?.subtitleHash === hashValue ? { ai_processing: cached } : {}) };
   });
@@ -205,33 +192,32 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
   const batches = allBatches.filter((batch) => batch.coreCues.some((cue) => pending.has(cue.id)));
   const completedIds = new Set(cues.filter((cue) => cue.text_zh?.trim()).map((cue) => cue.id));
   for (const cue of cues) if (!cue.text_zh?.trim() && cache.translations[cue.id]?.subtitleHash === hashValue && cache.translations[cue.id]?.translation) completedIds.add(cue.id);
-  const run = { totalCues: cues.length, missingTranslationCues: pending.size, batchSize: SUBTITLE_TRANSLATION_BATCH_SIZE, totalBatches: batches.length, concurrency: SUBTITLE_TRANSLATION_CONCURRENCY, completedCues: completedIds.size, apiCalls: 0, durationMs: 0 };
+  const run = { totalCues: cues.length, missingTranslationCues: pending.size, batchSize: SUBTITLE_TRANSLATION_BATCH_SIZE, totalBatches: batches.length, concurrency: SUBTITLE_TRANSLATION_CONCURRENCY, completedCues: completedIds.size, apiCalls: 0, durationMs: 0, stage: "items_created", requestStatus: "not_sent", responseStatus: null, providerErrorType: null, parseError: null, timeout: false, cacheWrite: "not_attempted", failedCueIds: [] };
+  const failedCues = new Set();
   cache.diagnostics.batches = batches.length;
   cache.diagnostics.cacheHits += completedIds.size - cues.filter((cue) => cue.text_zh?.trim()).length;
   cache.diagnostics.cacheMisses = pending.size;
   const report = async (phase, error = "") => {
     run.completedCues = completedIds.size;
     run.durationMs = Date.now() - startedAt;
-    await onProgress?.({ phase, ...(error ? { error } : {}), completed: run.completedCues, total: run.totalCues, diagnostics: { ...cache.diagnostics, ...run }, subtitles: preparedSubtitles, hash: hashValue });
+    run.failedCueIds = [...failedCues];
+    await onProgress?.({ phase, ...(error ? { error } : {}), completed: run.completedCues, total: run.totalCues, failedCueIds: run.failedCueIds, diagnostics: { ...cache.diagnostics, ...run }, subtitles: preparedSubtitles, hash: hashValue });
   };
   await report(pending.size ? "processing" : "ready");
   if (!pending.size) return { subtitles: preparedSubtitles, cache, hash: hashValue, diagnostics: run };
 
-  const currentTime = Number(getCurrentTime?.()) || 0;
-  const priorityIndex = currentTime > 0 ? batches.findIndex((batch) => batch.start <= currentTime && batch.end >= currentTime) : 0;
-  const firstIndex = priorityIndex >= 0 ? priorityIndex : 0;
-  // Keep first-view translation chronological. If the user opens a later point
-  // before work starts, translate that batch first, then resume from the head.
-  const orderedBatches = [batches[firstIndex], ...batches.slice(0, firstIndex), ...batches.slice(firstIndex + 1)].filter(Boolean);
+  // Keep list translations chronological. A single worker ensures the earliest
+  // visible rows are filled before later batches are sent.
+  const orderedBatches = batches;
   const priorityBatchId = orderedBatches[0]?.id;
   let priorityLearningScheduled = false;
-  const failedCues = new Set();
   let cursor = 0;
 
   const translateChunk = async (targetCues, contextCues, blockId) => {
     if (signal?.aborted) throw Object.assign(new Error("cancelled"), { name: "AbortError" });
     const targetIds = new Set(targetCues.map((cue) => cue.id));
     cache.diagnostics.batchTranslationCalls += 1;
+    run.stage = "translation_request_queued";
     const response = await translateBatch("subtitle_translate_batch", {
       video_id: videoId,
       subtitle_hash: hashValue,
@@ -244,17 +230,24 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
       cacheVersion: "subtitle-translation-v1",
       onDiagnostics: (diagnostics) => {
         if (!diagnostics.cacheHit && !diagnostics.deduped) run.apiCalls += Number(diagnostics.networkRequests) || 0;
+        run.requestStatus = diagnostics.cacheHit ? "cache_hit" : diagnostics.deduped ? "deduped" : "sent";
+        run.responseStatus = diagnostics.cacheHit || diagnostics.deduped ? null : (Number(diagnostics.httpStatus) || (diagnostics.status === "success" ? 200 : null));
+        run.providerErrorType = diagnostics.providerErrorType || null;
+        run.timeout = Boolean(diagnostics.timeout);
       },
     });
+    run.stage = "translation_response_returned";
     const translated = response?.translation_batch?.cues || [];
+    run.stage = "translation_response_parsed";
     const translations = new Map(translated.map((cue) => [cue.cueId, String(cue.translation || "").trim()]));
     const missingIds = targetCues.filter((cue) => !translations.get(cue.id));
-    if (missingIds.length) throw new Error(`Batch translation omitted ${missingIds.length} cue(s)`);
+    if (missingIds.length) {
+      run.parseError = "missing_or_empty_cue_translation";
+      throw Object.assign(new Error(`Batch translation omitted ${missingIds.length} cue(s)`), { code: "TRANSLATION_PARSE_ERROR" });
+    }
     for (const cue of targetCues) {
       const translation = translations.get(cue.id);
       cache.translations[cue.id] = { subtitleHash: hashValue, translation };
-      const sourceCue = targetCues.find((target) => target.id === cue.id);
-      if (sourceCue) writeSentenceTranslation(videoId, sourceCue, translation);
       completedIds.add(cue.id);
       pending.delete(cue.id);
     }
@@ -262,7 +255,8 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
       const translation = translations.get(cue.id);
       return translation && !cue.text_zh?.trim() ? { ...cue, text_zh: translation } : cue;
     });
-    writeCache(key, cache);
+    run.cacheWrite = writeCache(key, cache) ? "success" : "failed";
+    run.stage = "translation_written_to_state_cache";
     await report("processing");
     if (!priorityLearningScheduled && priorityBatchId && (blockId === priorityBatchId || blockId.startsWith(`${priorityBatchId}-`))) {
       priorityLearningScheduled = true;
@@ -275,6 +269,10 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
       await translateChunk(targetCues, contextCues, blockId);
     } catch (error) {
       if (signal?.aborted || error?.name === "AbortError") throw error;
+      run.stage = error?.code === "TRANSLATION_PARSE_ERROR" ? "response_parse_error" : "translation_api_error";
+      run.responseStatus = Number(error?.status || error?.upstreamStatus) || run.responseStatus;
+      run.providerErrorType = String(error?.upstreamCode || error?.code || error?.name || "translation_failed").slice(0, 80);
+      run.timeout = error?.name === "TimeoutError" || /timeout|timed out/i.test(String(error?.message || ""));
       const isRetryable = error?.name === "TimeoutError" || error instanceof TypeError || error?.status === 429 || error?.status >= 500;
       let finalError = error;
       if (isRetryable) {
@@ -284,6 +282,9 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
         } catch (retryError) {
           if (signal?.aborted || retryError?.name === "AbortError") throw retryError;
           finalError = retryError;
+          run.responseStatus = Number(retryError?.status || retryError?.upstreamStatus) || run.responseStatus;
+          run.providerErrorType = String(retryError?.upstreamCode || retryError?.code || retryError?.name || "translation_failed").slice(0, 80);
+          run.timeout ||= retryError?.name === "TimeoutError" || /timeout|timed out/i.test(String(retryError?.message || ""));
         }
       }
       const shouldSplit = targetCues.length > SUBTITLE_TRANSLATION_BATCH_SIZE / 2 && (
@@ -305,14 +306,7 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
         await translateWithFallback(second, contextFor(second), `${blockId}-b`);
         return;
       }
-      for (const cue of targetCues) {
-        try {
-          await translateChunk([cue], [cue], `${blockId}-${cue.id}-retry`);
-        } catch (retryError) {
-          if (signal?.aborted || retryError?.name === "AbortError") throw retryError;
-          failedCues.add(cue.id);
-        }
-      }
+      for (const cue of targetCues) failedCues.add(cue.id);
     }
   };
 
@@ -328,6 +322,7 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
   await Promise.all(Array.from({ length: Math.min(SUBTITLE_TRANSLATION_CONCURRENCY, orderedBatches.length) }, () => worker()));
   if (signal?.aborted) return { subtitles: preparedSubtitles, cache, hash: hashValue, cancelled: true, diagnostics: run };
   const hadFailures = failedCues.size > 0;
+  run.stage = hadFailures ? "translation_retry_exhausted" : "translation_complete";
   await report(hadFailures ? "error" : "ready", hadFailures ? "部分字幕翻译失败，可以重试未完成部分" : "");
   return { subtitles: preparedSubtitles, cache, hash: hashValue, ...(hadFailures ? { error: new Error("部分字幕翻译失败"), failedCueIds: [...failedCues] } : {}), diagnostics: run };
 }

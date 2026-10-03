@@ -57,7 +57,8 @@ function writeAiCache(key, response) {
 
 async function postJson(path, body, { signal, timeoutMs = 26000, headers = {} } = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
   try {
@@ -69,11 +70,12 @@ async function postJson(path, body, { signal, timeoutMs = 26000, headers = {} } 
     });
     const parseStartedAt = Date.now();
     const data = await response.json().catch(() => ({}));
-    if (data && typeof data === "object") responseMetrics.set(data, { jsonParseMs: Date.now() - parseStartedAt });
+    if (data && typeof data === "object") responseMetrics.set(data, { jsonParseMs: Date.now() - parseStartedAt, httpStatus: response.status });
     if (!response.ok) {
       if (data?.code === "AI_NOT_CONFIGURED" && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("lingoclub:ai-not-configured"));
       const error = new Error(safeAIErrorMessage({ status: response.status, code: data?.code, message: data?.error, upstreamCode: data?.upstreamCode }));
       error.status = response.status;
+      error.name = "APIResponseError";
       error.code = data?.code;
       error.upstreamCode = data?.upstreamCode;
       error.upstreamStatus = data?.upstreamStatus || data?.diagnostic?.upstreamStatus;
@@ -85,6 +87,15 @@ async function postJson(path, body, { signal, timeoutMs = 26000, headers = {} } 
       throw error;
     }
     return data;
+  } catch (error) {
+    if (timedOut) {
+      const timeoutError = new Error("Request timed out");
+      timeoutError.name = "TimeoutError";
+      timeoutError.code = "REQUEST_TIMEOUT";
+      timeoutError.status = error?.status;
+      throw timeoutError;
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);
@@ -130,11 +141,11 @@ export async function invokeAI(task, payload = {}, options = {}) {
   const request = postJson("/api/ai", requestBody, { ...requestOptions, headers: { Authorization: `Bearer ${accessToken}` } })
     .then((response) => {
       writeAiCache(cacheKey, response);
-      report({ model: response?.profile_diagnostics?.model || model, finishedAt: new Date().toISOString(), durationMs: Date.now() - startedAtMs, jsonParseMs: responseMetrics.get(response)?.jsonParseMs ?? null, cacheHit: false, deduped: false, networkRequests: 1, upstreamDurationMs: response?.profile_diagnostics?.upstreamDurationMs ?? null, status: "success" });
+      report({ model: response?.profile_diagnostics?.model || model, finishedAt: new Date().toISOString(), durationMs: Date.now() - startedAtMs, jsonParseMs: responseMetrics.get(response)?.jsonParseMs ?? null, httpStatus: responseMetrics.get(response)?.httpStatus ?? null, cacheHit: false, deduped: false, networkRequests: 1, upstreamDurationMs: response?.profile_diagnostics?.upstreamDurationMs ?? null, status: "success" });
       return response;
     })
     .catch((error) => {
-      report({ model, finishedAt: new Date().toISOString(), durationMs: Date.now() - startedAtMs, jsonParseMs: null, cacheHit: false, deduped: false, networkRequests: 1, status: "error", error: error?.code || error?.message || "request_failed" });
+      report({ model, finishedAt: new Date().toISOString(), durationMs: Date.now() - startedAtMs, jsonParseMs: null, httpStatus: Number(error?.status) || null, cacheHit: false, deduped: false, networkRequests: 1, status: "error", providerErrorType: error?.upstreamCode || error?.code || error?.name || "request_failed", timeout: error?.name === "TimeoutError" });
       throw error;
     })
     .finally(() => { if (cacheKey) aiInflight.delete(cacheKey); });

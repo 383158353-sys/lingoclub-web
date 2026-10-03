@@ -115,9 +115,8 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
   const { toast } = useToast();
   const currentTimeRef = useRef(currentTime || 0);
   const processingAbortRef = useRef(null);
-  const processingRetryTimerRef = useRef(null);
-  const processingFailureRef = useRef({ jobKey: "", attempts: 0 });
   const processingJobRef = useRef("");
+  const translationRetryAttemptsRef = useRef(new Map());
   const learningJobRef = useRef("");
   const learningAbortRef = useRef(null);
   const [processingRetry, setProcessingRetry] = useState(0);
@@ -209,13 +208,35 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
       return undefined;
     }
     const jobKey = `${videoId}:${inputHash}`;
-    if (processingFailureRef.current.jobKey !== jobKey) processingFailureRef.current = { jobKey, attempts: 0 };
     if (processingJobRef.current === jobKey && processingAbortRef.current && !processingAbortRef.current.signal.aborted) return undefined;
     processingJobRef.current = jobKey;
     const controller = new AbortController();
     processingAbortRef.current?.abort();
     processingAbortRef.current = controller;
     setProcessingStatus({ phase: "processing", completed: englishCues.filter((cue) => cue.text_zh?.trim()).length, total: englishCues.length, diagnostics: null });
+    let retryTimer = null;
+    const retryOrFinish = (failedCueIds, diagnostics = {}) => {
+      if (controller.signal.aborted) return;
+      const attempt = translationRetryAttemptsRef.current.get(jobKey) || 0;
+      if (attempt < 2) {
+        const retryCount = attempt + 1;
+        translationRetryAttemptsRef.current.set(jobKey, retryCount);
+        setProcessingStatus({ phase: "processing", retrying: true, retryCount, failedCueIds, completed: englishCues.length - failedCueIds.length, total: englishCues.length, diagnostics });
+        if (import.meta.env.DEV && typeof window !== "undefined") {
+          window.__LINGOCLUB_SUBTITLE_AI_DIAGNOSTICS__ = { ...window.__LINGOCLUB_SUBTITLE_AI_DIAGNOSTICS__, ...diagnostics, phase: "processing", retryCount, failedTranslations: 0, loadingTranslations: failedCueIds.length };
+        }
+        retryTimer = setTimeout(() => {
+          if (controller.signal.aborted) return;
+          processingJobRef.current = "";
+          setProcessingRetry((value) => value + 1);
+        }, retryCount * 650);
+        return;
+      }
+      setProcessingStatus({ phase: "error", retrying: false, retryCount: attempt, failedCueIds, completed: englishCues.length - failedCueIds.length, total: englishCues.length, diagnostics });
+      if (import.meta.env.DEV && typeof window !== "undefined") {
+        window.__LINGOCLUB_SUBTITLE_AI_DIAGNOSTICS__ = { ...window.__LINGOCLUB_SUBTITLE_AI_DIAGNOSTICS__, ...diagnostics, phase: "error", retryCount: attempt, failedTranslations: failedCueIds.length, loadingTranslations: 0 };
+      }
+    };
     processSubtitleEpisode({
       videoId,
       subtitles: inputSubtitles,
@@ -223,13 +244,34 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
       signal: controller.signal,
       onProgress: async (progress) => {
         if (controller.signal.aborted) return;
-        setProcessingStatus(progress);
+        const visibleProgress = progress.phase === "error"
+          ? { ...progress, phase: "processing", retrying: true, retryCount: translationRetryAttemptsRef.current.get(jobKey) || 0 }
+          : progress;
+        setProcessingStatus(visibleProgress);
         if (import.meta.env.DEV && typeof window !== "undefined" && progress.diagnostics) {
-          window.__LINGOCLUB_SUBTITLE_AI_DIAGNOSTICS__ = { videoId, subtitleHash: sourceHash, ...progress.diagnostics, phase: progress.phase, completed: progress.completed, total: progress.total };
+          const failedCount = visibleProgress.phase === "error" ? (progress.failedCueIds || []).length : 0;
+          window.__LINGOCLUB_SUBTITLE_AI_DIAGNOSTICS__ = {
+            videoId,
+            subtitleHash: sourceHash,
+            ...progress.diagnostics,
+            phase: visibleProgress.phase,
+            completed: progress.completed,
+            total: progress.total,
+            subtitleItemsCreated: progress.diagnostics.totalCues,
+            queuedTranslations: progress.diagnostics.missingTranslationCues,
+            successfulTranslations: progress.completed,
+            loadingTranslations: Math.max(0, progress.total - progress.completed - failedCount),
+            failedTranslations: failedCount,
+            retryCount: visibleProgress.retryCount || 0,
+            stateWrite: "pending",
+          };
         }
         if (Array.isArray(progress.subtitles)) {
           setSubs((current) => mergeSubtitleProgress(current, progress.subtitles));
-          await onSubtitlesProcessed?.(progress.subtitles);
+          const persisted = await onSubtitlesProcessed?.(progress.subtitles);
+          if (import.meta.env.DEV && typeof window !== "undefined" && progress.diagnostics) {
+            window.__LINGOCLUB_SUBTITLE_AI_DIAGNOSTICS__ = { ...window.__LINGOCLUB_SUBTITLE_AI_DIAGNOSTICS__, stateWrite: persisted === false ? "failed" : "success" };
+          }
           setAnalyses((current) => {
             const next = { ...current };
             for (const cue of progress.subtitles) {
@@ -248,25 +290,27 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
         if (!controller.signal.aborted) startLearningPreload(jobKey, inputSubtitles);
       },
     }).then((result) => {
-      if (controller.signal.aborted || !result?.error) {
-        if (!result?.error) processingFailureRef.current = { jobKey, attempts: 0 };
+      if (controller.signal.aborted) return;
+      if (result?.failedCueIds?.length) {
+        retryOrFinish(result.failedCueIds, result.diagnostics || {});
         return;
       }
-      if (processingFailureRef.current.attempts >= 2) {
-        setProcessingStatus({ phase: "error", error: "部分台词翻译暂时失败", retrying: false, completed: result.diagnostics?.completedCues || 0, total: englishCues.length });
-        return;
-      }
-      processingFailureRef.current.attempts += 1;
-      setProcessingStatus({ phase: "error", error: "部分翻译失败，正在自动重试…", retrying: true, completed: result.diagnostics?.completedCues || 0, total: englishCues.length });
-      processingRetryTimerRef.current = setTimeout(() => {
-        if (!controller.signal.aborted) setProcessingRetry((value) => value + 1);
-      }, 1400 * processingFailureRef.current.attempts);
+      translationRetryAttemptsRef.current.delete(jobKey);
     }).catch((error) => {
-      if (!controller.signal.aborted) setProcessingStatus({ phase: "error", error: error?.message || "字幕预处理失败" });
+      const failedCueIds = englishCues.filter((cue) => !cue.text_zh?.trim()).map((cue) => cue.id);
+      const diagnostics = {
+        stage: error?.code === "TRANSLATION_PARSE_ERROR" ? "response_parse_error" : "translation_api_error",
+        requestStatus: error?.code === "AI_ROUTE_NOT_CONFIGURED" || error?.code === "AUTH_REQUIRED" ? "not_sent" : "sent",
+        responseStatus: Number(error?.status) || null,
+        providerErrorType: error?.upstreamCode || error?.code || error?.name || "translation_failed",
+        parseError: error?.code === "TRANSLATION_PARSE_ERROR" ? "invalid_or_incomplete_response" : null,
+        timeout: error?.name === "TimeoutError",
+      };
+      retryOrFinish(failedCueIds, diagnostics);
     });
     return () => {
+      if (retryTimer) clearTimeout(retryTimer);
       controller.abort();
-      clearTimeout(processingRetryTimerRef.current);
       if (processingAbortRef.current === controller) processingAbortRef.current = null;
       if (learningJobRef.current === `${jobKey}:learning`) {
         learningAbortRef.current?.abort();
@@ -301,6 +345,7 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
 
   const retrySubtitleProcessing = () => {
     processingJobRef.current = "";
+    translationRetryAttemptsRef.current.set(`${videoId}:${inputHash}`, 0);
     setProcessingRetry((value) => value + 1);
   };
 
@@ -401,7 +446,7 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
       setActiveId(s.id);
       return;
     }
-    onSeek?.(sec, s);
+    onSeek?.(sec);
     setActiveId(s.id);
   };
 

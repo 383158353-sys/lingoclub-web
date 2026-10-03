@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildSubtitleBatches, buildSubtitleTranslationBatches, findCueLearningTerm, processSubtitleEpisode, processSubtitleLearningWindow, subtitleHash } from "../src/lib/subtitleAiProcessing.js";
+import { buildSubtitleBatches, buildSubtitleTranslationBatches, findCueLearningTerm, processSubtitleEpisode, processSubtitleLearningWindow, resolveSubtitleTranslationState, subtitleHash } from "../src/lib/subtitleAiProcessing.js";
 
 function cues(count) {
   return Array.from({ length: count }, (_, index) => ({ id: `cue-${index}`, time_start: `${index}`, time_end: `${index + 1}`, text_en: `Line ${index}` }));
@@ -17,12 +17,21 @@ test("subtitle batches are 36 cues max with four-cue overlap and complete core c
   assert.deepEqual(new Set(core), new Set(source.map((cue) => cue.id)));
 });
 
-test("subtitle translations use chronological 16-cue batches instead of per-cue requests", () => {
+test("subtitle translations are split into chronological batches of at most 16 cue items", () => {
   const batches250 = buildSubtitleTranslationBatches(cues(250));
   const batches858 = buildSubtitleTranslationBatches(cues(858));
-  assert.deepEqual(batches250.map((batch) => batch.coreCues.length), Array(15).fill(16).concat(10));
+  assert.deepEqual(batches250.map((batch) => batch.coreCues.length), [...Array(15).fill(16), 10]);
   assert.equal(batches858.length, 54);
+  assert.deepEqual(batches250[0].coreCues.map((cue) => cue.id), cues(16).map((cue) => cue.id));
+  assert.deepEqual(batches250[1].coreCues.map((cue) => cue.id), cues(32).slice(16).map((cue) => cue.id));
   assert.ok(batches250[1].cues.some((cue) => !cue.target));
+});
+
+test("subtitle translation state only shows failure after retries have ended", () => {
+  const cue = { id: "line-1", text_en: "Hello", text_zh: "" };
+  assert.equal(resolveSubtitleTranslationState(cue, "processing", ["line-1"]), "loading");
+  assert.equal(resolveSubtitleTranslationState(cue, "error", ["line-1"]), "error");
+  assert.equal(resolveSubtitleTranslationState({ ...cue, text_zh: "你好" }, "error", ["line-1"]), "success");
 });
 
 test("subtitle hash changes only with the source cue identity, timestamp, or text", () => {
@@ -99,44 +108,46 @@ test("only missing Chinese cues remain eligible for translation", async () => {
   }
 });
 
-test("250 missing translations stream chronologically in 16-cue batches and cache each sentence", async () => {
+test("250 translations stream in chronological 16-cue batches and map results by stable cueId", async () => {
   const previous = globalThis.localStorage;
-  const storage = new Map();
-  globalThis.localStorage = { getItem: (key) => storage.get(key) || null, setItem: (key, value) => storage.set(key, value) };
+  globalThis.localStorage = { getItem: () => null, setItem: () => {} };
   try {
     let calls = 0;
     let active = 0;
     let peakConcurrency = 0;
+    const batchStarts = [];
     const progress = [];
     const result = await processSubtitleEpisode({
       videoId: "250-cue-test",
       subtitles: cues(250),
-      getCurrentTime: () => 0,
+      getCurrentTime: () => 125,
       translateBatch: async (task, payload, options) => {
         assert.equal(task, "subtitle_translate_batch");
-        assert.ok(payload.cues.filter((cue) => cue.target).length <= 16);
+        const targetCues = payload.cues.filter((cue) => cue.target);
+        assert.ok(targetCues.length <= 16);
         assert.ok(payload.cues.some((cue) => cue.target));
         calls += 1;
+        batchStarts.push(targetCues[0].cueId);
         active += 1;
         peakConcurrency = Math.max(peakConcurrency, active);
-        options.onDiagnostics({ cacheHit: false, deduped: false, networkRequests: 1 });
+        options.onDiagnostics({ cacheHit: false, deduped: false, networkRequests: 1, httpStatus: 200, status: "success" });
         await new Promise((resolve) => setTimeout(resolve, 5));
         active -= 1;
-        return { translation_batch: { cues: payload.cues.map((cue) => ({ cueId: cue.cueId, translation: `译文 ${cue.cueId}` })) } };
+        return { translation_batch: { cues: [...targetCues].reverse().map((cue) => ({ cueId: cue.cueId, translation: `译文 ${cue.cueId}` })) } };
       },
       onProgress: (item) => progress.push(item),
     });
     assert.equal(calls, 16);
     assert.equal(peakConcurrency, 1);
+    assert.deepEqual(batchStarts.slice(0, 3), ["cue-0", "cue-16", "cue-32"]);
     assert.equal(result.diagnostics.apiCalls, 16);
     assert.equal(result.diagnostics.completedCues, 250);
-    assert.ok(progress.some((item) => item.completed >= 50 && item.subtitles?.some((cue) => cue.text_zh)));
+    assert.ok(progress.some((item) => item.completed >= 16 && item.subtitles?.some((cue) => cue.text_zh)));
     assert.equal(result.subtitles[249].text_zh, "译文 cue-249");
     assert.equal(result.subtitles.some((cue) => cue.ai_processing), false);
-    assert.ok(progress.find((item) => item.completed === 16).subtitles.slice(0, 16).every((cue) => cue.text_zh));
-    const edited = result.subtitles.map((cue) => cue.id === "cue-0" ? { ...cue, text_en: "Changed caption" } : cue);
-    const second = await processSubtitleEpisode({ videoId: "250-cue-test", subtitles: edited, getCurrentTime: () => 0, translateBatch: async () => { throw new Error("unchanged sentences should be cached"); } });
-    assert.equal(second.subtitles[1].text_zh, "译文 cue-1");
+    assert.equal(result.diagnostics.stage, "translation_complete");
+    assert.equal(result.diagnostics.cacheWrite, "success");
+    assert.equal(result.diagnostics.responseStatus, 200);
   } finally {
     if (previous === undefined) delete globalThis.localStorage;
     else globalThis.localStorage = previous;

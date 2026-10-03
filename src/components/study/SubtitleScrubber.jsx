@@ -3,7 +3,7 @@ import { Loader2, Pencil, Check, X, BookOpen, Repeat, ArrowUp, Languages } from 
 
 import { toSec } from "@/lib/timecode";
 import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
-import { getCueContext, subtitleHash } from "@/lib/subtitleAiProcessing";
+import { getCueContext, resolveSubtitleTranslationState, subtitleHash } from "@/lib/subtitleAiProcessing";
 
 // Subtitle list shown under the video. Bi-directional sync:
 //   · Click subtitle row → video seeks to that timestamp (via onLineClick)
@@ -19,14 +19,15 @@ import { getCueContext, subtitleHash } from "@/lib/subtitleAiProcessing";
 // It does NOT check visibility or trigger scrolls. All scrolling happens in the
 // activeId useEffect, guarded by programmaticRef so our own scrolls don't
 // trigger the listener.
-export default function SubtitleScrubber({ study, translationPhase, translationError, translationRetrying, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest }) {
-  const { loading, subs, activeId, analyzingId, hasAnyTs, onLineClick, onStudyClick, loopingId, updateSub } = study;
+export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest }) {
+  const { loading, subs, activeId, analyzingId, hasAnyTs, onLineClick, onStudyClick, loopingId, updateSub, processingStatus = {} } = study;
   const listRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState({ time_start: "", time_end: "", text_en: "", text_zh: "" });
   const [savingEdit, setSavingEdit] = useState(false);
   const [editErr, setEditErr] = useState("");
   const processingHash = subtitleHash(subs);
+  const failedTranslationIds = new Set(processingStatus.failedCueIds || []);
 
   // --- Auto-follow state ---
   const followOnRef = useRef(true);       // true = pin-to-top; false = soft-follow (user scrolled)
@@ -160,6 +161,7 @@ export default function SubtitleScrubber({ study, translationPhase, translationE
             {subs.map((s) => {
               const isActive = s.id === activeId;
               const isEditing = editingId === s.id;
+              const translationState = resolveSubtitleTranslationState(s, processingStatus.phase, failedTranslationIds);
               const cueContext = getCueContext(subs, s.id, 4);
               return (
                 <li key={s.id} data-sub-id={s.id}>
@@ -213,9 +215,11 @@ export default function SubtitleScrubber({ study, translationPhase, translationE
                           contextText={[...cueContext.previous, cueContext.target, ...cueContext.next].filter(Boolean).map((cue) => cue.text).join("\n")}
                           className={`leading-snug ${isActive ? "text-base font-semibold text-foreground" : "text-sm text-foreground/60"}`}
                         />
-                        {showChinese && <p className={`mt-0.5 text-xs leading-snug ${isActive ? "text-copper-soft/90" : "text-muted-foreground/55"} ${!s.text_zh ? "animate-pulse" : ""}`}>
-                          {s.text_zh || (translationPhase === "error" ? (translationRetrying ? "翻译暂时失败，正在重试…" : "翻译暂时失败") : "翻译中…")}
-                        </p>}
+                        {showChinese && s.text_en?.trim() && (
+                          <p aria-live="polite" className={`mt-0.5 text-xs leading-snug ${s.text_zh ? (isActive ? "text-copper-soft/90" : "text-muted-foreground/55") : translationState === "error" ? "text-rose-300/80" : "text-muted-foreground/45"}`}>
+                            {s.text_zh || (translationState === "error" ? "翻译暂时失败" : "翻译中…")}
+                          </p>
+                        )}
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5 pr-3">
                         {editable && (

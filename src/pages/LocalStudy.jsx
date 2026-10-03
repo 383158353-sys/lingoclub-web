@@ -92,7 +92,6 @@ export default function LocalStudy() {
   const [titleDraft, setTitleDraft] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
   const videoRef = useRef(null);
-  const sentencePlaybackEndRef = useRef(null);
   const relinkFileInputRef = useRef(null);
   const bookmarkletHandledRef = useRef(false);
   const sourceDeepLinkOpenedRef = useRef("");
@@ -296,13 +295,14 @@ export default function LocalStudy() {
     // Persist each processor checkpoint in order so a refresh cannot discard
     // translations completed by earlier batches.
     subtitlePersistQueueRef.current = subtitlePersistQueueRef.current
-      .catch(() => {})
+      .catch(() => false)
       .then(async () => {
         const latest = await localMovies.get(id);
         const subtitles = mergeSubtitleSnapshots(latest?.subtitles || [], snapshot);
         await localMovies.update(id, { subtitles, subtitle_count: subtitles.length });
+        return true;
       })
-      .catch(() => {});
+      .catch(() => false);
     return subtitlePersistQueueRef.current;
   }, [materials?.recordId]);
 
@@ -332,12 +332,7 @@ export default function LocalStudy() {
     subtitles: materials?.subtitles,
     videoId: extractYouTubeId(materials?.videoUrl) || materials?.recordId || "local",
     currentTime: studyTime,
-    onSeek: (sec, sentence) => {
-      setLoopRange(null);
-      const end = toSec(sentence?.time_end);
-      sentencePlaybackEndRef.current = Number.isFinite(end) && end > sec ? end : null;
-      playFromLine(sec);
-    },
+    onSeek: (sec) => { setLoopRange(null); playFromLine(sec); },
     onPlay: playFromLine,
     onPlayOnly: playPlayback,
     onStudyEnter,
@@ -1161,10 +1156,6 @@ export default function LocalStudy() {
           <>
             <VideoPlayer ref={videoRef} url={materials.videoUrl} autoPlayFrom={materials.pendingSourceStart} onTimeUpdate={(time) => {
               setCurrentTime(time);
-              if (Number.isFinite(sentencePlaybackEndRef.current) && time >= sentencePlaybackEndRef.current) {
-                sentencePlaybackEndRef.current = null;
-                videoRef.current?.pauseOnly?.();
-              }
               if (Number.isFinite(materials.pendingSourceStart) && time >= materials.pendingSourceStart - 0.1) setMaterials((current) => current ? { ...current, pendingSourceStart: null } : current);
             }} onUserSeek={onExternalSeek} onPlaybackError={() => toast({ title: "视频无法播放", description: "该格式可能不被浏览器支持（推荐 MP4 / WebM / MOV）；或文件已损坏。", variant: "destructive" })} />
             {materials.legacyVideoCopy && !theater && <button type="button" onClick={relinkOriginalVideo} className="absolute right-2 top-2 z-40 rounded-full bg-black/70 px-3 py-1.5 text-[11px] text-white hover:bg-black/90">重新选择本地视频</button>}
@@ -1245,7 +1236,7 @@ export default function LocalStudy() {
     <div>
       <SubListResizer height={subHeight} onChange={setSubHeight} />
       {canPlay && hasSubs ? (
-        <SubtitleScrubber study={study} translationPhase={study.processingStatus?.phase} translationError={study.processingStatus?.error} translationRetrying={study.processingStatus?.retrying} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} movieTitle={materials.videoName} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} sourceType={extractYouTubeId(materials.videoUrl) ? "youtube" : "local"} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} />
+        <SubtitleScrubber study={study} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} movieTitle={materials.videoName} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} sourceType={extractYouTubeId(materials.videoUrl) ? "youtube" : "local"} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} />
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-background-elev/30 p-8 text-center text-sm text-muted-foreground">
           {canPlay ? "本集暂无台词——到下方「字幕管理」添加字幕即可进入逐句精读。" : "本机无视频时无法跳转台词；下方「字幕管理」仍可提前维护字幕内容。"}
