@@ -52,7 +52,7 @@ After every code change:
 
 - Start the fixed-port Vite server with `npm run dev:test` or `start-lingoclub-dev.ps1`.
 - Computer URL: `http://127.0.0.1:5173/`.
-- Vite binds to `0.0.0.0:5173`, port `5173`, with `strictPort: true`; LAN devices use the computer's current Wi-Fi IPv4 address.
+- Current LAN URL on the iPhone hotspot: `http://172.20.10.4:5173/` (DHCP-assigned, so recheck after network changes). Vite binds to `0.0.0.0:5173`, port `5173`, with `strictPort: true`.
 - The stable public test URL is `https://<LINGOCLUB_DEV_HOST>` after the owner configures a Cloudflare named tunnel and a domain/zone they control. Never substitute a random Quick Tunnel URL as the fixed test URL.
 - The public hostname is not yet configured in this checkout. Until Cloudflare tunnel credentials and an owned hostname exist, do not claim iPhone access outside the LAN is ready.
 - `.env.local` is ignored by Git. Keep Supabase client settings there, and keep service-role/master/provider secrets server-side only.

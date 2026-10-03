@@ -3,14 +3,15 @@ import { toSec } from "./timecode.js";
 
 export const SUBTITLE_BATCH_SIZE = 36;
 export const SUBTITLE_BATCH_OVERLAP = 4;
-export const SUBTITLE_TRANSLATION_BATCH_SIZE = 100;
+export const SUBTITLE_TRANSLATION_BATCH_SIZE = 16;
 export const SUBTITLE_TRANSLATION_BATCH_OVERLAP = 4;
-export const SUBTITLE_TRANSLATION_CONCURRENCY = 3;
+export const SUBTITLE_TRANSLATION_CONCURRENCY = 1;
 export const SUBTITLE_LEARNING_PRELOAD_BEFORE = 20;
 export const SUBTITLE_LEARNING_PRELOAD_AFTER = 40;
 export const SUBTITLE_LEARNING_BATCH_SIZE = 20;
 export const CLOSE_READING_VERSION = 2;
 const CACHE_PREFIX = "lingoclub:subtitle-ai:v2:";
+const SENTENCE_TRANSLATION_PREFIX = "lingoclub:sentence-translation:v1:";
 const BASIC_WORDS = new Set("a an the i you he she it we they me him her us them my your his its our their this that these those be am is are was were been being do does did have has had can could will would should may might must and or but if so to of in on at by for with from as into about up down out off over under good get got go know think see look make take say said tell call want need like just really very here there then now".split(" "));
 
 function hash(value) {
@@ -25,6 +26,24 @@ export function subtitleHash(subtitles = []) {
 
 function cacheKey(videoId, hashValue) { return `${CACHE_PREFIX}${encodeURIComponent(videoId || "local")}:${hashValue}`; }
 function normalizeExpression(value) { return String(value || "").toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim(); }
+function normalizedSentence(value) { return String(value || "").toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim(); }
+function sentenceTranslationKey(videoId, cue) {
+  const identity = cue.sentenceId || cue.id || "sentence";
+  const content = hash(normalizedSentence(cue.text_en || ""));
+  return `${SENTENCE_TRANSLATION_PREFIX}${encodeURIComponent(videoId || "local")}:${encodeURIComponent(identity)}:${content}`;
+}
+function readSentenceTranslation(videoId, cue) {
+  try {
+    const value = typeof localStorage === "undefined" ? null : localStorage.getItem(sentenceTranslationKey(videoId, cue));
+    const parsed = value ? JSON.parse(value) : null;
+    return typeof parsed?.translation === "string" ? parsed.translation : "";
+  } catch { return ""; }
+}
+function writeSentenceTranslation(videoId, cue, translation) {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(sentenceTranslationKey(videoId, cue), JSON.stringify({ translation, savedAt: Date.now() }));
+  } catch { /* user subtitle persistence remains the fallback */ }
+}
 const PHRASE_PLACEHOLDERS = new Set(["someone", "somebody", "something", "anyone", "anybody", "a", "an", "the", "one", "ones"]);
 function expressionMatchesText(expression, text) {
   const normalizedExpression = normalizeExpression(expression);
@@ -175,7 +194,7 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
         cache.terms[termKey] ||= item;
       }
     }
-    const translation = cue.text_zh || (cachedTranslation?.subtitleHash === hashValue ? cachedTranslation.translation : "") || (cached?.subtitleHash === hashValue ? cached.translation : "");
+    const translation = cue.text_zh || readSentenceTranslation(videoId, cue) || (cachedTranslation?.subtitleHash === hashValue ? cachedTranslation.translation : "") || (cached?.subtitleHash === hashValue ? cached.translation : "");
     if (!translation && (!cached || cached.subtitleHash !== hashValue)) return cue;
     return { ...cue, text_zh: translation, ...(cached?.subtitleHash === hashValue ? { ai_processing: cached } : {}) };
   });
@@ -199,11 +218,11 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
   if (!pending.size) return { subtitles: preparedSubtitles, cache, hash: hashValue, diagnostics: run };
 
   const currentTime = Number(getCurrentTime?.()) || 0;
-  const distance = (batch) => currentTime < batch.start ? batch.start - currentTime : currentTime > batch.end ? currentTime - batch.end : 0;
-  const nearestFirst = [...batches].sort((a, b) => distance(a) - distance(b));
-  const nearestBatch = nearestFirst.shift();
-  const farthestFirst = nearestFirst.sort((a, b) => distance(b) - distance(a));
-  const orderedBatches = [nearestBatch, ...farthestFirst.slice(0, 2), ...farthestFirst.slice(2).sort((a, b) => distance(a) - distance(b))].filter(Boolean);
+  const priorityIndex = currentTime > 0 ? batches.findIndex((batch) => batch.start <= currentTime && batch.end >= currentTime) : 0;
+  const firstIndex = priorityIndex >= 0 ? priorityIndex : 0;
+  // Keep first-view translation chronological. If the user opens a later point
+  // before work starts, translate that batch first, then resume from the head.
+  const orderedBatches = [batches[firstIndex], ...batches.slice(0, firstIndex), ...batches.slice(firstIndex + 1)].filter(Boolean);
   const priorityBatchId = orderedBatches[0]?.id;
   let priorityLearningScheduled = false;
   const failedCues = new Set();
@@ -234,6 +253,8 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
     for (const cue of targetCues) {
       const translation = translations.get(cue.id);
       cache.translations[cue.id] = { subtitleHash: hashValue, translation };
+      const sourceCue = targetCues.find((target) => target.id === cue.id);
+      if (sourceCue) writeSentenceTranslation(videoId, sourceCue, translation);
       completedIds.add(cue.id);
       pending.delete(cue.id);
     }
@@ -284,7 +305,14 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
         await translateWithFallback(second, contextFor(second), `${blockId}-b`);
         return;
       }
-      for (const cue of targetCues) failedCues.add(cue.id);
+      for (const cue of targetCues) {
+        try {
+          await translateChunk([cue], [cue], `${blockId}-${cue.id}-retry`);
+        } catch (retryError) {
+          if (signal?.aborted || retryError?.name === "AbortError") throw retryError;
+          failedCues.add(cue.id);
+        }
+      }
     }
   };
 

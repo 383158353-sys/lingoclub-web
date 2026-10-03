@@ -17,7 +17,7 @@ Copy-Item .env.example .env.local
 npm run dev:test
 ```
 
-Computer: <http://127.0.0.1:5173/>. On the current Wi-Fi, the phone can use the computer's LAN IPv4 address on port 5173 (currently `http://192.168.0.103:5173/`; DHCP can change this address). The server binds to `0.0.0.0:5173` with strict port selection and Vite HMR.
+Computer: <http://127.0.0.1:5173/>. On the current iPhone hotspot, the phone can reach the computer at <http://172.20.10.4:5173/>. Vite binds to `0.0.0.0:5173` with strict port selection and HMR. This LAN address is currently DHCP-assigned; the fixed public hostname remains pending until a Cloudflare-managed domain/zone is available.
 
 The fixed public test URL is pending Cloudflare setup. Do not use a Quick Tunnel because its URL is temporary. A Cloudflare named tunnel needs `cloudflared`, a Cloudflare account with DNS permission, and a domain/zone managed by that account. Once configured, set the hostname (without scheme) as `LINGOCLUB_DEV_HOST` in `.env.local`; Vite will allow only that hostname and use WSS HMR through the tunnel. No Cloudflare tunnel credentials belong in this repository.
 

@@ -19,7 +19,7 @@ import { getCueContext, subtitleHash } from "@/lib/subtitleAiProcessing";
 // It does NOT check visibility or trigger scrolls. All scrolling happens in the
 // activeId useEffect, guarded by programmaticRef so our own scrolls don't
 // trigger the listener.
-export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest }) {
+export default function SubtitleScrubber({ study, translationPhase, translationError, translationRetrying, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest }) {
   const { loading, subs, activeId, analyzingId, hasAnyTs, onLineClick, onStudyClick, loopingId, updateSub } = study;
   const listRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
@@ -213,7 +213,9 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
                           contextText={[...cueContext.previous, cueContext.target, ...cueContext.next].filter(Boolean).map((cue) => cue.text).join("\n")}
                           className={`leading-snug ${isActive ? "text-base font-semibold text-foreground" : "text-sm text-foreground/60"}`}
                         />
-                        {showChinese && s.text_zh && <p className={`mt-0.5 text-xs leading-snug ${isActive ? "text-copper-soft/90" : "text-muted-foreground/55"}`}>{s.text_zh}</p>}
+                        {showChinese && <p className={`mt-0.5 text-xs leading-snug ${isActive ? "text-copper-soft/90" : "text-muted-foreground/55"} ${!s.text_zh ? "animate-pulse" : ""}`}>
+                          {s.text_zh || (translationPhase === "error" ? (translationRetrying ? "翻译暂时失败，正在重试…" : "翻译暂时失败") : "翻译中…")}
+                        </p>}
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5 pr-3">
                         {editable && (

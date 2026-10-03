@@ -118,7 +118,9 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
       return;
     }
     const subs = (subtitles || []).map((p, i) => ({
-      id: `yt-${i + 1}`,
+      ...p,
+      id: p.sentenceId || p.id || `yt-${i + 1}`,
+      sentenceId: p.sentenceId || p.id || `yt-${i + 1}`,
       text_en: p.text_en || "",
       text_zh: "",
       speaker: "",

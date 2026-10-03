@@ -17,11 +17,11 @@ test("subtitle batches are 36 cues max with four-cue overlap and complete core c
   assert.deepEqual(new Set(core), new Set(source.map((cue) => cue.id)));
 });
 
-test("subtitle translations use 100-cue batches instead of per-cue requests", () => {
+test("subtitle translations use chronological 16-cue batches instead of per-cue requests", () => {
   const batches250 = buildSubtitleTranslationBatches(cues(250));
   const batches858 = buildSubtitleTranslationBatches(cues(858));
-  assert.deepEqual(batches250.map((batch) => batch.coreCues.length), [100, 100, 50]);
-  assert.equal(batches858.length, 9);
+  assert.deepEqual(batches250.map((batch) => batch.coreCues.length), Array(15).fill(16).concat(10));
+  assert.equal(batches858.length, 54);
   assert.ok(batches250[1].cues.some((cue) => !cue.target));
 });
 
@@ -99,9 +99,10 @@ test("only missing Chinese cues remain eligible for translation", async () => {
   }
 });
 
-test("250 missing translations run as three concurrent pure-translation requests and stream each batch", async () => {
+test("250 missing translations stream chronologically in 16-cue batches and cache each sentence", async () => {
   const previous = globalThis.localStorage;
-  globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+  const storage = new Map();
+  globalThis.localStorage = { getItem: (key) => storage.get(key) || null, setItem: (key, value) => storage.set(key, value) };
   try {
     let calls = 0;
     let active = 0;
@@ -110,10 +111,10 @@ test("250 missing translations run as three concurrent pure-translation requests
     const result = await processSubtitleEpisode({
       videoId: "250-cue-test",
       subtitles: cues(250),
-      getCurrentTime: () => 125,
+      getCurrentTime: () => 0,
       translateBatch: async (task, payload, options) => {
         assert.equal(task, "subtitle_translate_batch");
-        assert.ok(payload.cues.filter((cue) => cue.target).length <= 100);
+        assert.ok(payload.cues.filter((cue) => cue.target).length <= 16);
         assert.ok(payload.cues.some((cue) => cue.target));
         calls += 1;
         active += 1;
@@ -125,13 +126,17 @@ test("250 missing translations run as three concurrent pure-translation requests
       },
       onProgress: (item) => progress.push(item),
     });
-    assert.equal(calls, 3);
-    assert.equal(peakConcurrency, 3);
-    assert.equal(result.diagnostics.apiCalls, 3);
+    assert.equal(calls, 16);
+    assert.equal(peakConcurrency, 1);
+    assert.equal(result.diagnostics.apiCalls, 16);
     assert.equal(result.diagnostics.completedCues, 250);
     assert.ok(progress.some((item) => item.completed >= 50 && item.subtitles?.some((cue) => cue.text_zh)));
     assert.equal(result.subtitles[249].text_zh, "译文 cue-249");
     assert.equal(result.subtitles.some((cue) => cue.ai_processing), false);
+    assert.ok(progress.find((item) => item.completed === 16).subtitles.slice(0, 16).every((cue) => cue.text_zh));
+    const edited = result.subtitles.map((cue) => cue.id === "cue-0" ? { ...cue, text_en: "Changed caption" } : cue);
+    const second = await processSubtitleEpisode({ videoId: "250-cue-test", subtitles: edited, getCurrentTime: () => 0, translateBatch: async () => { throw new Error("unchanged sentences should be cached"); } });
+    assert.equal(second.subtitles[1].text_zh, "译文 cue-1");
   } finally {
     if (previous === undefined) delete globalThis.localStorage;
     else globalThis.localStorage = previous;

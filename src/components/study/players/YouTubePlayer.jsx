@@ -48,6 +48,7 @@ function parseYouTube(url) {
 const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", onTimeUpdate, onUserSeek, autoPlayFrom }, ref) {
   const embed = useMemo(() => parseYouTube(url), [url]);
   const [playerErrorCode, setPlayerErrorCode] = useState(null);
+  const [embedUnavailable, setEmbedUnavailable] = useState(false);
 
   // Host container React owns but renders NO JSX children into — so React never
   // tries to reconcile the iframe the YT API injects/destroys inside it.
@@ -72,6 +73,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
   useEffect(() => {
     if (!embed?.videoId) return;
     setPlayerErrorCode(null);
+    setEmbedUnavailable(false);
     let cancelled = false;
     const host = ytHostRef.current;
     if (!host) return;
@@ -96,6 +98,10 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
       iframe.setAttribute("allowfullscreen", "");
       host.appendChild(iframe);
     }, 6000);
+    const availabilityTimer = setTimeout(() => {
+      const state = ytPlayerRef.current?.getPlayerState?.();
+      if (!cancelled && state !== 1 && state !== 3) setEmbedUnavailable(true);
+    }, 12000);
 
     const emit = (t) => {
       if (typeof t !== "number" || Number.isNaN(t)) return;
@@ -133,6 +139,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
             }
           },
           onStateChange: (e) => {
+            if (e.data === 1) setEmbedUnavailable(false);
             // 1=playing, 2=paused, 3=buffering → emit time for snappy scrub feedback
             if (e.data === 1 || e.data === 2 || e.data === 3) {
               try { emit(e.target.getCurrentTime()); } catch { /* noop */ }
@@ -168,6 +175,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     return () => {
       cancelled = true;
       clearTimeout(fallbackTimer);
+      clearTimeout(availabilityTimer);
       if (ytTickRef.current) { clearInterval(ytTickRef.current); ytTickRef.current = null; }
       try { ytPlayerRef.current?.destroy?.(); } catch { /* noop */ }
       ytPlayerRef.current = null;
@@ -223,18 +231,15 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
       <div className="relative w-full overflow-hidden rounded-2xl border border-border bg-black" style={{ aspectRatio: "16 / 9" }}>
         <div ref={ytHostRef} className="absolute inset-0 h-full w-full" />
       </div>
-      {playerErrorCode !== null && <p role="status" className="mt-2 text-xs text-amber-300/90">
+      {(playerErrorCode !== null || embedUnavailable) && <p role="status" className="mt-2 text-xs text-amber-300/90">
         {playerErrorCode === 153
           ? "YouTube 未收到来源识别信息（153），这不是 LingoClub 登录失败。"
           : playerErrorCode === 101 || playerErrorCode === 150
             ? "该视频不允许嵌入播放。"
             : playerErrorCode === 100
               ? "该视频可能已删除或设为私密。"
-              : `YouTube 嵌入播放器无法播放（${playerErrorCode}）。`}
+            : playerErrorCode !== null ? `YouTube 嵌入播放器无法播放（${playerErrorCode}）。` : "YouTube 内嵌播放暂不可用；这不是 LingoClub 登录问题。"}
       </p>}
-      <a href={`https://www.youtube.com/watch?v=${encodeURIComponent(embed.videoId)}`} target="_blank" rel="noopener" referrerPolicy="strict-origin-when-cross-origin" className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:text-copper hover:underline md:hidden">
-        {playerErrorCode === null ? "手机无法播放？在 YouTube 打开" : "在 YouTube 打开视频"}
-      </a>
     </div>
   );
 });

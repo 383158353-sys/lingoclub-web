@@ -115,6 +115,8 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
   const { toast } = useToast();
   const currentTimeRef = useRef(currentTime || 0);
   const processingAbortRef = useRef(null);
+  const processingRetryTimerRef = useRef(null);
+  const processingFailureRef = useRef({ jobKey: "", attempts: 0 });
   const processingJobRef = useRef("");
   const learningJobRef = useRef("");
   const learningAbortRef = useRef(null);
@@ -207,6 +209,7 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
       return undefined;
     }
     const jobKey = `${videoId}:${inputHash}`;
+    if (processingFailureRef.current.jobKey !== jobKey) processingFailureRef.current = { jobKey, attempts: 0 };
     if (processingJobRef.current === jobKey && processingAbortRef.current && !processingAbortRef.current.signal.aborted) return undefined;
     processingJobRef.current = jobKey;
     const controller = new AbortController();
@@ -244,11 +247,26 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
         // translation block has been displayed and saved.
         if (!controller.signal.aborted) startLearningPreload(jobKey, inputSubtitles);
       },
+    }).then((result) => {
+      if (controller.signal.aborted || !result?.error) {
+        if (!result?.error) processingFailureRef.current = { jobKey, attempts: 0 };
+        return;
+      }
+      if (processingFailureRef.current.attempts >= 2) {
+        setProcessingStatus({ phase: "error", error: "部分台词翻译暂时失败", retrying: false, completed: result.diagnostics?.completedCues || 0, total: englishCues.length });
+        return;
+      }
+      processingFailureRef.current.attempts += 1;
+      setProcessingStatus({ phase: "error", error: "部分翻译失败，正在自动重试…", retrying: true, completed: result.diagnostics?.completedCues || 0, total: englishCues.length });
+      processingRetryTimerRef.current = setTimeout(() => {
+        if (!controller.signal.aborted) setProcessingRetry((value) => value + 1);
+      }, 1400 * processingFailureRef.current.attempts);
     }).catch((error) => {
       if (!controller.signal.aborted) setProcessingStatus({ phase: "error", error: error?.message || "字幕预处理失败" });
     });
     return () => {
       controller.abort();
+      clearTimeout(processingRetryTimerRef.current);
       if (processingAbortRef.current === controller) processingAbortRef.current = null;
       if (learningJobRef.current === `${jobKey}:learning`) {
         learningAbortRef.current?.abort();
@@ -383,7 +401,7 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
       setActiveId(s.id);
       return;
     }
-    onSeek?.(sec);
+    onSeek?.(sec, s);
     setActiveId(s.id);
   };
 
