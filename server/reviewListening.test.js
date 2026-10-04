@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer, needsRemoteReviewDistractors } from "../src/lib/reviewDistractors.js";
+import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer, loadReviewQuestionWithFallback, needsRemoteReviewDistractors } from "../src/lib/reviewDistractors.js";
 
 const card = {
   id: "marquee",
@@ -55,4 +55,46 @@ test("listening uses Chinese meaning distractors from the shared vocabulary pool
 test("review preloading only requests remote distractors when a round lacks three local options", () => {
   assert.equal(needsRemoteReviewDistractors(card, [], "r3"), true);
   assert.equal(needsRemoteReviewDistractors({ ...card, expression_en: "though", meaning_zh: "虽然" }, [], "r3"), false);
+});
+
+test("a malformed remote distractor response retries the network before using local pool fallback", async () => {
+  const pool = [
+    { id: "tent", expression_en: "tent", meaning_zh: "帐篷", pos: "名词" },
+    { id: "billboard", expression_en: "billboard", meaning_zh: "广告牌", pos: "名词" },
+    { id: "stage", expression_en: "stage", meaning_zh: "舞台", pos: "名词" },
+  ];
+  const calls = [];
+  const result = await loadReviewQuestionWithFallback({
+    card,
+    pool,
+    mode: "r3",
+    retryDelayMs: 0,
+    request: async ({ retry }) => {
+      calls.push(retry);
+      return { distractors: { meaning_options: ["marquee sign"] } };
+    },
+  });
+
+  assert.deepEqual(calls, [false, true]);
+  assert.equal(result.source, "pool-fallback");
+  assert.equal(result.question.options.length, 4);
+  assert.ok(result.question.options.every((option) => /[\u3400-\u9fff]/.test(option.value)));
+});
+
+test("failed distractor requests resolve to an explicit unavailable state instead of leaving loading forever", async () => {
+  let calls = 0;
+  const result = await loadReviewQuestionWithFallback({
+    card,
+    pool: [],
+    mode: "r3",
+    retryDelayMs: 0,
+    request: async () => {
+      calls += 1;
+      throw new Error("upstream unavailable");
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(result.source, "unavailable");
+  assert.equal(result.question.options.length, 1);
 });

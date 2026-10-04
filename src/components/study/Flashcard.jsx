@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, Volume2 } from "lucide-react";
 import { invokeAI } from "@/lib/localApi";
-import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer, needsRemoteReviewDistractors } from "@/lib/reviewDistractors";
+import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer, loadReviewQuestionWithFallback, needsRemoteReviewDistractors } from "@/lib/reviewDistractors";
 import { commitReviewAnswer, scheduleReviewAutoAdvance } from "@/lib/reviewFlow";
 import { playCorrectAnswerChime } from "@/lib/reviewSound";
 import { WordDetailOverlay } from "@/components/vocab/WordDetailDialog";
@@ -17,11 +17,21 @@ function speak(text) {
   } catch { /* noop */ }
 }
 
+function fetchReviewDistractors(targetCard, retry = false) {
+  const expression = targetCard.expression_en || targetCard.text_en || "";
+  return invokeAI("generate_distractors", {
+    expression_en: expression,
+    meaning_zh: targetCard.meaning_zh || targetCard.text_zh || "",
+    subtitle_text: expression,
+    video_id: targetCard.source_movie_id || "review",
+  }, { cacheVersion: "review-distractors-v2", timeoutMs: 12000, ...(retry ? { bypassCache: true } : {}) });
+}
+
 export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScale = 1, nextCard = null, nextMode = null }) {
   const [picked, setPicked] = useState(null);
   const [correct, setCorrect] = useState(null);
   const [showAnswer, setShowAnswer] = useState(false);
-  const [questionState, setQuestionState] = useState({ key: null, question: null });
+  const [questionState, setQuestionState] = useState({ key: null, question: null, status: "loading" });
   const questionCache = useRef({ key: null, question: null });
   const autoTimer = useRef(null);
   const pendingAnswer = useRef(null);
@@ -35,6 +45,7 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
   const presentation = getReviewQuestionPresentation(card, mode, picked !== null);
   const questionKey = JSON.stringify([card.id, mode]);
   const question = questionState.key === questionKey ? questionState.question : null;
+  const questionStatus = questionState.key === questionKey ? questionState.status : "loading";
   const options = question?.options || [];
   const hasCompleteOptions = options.length === 4;
 
@@ -71,34 +82,32 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
     const local = buildLocalDistractors(card, pool, mode);
     const initialQuestion = getQuestion(local);
     setQuestionState({ key: questionKey, question: initialQuestion });
-    const requestDistractors = (targetCard) => {
-      const targetExpr = targetCard.expression_en || targetCard.text_en || "";
-      return invokeAI("generate_distractors", {
-        expression_en: targetExpr,
-        meaning_zh: targetCard.meaning_zh || targetCard.text_zh || "",
-        subtitle_text: targetExpr,
-        video_id: targetCard.source_movie_id || "review",
-      });
-    };
-
     // Warm the same word's next round (especially r3) and the next queued card
     // while the learner is answering this one. invokeAI reuses cache/in-flight work.
     const nextRoundMode = mode === "r1" ? "r2" : mode === "r2" ? "r3" : null;
     if (nextRoundMode && needsRemoteReviewDistractors(card, pool, nextRoundMode)) {
-      requestDistractors(card).catch(() => {});
+      fetchReviewDistractors(card).catch(() => {});
     }
     if (nextCard && nextMode && needsRemoteReviewDistractors(nextCard, pool, nextMode)) {
-      requestDistractors(nextCard).catch(() => {});
+      fetchReviewDistractors(nextCard).catch(() => {});
     }
 
     if (initialQuestion.options.length === 4) return () => { alive = false; };
-    requestDistractors(card).then((res) => {
+    setQuestionState({ key: questionKey, question: initialQuestion, status: "loading" });
+    const loadQuestion = async () => {
+      setQuestionState((current) => current.key === questionKey ? { ...current, status: "loading" } : current);
+      const result = await loadReviewQuestionWithFallback({
+        card,
+        pool,
+        mode,
+        request: ({ retry }) => fetchReviewDistractors(card, retry),
+        retries: 1,
+      });
       if (!alive) return;
-      const data = res?.distractors || {};
-      const remote = mode === "r1" || mode === "r3" ? data.meaning_options : data.expression_options;
-      const nextQuestion = getQuestion([...local, ...(remote || [])]);
-      setQuestionState({ key: questionKey, question: nextQuestion });
-    }).catch(() => { /* local options remain available */ });
+      questionCache.current = { key: questionKey, question: result.question };
+      setQuestionState({ key: questionKey, question: result.question, status: result.question.options.length === 4 ? "ready" : "unavailable" });
+    };
+    loadQuestion();
     return () => { alive = false; };
   }, [card.id, mode, nextCard?.id, nextMode]);
 
@@ -189,7 +198,18 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
         {mode === "r3" && <><button onClick={() => speak(expr)} className="mt-3 flex w-full flex-col items-center justify-center rounded-xl border border-mint/30 bg-mint/5 py-4 text-mint hover:bg-mint/10 md:mt-6 md:py-8"><Volume2 size={26} /><span className="mt-2 text-sm">重新播放英文，再选择中文释义</span></button></>}
         {hasCompleteOptions ? <div className="mt-4 grid grid-cols-2 gap-2 pt-1 md:mt-4 md:gap-3 md:pt-0">
           {options.map((option, index) => <button key={`${questionKey}:${option.id}`} onClick={(event) => { choose(option); if (event.detail > 0) event.currentTarget.blur(); }} disabled={picked !== null} style={{ "--review-font-scale": fontScale }} className={`min-h-[4.25rem] touch-manipulation rounded-xl border p-3 transition-colors [-webkit-tap-highlight-color:transparent] focus-visible:outline focus-visible:outline-2 focus-visible:outline-copper ${answerClass(option, picked !== null)} ${mode === "r2" ? "text-center font-display text-[calc(1rem*var(--review-font-scale))]" : "text-left text-[calc(0.875rem*var(--review-font-scale))]"}`}><span className="mr-1.5 text-[10px] text-muted-foreground/40">{index + 1}</span>{option.value || "—"}</button>)}
-        </div> : <div className="mt-4 rounded-xl border border-mint/20 bg-mint/5 p-5 text-center text-sm text-muted-foreground">正在准备相近干扰项，请稍候…</div>}
+        </div> : <div className="mt-4 rounded-xl border border-mint/20 bg-mint/5 p-5 text-center text-sm text-muted-foreground" role="status">
+          {questionStatus === "unavailable" ? <><span>暂时无法准备完整选项，请重试。</span><button type="button" onClick={() => {
+            setQuestionState((current) => ({ ...current, status: "loading" }));
+            loadReviewQuestionWithFallback({
+              card, pool, mode, retries: 1,
+              request: () => fetchReviewDistractors(card, true),
+            }).then((result) => {
+              questionCache.current = { key: questionKey, question: result.question };
+              setQuestionState({ key: questionKey, question: result.question, status: result.question.options.length === 4 ? "ready" : "unavailable" });
+            }).catch(() => setQuestionState((current) => current.key === questionKey ? { ...current, status: "unavailable" } : current));
+          }} className="ml-2 rounded-full border border-white/15 px-3 py-1 text-xs text-mint hover:border-mint/40">重试</button></> : "正在准备相近干扰项，请稍候…"}
+        </div>}
         {mode === "r3" && picked !== null && correct && <div className="mt-4 rounded-xl border border-mint/20 bg-mint/5 p-4">
           <div className="flex items-center gap-2 text-sm text-mint"><Check size={16} />回答正确</div>
           <p className="mt-2 font-display text-lg text-foreground">{expr}</p>

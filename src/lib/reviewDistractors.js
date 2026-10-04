@@ -68,6 +68,31 @@ function poolCandidates(card, pool, mode) {
   }).filter(Boolean).sort((a, b) => b.score - a.score).map((item) => item.value);
 }
 
+function fallbackPoolCandidates(card, pool, mode, existing = []) {
+  const usesMeaning = mode === "r1" || mode === "r3";
+  const correct = normalize(usesMeaning ? card?.meaning_zh || card?.text_zh : card?.expression_en || card?.text_en);
+  const pos = normalize(profileOf(card).pos || card?.pos);
+  const seen = new Set([correct, ...existing.map((value) => mode === "r3" ? meaningKey(value) : normalize(value))]);
+  return (pool || [])
+    .filter((candidate) => candidate && candidate.id !== card?.id)
+    .map((candidate) => {
+      const value = String(usesMeaning ? candidate.meaning_zh || candidate.text_zh || "" : candidate.expression_en || candidate.text_en || "").trim();
+      const key = mode === "r3" ? meaningKey(value) : normalize(value);
+      if (!value || (mode === "r3" && (!isChineseMeaning(value) || nearDuplicateMeaning(value, correct) || existing.some((item) => nearDuplicateMeaning(value, item)))) || seen.has(key)) return null;
+      const candidatePos = normalize(candidate.profile?.pos || candidate.pos);
+      const expression = normalize(candidate.expression_en || candidate.text_en);
+      const targetExpression = normalize(card?.expression_en || card?.text_en);
+      const score = (pos && candidatePos === pos ? 10 : 0)
+        + (expression[0] && targetExpression[0] && expression[0] === targetExpression[0] ? 2 : 0)
+        + (expression && targetExpression && editDistance(expression, targetExpression) <= Math.max(2, Math.floor(targetExpression.length / 3)) ? 3 : 0);
+      seen.add(key);
+      return { value, score };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score)
+    .map(({ value }) => value);
+}
+
 export function buildLocalDistractors(card, pool, mode) {
   const usesMeaning = mode === "r1" || mode === "r3";
   const correct = normalize(usesMeaning ? card?.meaning_zh || card?.text_zh : card?.expression_en || card?.text_en);
@@ -86,6 +111,35 @@ export function buildLocalDistractors(card, pool, mode) {
 
 export function needsRemoteReviewDistractors(card, pool, mode) {
   return buildLocalDistractors(card, pool, mode).length < 3;
+}
+
+export function remoteReviewDistractors(response, mode) {
+  const data = response?.distractors || {};
+  const values = mode === "r1" || mode === "r3" ? data.meaning_options : data.expression_options;
+  if (!Array.isArray(values)) return [];
+  return values.filter((value) => typeof value === "string" && value.trim());
+}
+
+export async function loadReviewQuestionWithFallback({ card, pool, mode, request, retries = 1, retryDelayMs = 300, random = Math.random }) {
+  const local = buildLocalDistractors(card, pool, mode);
+  let question = buildReviewQuestion(card, pool, mode, local, random);
+  if (question.options.length === 4) return { question, source: "local", attempts: 0 };
+
+  let attempts = 0;
+  for (let retry = 0; retry <= retries; retry += 1) {
+    if (retry > 0 && retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    attempts += 1;
+    try {
+      const response = await request({ retry: retry > 0 });
+      const remote = remoteReviewDistractors(response, mode);
+      question = buildReviewQuestion(card, pool, mode, [...local, ...remote], random);
+      if (question.options.length === 4) return { question, source: "remote", attempts };
+    } catch { /* A failed request gets one bounded retry before local fallback. */ }
+  }
+
+  const fallback = fallbackPoolCandidates(card, pool, mode, local);
+  question = buildReviewQuestion(card, pool, mode, [...local, ...fallback], random);
+  return { question, source: question.options.length === 4 ? "pool-fallback" : "unavailable", attempts };
 }
 
 export function fisherYatesShuffle(items, random = Math.random) {
