@@ -372,6 +372,10 @@ export default function Collection() {
 
   if (tab === "review" && phase !== "done" && queue[idx] !== undefined) {
     const activeCard = byId[queue[idx]] || { id: queue[idx] };
+    const hasNextInPhase = idx + 1 < queue.length;
+    const nextMode = hasNextInPhase ? phase : phase === "r1" ? "r2" : phase === "r2" ? "r3" : null;
+    const nextCardId = hasNextInPhase ? queue[idx + 1] : nextMode ? originalQueue[0] : null;
+    const nextCard = nextCardId ? byId[nextCardId] || null : null;
     const totalErrors = vocab.reduce((s, c) => s + (c.error_count || 0), 0);
     const totalReviews = vocab.reduce((s, c) => s + (c.review_count || 0), 0);
     const errorRate = totalReviews ? Math.round((totalErrors / totalReviews) * 100) : 0;
@@ -390,6 +394,8 @@ export default function Collection() {
             onAnswer={onAnswer}
             reviewMode={reviewMode}
             onBack={goBack}
+            nextCard={nextCard}
+            nextMode={nextMode}
           />
         </div>
       </div>

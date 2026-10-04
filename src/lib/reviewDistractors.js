@@ -84,6 +84,10 @@ export function buildLocalDistractors(card, pool, mode) {
   return result;
 }
 
+export function needsRemoteReviewDistractors(card, pool, mode) {
+  return buildLocalDistractors(card, pool, mode).length < 3;
+}
+
 export function fisherYatesShuffle(items, random = Math.random) {
   const shuffled = [...items];
   for (let index = shuffled.length - 1; index > 0; index -= 1) {

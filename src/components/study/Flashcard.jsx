@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, Volume2 } from "lucide-react";
 import { invokeAI } from "@/lib/localApi";
-import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer } from "@/lib/reviewDistractors";
+import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer, needsRemoteReviewDistractors } from "@/lib/reviewDistractors";
 import { commitReviewAnswer, scheduleReviewAutoAdvance } from "@/lib/reviewFlow";
+import { playCorrectAnswerChime } from "@/lib/reviewSound";
 import { WordDetailOverlay } from "@/components/vocab/WordDetailDialog";
 
 function speak(text) {
@@ -16,7 +17,7 @@ function speak(text) {
   } catch { /* noop */ }
 }
 
-export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScale = 1 }) {
+export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScale = 1, nextCard = null, nextMode = null }) {
   const [picked, setPicked] = useState(null);
   const [correct, setCorrect] = useState(null);
   const [showAnswer, setShowAnswer] = useState(false);
@@ -70,13 +71,28 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
     const local = buildLocalDistractors(card, pool, mode);
     const initialQuestion = getQuestion(local);
     setQuestionState({ key: questionKey, question: initialQuestion });
+    const requestDistractors = (targetCard) => {
+      const targetExpr = targetCard.expression_en || targetCard.text_en || "";
+      return invokeAI("generate_distractors", {
+        expression_en: targetExpr,
+        meaning_zh: targetCard.meaning_zh || targetCard.text_zh || "",
+        subtitle_text: targetExpr,
+        video_id: targetCard.source_movie_id || "review",
+      });
+    };
+
+    // Warm the same word's next round (especially r3) and the next queued card
+    // while the learner is answering this one. invokeAI reuses cache/in-flight work.
+    const nextRoundMode = mode === "r1" ? "r2" : mode === "r2" ? "r3" : null;
+    if (nextRoundMode && needsRemoteReviewDistractors(card, pool, nextRoundMode)) {
+      requestDistractors(card).catch(() => {});
+    }
+    if (nextCard && nextMode && needsRemoteReviewDistractors(nextCard, pool, nextMode)) {
+      requestDistractors(nextCard).catch(() => {});
+    }
+
     if (initialQuestion.options.length === 4) return () => { alive = false; };
-    invokeAI("generate_distractors", {
-      expression_en: expr,
-      meaning_zh: meaning,
-      subtitle_text: expr,
-      video_id: card.source_movie_id || "review",
-    }).then((res) => {
+    requestDistractors(card).then((res) => {
       if (!alive) return;
       const data = res?.distractors || {};
       const remote = mode === "r1" || mode === "r3" ? data.meaning_options : data.expression_options;
@@ -84,7 +100,7 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
       setQuestionState({ key: questionKey, question: nextQuestion });
     }).catch(() => { /* local options remain available */ });
     return () => { alive = false; };
-  }, [card.id, mode]);
+  }, [card.id, mode, nextCard?.id, nextMode]);
 
   useEffect(() => {
     if (mode === "r3" && expr) speak(expr);
@@ -135,7 +151,10 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
     pendingAnswer.current = { token, card, correct: isCorrect, details: answerDetails, dueAt: Date.now() + delay, committed: false };
     setPicked(option.id);
     setCorrect(isCorrect);
-    if (isCorrect) autoTimer.current = scheduleReviewAutoAdvance(mode, () => commitAnswer(token));
+    if (isCorrect) {
+      playCorrectAnswerChime();
+      autoTimer.current = scheduleReviewAutoAdvance(mode, () => commitAnswer(token));
+    }
     else setShowAnswer(true);
   };
 

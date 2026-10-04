@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer } from "../src/lib/reviewDistractors.js";
+import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer, needsRemoteReviewDistractors } from "../src/lib/reviewDistractors.js";
 
 const card = {
   id: "marquee",
@@ -50,4 +50,9 @@ test("listening uses Chinese meaning distractors from the shared vocabulary pool
   assert.deepEqual(question.options.map((option) => option.value).sort(), [card.meaning_zh, "遮篷；雨棚", "广告牌；告示牌", "舞台；看台"].sort());
   const unrelatedSamePartOfSpeech = { id: "cat", expression_en: "cat", meaning_zh: "猫", profile: { pos: "名词" } };
   assert.ok(!buildLocalDistractors(card, [card, unrelatedSamePartOfSpeech], "r3").includes("猫"));
+});
+
+test("review preloading only requests remote distractors when a round lacks three local options", () => {
+  assert.equal(needsRemoteReviewDistractors(card, [], "r3"), true);
+  assert.equal(needsRemoteReviewDistractors({ ...card, expression_en: "though", meaning_zh: "虽然" }, [], "r3"), false);
 });
