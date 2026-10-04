@@ -5,7 +5,9 @@ import {
   dailyQueueSnapshot,
   restoreDailyQueue,
   scheduleStage,
+  classifyReviewPools,
   classifyMistakeTiers,
+  isReviewSetCorrect,
   normalizeVocabularyProgress,
 } from "../src/lib/srs.js";
 import { createReviewLog } from "../src/lib/reviewLogModel.js";
@@ -25,7 +27,7 @@ test("200 new items keep entering daily queues and due items cannot starve the n
   for (let day = 1; day <= 5; day += 1) {
     const queue = buildDailyQueue(cards, date(day));
     assert.equal(queue.backlogMode, queue.backlogCount > 100);
-    assert.ok(queue.newCount >= (queue.backlogMode ? 24 : 20));
+    assert.ok(queue.newCount >= 10);
     assert.ok(queue.newCount > 0);
     for (const card of queue.queue.filter((item) => queue.sourceIds.new.includes(item.id))) {
       seenNew.add(card.id);
@@ -33,18 +35,18 @@ test("200 new items keep entering daily queues and due items cannot starve the n
       Object.assign(card, scheduled);
     }
   }
-  assert.ok(seenNew.size >= 120);
+  assert.ok(seenNew.size >= 40);
 
   const crowded = [
     ...Array.from({ length: 200 }, (_, i) => makeCard(`fresh-${i}`)),
     ...Array.from({ length: 100 }, (_, i) => makeCard(`due-${i}`, {
-      reviewCount: 1, correctCount: 1, intervalDays: 1,
+      reviewCount: 1, correctCount: 1, intervalDays: 7,
       lastReviewedAt: "2026-01-01T12:00:00.000Z", nextReviewAt: "2026-01-02T12:00:00.000Z",
     })),
   ];
   const queue = buildDailyQueue(crowded, date(3));
-  assert.equal(queue.newCount, 24);
-  assert.equal(queue.dueCount, 16);
+  assert.equal(queue.newCount, 10);
+  assert.equal(queue.dueCount, 30);
 });
 
 test("normal and backlog quotas are honored and pool shortages backfill to 40", () => {
@@ -54,17 +56,76 @@ test("normal and backlog quotas are honored and pool shortages backfill to 40", 
     ...Array.from({ length: 10 }, (_, i) => makeCard(`w-${i}`, { reviewCount: 2, correctCount: 1, wrongCount: 1, lastReviewedAt: "2026-01-02" })),
   ];
   const normalQueue = buildDailyQueue(normal, date(3));
-  assert.deepEqual(normalQueue.counts, { new: 20, due: 15, weak: 5 });
+  assert.deepEqual(normalQueue.counts, { new: 10, due: 20, weak: 10 });
+  assert.equal(normalQueue.queue.length, new Set(normalQueue.queue.map((item) => item.id)).size);
+  assert.deepEqual(normalQueue.queue.slice(0, 4).map((item) => item.id.split("-")[0]), ["w", "n", "w", "d"]);
   assert.equal(normalQueue.queue.length, 40);
 
   const backlog = [...Array.from({ length: 150 }, (_, i) => makeCard(`b-${i}`)), ...normal.slice(30)];
   const backlogQueue = buildDailyQueue(backlog, date(3));
-  assert.deepEqual(backlogQueue.counts, { new: 24, due: 12, weak: 4 });
+  assert.deepEqual(backlogQueue.counts, { new: 10, due: 20, weak: 10 });
   assert.equal(backlogQueue.queue.length, 40);
 
   const shortage = buildDailyQueue([makeCard("only-new-1"), makeCard("only-new-2")], date(3));
   assert.equal(shortage.queue.length, 2);
   assert.equal(shortage.newCount, 2);
+});
+
+test("a full daily quota selects 20 weak, 10 due, and 10 new cards in an interleaved order", () => {
+  const cards = [
+    ...Array.from({ length: 30 }, (_, i) => makeCard(`weak-${i}`, { reviewCount: 2, wrongCount: 1, intervalDays: 7, lastReviewedAt: "2026-01-02" })),
+    ...Array.from({ length: 30 }, (_, i) => makeCard(`due-${i}`, { reviewCount: 3, correctCount: 3, intervalDays: 14, nextReviewAt: "2026-01-01" })),
+    ...Array.from({ length: 30 }, (_, i) => makeCard(`new-${i}`)),
+  ];
+  const queue = buildDailyQueue(cards, date(3));
+  assert.deepEqual(queue.counts, { new: 10, due: 10, weak: 20 });
+  assert.deepEqual(queue.queue.slice(0, 4).map((item) => item.id.split("-")[0]), ["weak", "new", "weak", "due"]);
+  assert.equal(queue.ids.length, 40);
+  assert.equal(new Set(queue.ids).size, 40);
+});
+
+test("overdue short-interval cards join the weak pool after review, while strong curve intervals remain due", () => {
+  const cards = [
+    makeCard("low-memory", { reviewCount: 2, correctCount: 2, intervalDays: 1, nextReviewAt: "2026-01-02" }),
+    makeCard("strong-due", { reviewCount: 4, correctCount: 4, intervalDays: 14, nextReviewAt: "2026-01-02" }),
+  ];
+  const queue = buildDailyQueue(cards, date(3));
+  assert.deepEqual(queue.sourceIds.weak, ["low-memory"]);
+  assert.deepEqual(queue.sourceIds.due, ["strong-due"]);
+});
+
+test("weak classification decays after repeated correct answers instead of locking a word as weak", () => {
+  let card = makeCard("recovering", { reviewCount: 4, correctCount: 3, wrongCount: 0, intervalDays: 7, nextReviewAt: "2026-01-01" });
+  card = { ...card, ...scheduleStage(card, false, date(1)) };
+  card = { ...card, ...scheduleStage(card, true, date(2)) };
+  assert.ok(classifyReviewPools([card], date(2)).weak.some((item) => item.id === "recovering"));
+  card = { ...card, ...scheduleStage(card, true, date(5)) };
+  const recoveredPools = classifyReviewPools([card], date(5));
+  assert.equal(recoveredPools.weak.some((item) => item.id === "recovering"), false);
+  assert.equal(recoveredPools.due.some((item) => item.id === "recovering"), false);
+  assert.equal(card.intervalDays, 7);
+});
+
+test("daily queue favors weak cards, fills a weak shortage from due cards before new cards, and persists interleaving", () => {
+  const cards = [
+    ...Array.from({ length: 8 }, (_, i) => makeCard(`wrong-${i}`, { reviewCount: 2, wrongCount: 1, intervalDays: 1, lastReviewedAt: "2026-01-02" })),
+    ...Array.from({ length: 30 }, (_, i) => makeCard(`due-${i}`, { reviewCount: 2, correctCount: 2, intervalDays: 7, nextReviewAt: "2026-01-01" })),
+    ...Array.from({ length: 30 }, (_, i) => makeCard(`new-${i}`)),
+  ];
+  const queue = buildDailyQueue(cards, date(3));
+  assert.deepEqual(queue.counts, { new: 10, due: 22, weak: 8 });
+  assert.deepEqual(queue.queue.slice(0, 4).map((item) => item.id.split("-")[0]), ["wrong", "new", "wrong", "due"]);
+  assert.equal(new Set(queue.ids).size, queue.ids.length);
+
+  const restored = restoreDailyQueue(dailyQueueSnapshot(queue, date(3)), cards, date(3));
+  assert.deepEqual(restored.ids, queue.queue.map((item) => item.id));
+  assert.deepEqual(restored.queue.map((item) => item.id), queue.queue.map((item) => item.id));
+});
+
+test("old daily snapshots are regenerated with the current queue version", () => {
+  const cards = [makeCard("new-1"), makeCard("due-1", { reviewCount: 1, intervalDays: 7, nextReviewAt: "2026-01-01" })];
+  const oldSnapshot = { date: "2026-01-03", ids: ["new-1", "due-1"], sourceIds: { new: ["new-1"], due: ["due-1"], weak: [] } };
+  assert.equal(restoreDailyQueue(oldSnapshot, cards, date(3)), null);
 });
 
 test("daily snapshot is stable on refresh and expires on the next local date", () => {
@@ -90,6 +151,20 @@ test("correct answers advance through 1/3/7/14/30/60 day intervals", () => {
   assert.equal(card.reviewCount, expected.length);
   assert.equal(card.correctCount, expected.length);
   assert.equal(card.status, "mastered");
+});
+
+test("a three-mode review set advances the memory curve once, and any first-answer miss lowers the set result", () => {
+  assert.equal(isReviewSetCorrect({ r1: true, r2: true, r3: true }), true);
+  assert.equal(isReviewSetCorrect({ r1: true, r2: false, r3: true }), false);
+
+  let card = makeCard("one-session-step");
+  card = { ...card, ...scheduleStage(card, isReviewSetCorrect({ r1: true, r2: true, r3: true }), date(1)) };
+  assert.equal(card.intervalDays, 1);
+  card = { ...card, ...scheduleStage(card, isReviewSetCorrect({ r1: true, r2: true, r3: true }), date(2)) };
+  assert.equal(card.intervalDays, 3);
+
+  const missedSet = scheduleStage(card, isReviewSetCorrect({ r1: true, r2: false, r3: true }), date(5));
+  assert.equal(missedSet.intervalDays, 1);
 });
 
 test("wrong answers downgrade intervals without resetting history and each same-day answer counts", () => {

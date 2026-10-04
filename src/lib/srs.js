@@ -122,12 +122,16 @@ export const STAGE_INTERVALS = [0, 1, 2, 4, 7, 15];
 export const STAGE_LABELS = ["新词", "一轮", "二轮", "三轮", "四轮", "长期记忆"];
 export const DAILY_REVIEW_GOAL = 40;
 export const REVIEW_INTERVAL_DAYS = [1, 3, 7, 14, 30, 60];
-const NORMAL_QUOTA = { new: 20, due: 15, weak: 5 };
-const BACKLOG_QUOTA = { new: 24, due: 12, weak: 4 };
+export const DAILY_QUEUE_VERSION = 2;
+const DAILY_QUOTA = { weak: 20, due: 10, new: 10 };
 
 export function stageOf(card) {
   const s = Number(card?.stage);
   return Number.isInteger(s) && s >= 0 && s <= 5 ? s : 0;
+}
+
+export function isReviewSetCorrect({ r1, r2, r3 } = {}) {
+  return r1 === true && r2 === true && r3 === true;
 }
 
 export function localDateKey(value = Date.now()) {
@@ -151,9 +155,24 @@ function lastWrongAt(card) {
   return null;
 }
 
+function consecutiveWrongCount(card) {
+  const history = Array.isArray(card?.review_history) ? card.review_history : [];
+  let count = 0;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index]?.result === "wrong" || history[index]?.correct === false) count += 1;
+    else break;
+  }
+  return count;
+}
+
 function hasRecentWrong(card, now) {
   const wrongCount = wrongCountOf(card);
   if (!wrongCount) return false;
+  const history = Array.isArray(card?.review_history) ? card.review_history : [];
+  if (history.length) {
+    const latest = history.at(-1);
+    if (latest?.result !== "wrong" && latest?.correct !== false) return false;
+  }
   const lastWrong = lastWrongAt(card) || lastReviewedOf(card);
   const time = Date.parse(lastWrong || "");
   return Number.isFinite(time) && time <= now && now - time <= 7 * 86400000;
@@ -161,6 +180,7 @@ function hasRecentWrong(card, now) {
 
 function hasHighErrorRate(card, now) {
   const history = Array.isArray(card?.review_history) ? card.review_history : [];
+  if (consecutiveWrongCount(card) >= 2) return true;
   const recent = history.slice(-5);
   if (recent.length >= 2) {
     const wrong = recent.filter((item) => item?.result === "wrong" || item?.correct === false).length;
@@ -170,6 +190,14 @@ function hasHighErrorRate(card, now) {
   const last = Date.parse(lastReviewedOf(card) || "");
   return reviews >= 2 && wrongCountOf(card) / reviews >= 0.4
     && Number.isFinite(last) && now - last <= 30 * 86400000;
+}
+
+function hasLowDueMemoryStrength(card, due) {
+  if (!due || reviewCountOf(card) <= 0) return false;
+  const storedInterval = card?.intervalDays ?? card?.interval_days;
+  const storedStage = Number(card?.stage);
+  const interval = Number(storedInterval ?? (Number.isInteger(storedStage) && storedStage > 0 ? STAGE_INTERVALS[stageOf(card)] : NaN));
+  return Number.isFinite(interval) && interval > 0 && interval <= 3;
 }
 
 function dailyTieBreak(card, date) {
@@ -280,12 +308,12 @@ export function classifyReviewPools(vocab, now = Date.now()) {
       pools.new.push(card);
       continue;
     }
-    if (hasRecentWrong(card, instant) || hasHighErrorRate(card, instant)) {
+    const nextReview = nextReviewOf(card);
+    const due = !nextReview || !Date.parse(nextReview) || localDateKey(nextReview) <= today;
+    if (hasRecentWrong(card, instant) || hasHighErrorRate(card, instant) || hasLowDueMemoryStrength(card, due)) {
       pools.weak.push(card);
       continue;
     }
-    const nextReview = nextReviewOf(card);
-    const due = !nextReview || !Date.parse(nextReview) || localDateKey(nextReview) <= today;
     if (due) pools.due.push(card);
   }
   const byDailyTieBreak = (a, b) => dailyTieBreak(a, today) - dailyTieBreak(b, today);
@@ -294,7 +322,18 @@ export function classifyReviewPools(vocab, now = Date.now()) {
   pools.weak.sort((a, b) => {
     const aRate = wrongCountOf(a) / Math.max(reviewCountOf(a), 1);
     const bRate = wrongCountOf(b) / Math.max(reviewCountOf(b), 1);
-    return bRate - aRate || Date.parse(lastWrongAt(b) || lastReviewedOf(b) || 0) - Date.parse(lastWrongAt(a) || lastReviewedOf(a) || 0) || byDailyTieBreak(a, b);
+    const aRecentWrong = hasRecentWrong(a, instant);
+    const bRecentWrong = hasRecentWrong(b, instant);
+    const aWrongAt = Date.parse(lastWrongAt(a) || lastReviewedOf(a) || 0) || 0;
+    const bWrongAt = Date.parse(lastWrongAt(b) || lastReviewedOf(b) || 0) || 0;
+    const aInterval = Number(a?.intervalDays ?? a?.interval_days ?? STAGE_INTERVALS[stageOf(a)] ?? 0);
+    const bInterval = Number(b?.intervalDays ?? b?.interval_days ?? STAGE_INTERVALS[stageOf(b)] ?? 0);
+    return Number(bRecentWrong) - Number(aRecentWrong)
+      || bWrongAt - aWrongAt
+      || consecutiveWrongCount(b) - consecutiveWrongCount(a)
+      || bRate - aRate
+      || aInterval - bInterval
+      || byDailyTieBreak(a, b);
   });
   return pools;
 }
@@ -366,27 +405,49 @@ export function scheduleStage(card, correct, reviewedAt = new Date()) {
 export function buildDailyQueue(vocab, now = Date.now(), goal = DAILY_REVIEW_GOAL) {
   const pools = classifyReviewPools(vocab, now);
   const backlogMode = pools.new.length > 100;
-  const quotas = backlogMode ? BACKLOG_QUOTA : NORMAL_QUOTA;
-  const selected = {
-    new: pools.new.slice(0, quotas.new),
-    due: pools.due.slice(0, quotas.due),
-    weak: pools.weak.slice(0, quotas.weak),
-  };
-  let remaining = Math.max(0, Math.floor(goal) - Object.values(selected).reduce((sum, items) => sum + items.length, 0));
-  for (const poolName of ["due", "weak", "new"]) {
+  const target = Math.max(0, Math.floor(goal));
+  const weakTarget = Math.min(DAILY_QUOTA.weak, target);
+  const selected = { weak: pools.weak.slice(0, weakTarget), due: [], new: [] };
+  let remaining = target - selected.weak.length;
+  const weakDeficit = weakTarget - selected.weak.length;
+  const dueTarget = Math.min(remaining, DAILY_QUOTA.due + weakDeficit);
+  selected.due = pools.due.slice(0, dueTarget);
+  remaining -= selected.due.length;
+  const dueDeficit = dueTarget - selected.due.length;
+  const newTarget = Math.min(remaining, DAILY_QUOTA.new + dueDeficit);
+  selected.new = pools.new.slice(0, newTarget);
+  remaining -= selected.new.length;
+  // If the target still has room, fill by the requested priority order.
+  for (const poolName of ["due", "new", "weak"]) {
     if (!remaining) break;
-    const alreadySelected = selected[poolName].length;
-    const extra = pools[poolName].slice(alreadySelected, alreadySelected + remaining);
+    const extra = pools[poolName].slice(selected[poolName].length, selected[poolName].length + remaining);
     selected[poolName].push(...extra);
     remaining -= extra.length;
   }
   const sourceIds = Object.fromEntries(Object.entries(selected).map(([name, items]) => [name, items.map((item) => item.id)]));
-  const ids = ["new", "due", "weak"].flatMap((name) => sourceIds[name]);
   const byId = new Map((vocab || []).map((item) => [item.id, item]));
-  const queue = ids.map((id) => byId.get(id)).filter(Boolean);
+  const selectedByPool = Object.fromEntries(Object.entries(sourceIds).map(([name, poolIds]) => [name, poolIds.map((id) => byId.get(id)).filter(Boolean)]));
+  const queue = [];
+  const offsets = { weak: 0, new: 0, due: 0 };
+  const takeNext = (poolName) => {
+    const item = selectedByPool[poolName][offsets[poolName]];
+    if (!item) return false;
+    offsets[poolName] += 1;
+    queue.push(item);
+    return true;
+  };
+  const selectedCount = Object.values(selectedByPool).reduce((sum, items) => sum + items.length, 0);
+  while (queue.length < selectedCount) {
+    takeNext("weak");
+    takeNext("new");
+    takeNext("weak");
+    takeNext("due");
+  }
+  const ids = queue.map((item) => item.id);
   const counts = { new: sourceIds.new.length, due: sourceIds.due.length, weak: sourceIds.weak.length };
   const backlogCount = pools.new.length;
   return {
+    version: DAILY_QUEUE_VERSION,
     date: localDateKey(now),
     goal: Math.floor(goal),
     backlogMode,
@@ -406,6 +467,7 @@ export function buildDailyQueue(vocab, now = Date.now(), goal = DAILY_REVIEW_GOA
 
 export function dailyQueueSnapshot(dailyQueue, now = Date.now()) {
   return {
+    version: DAILY_QUEUE_VERSION,
     date: dailyQueue.date || localDateKey(now),
     goal: dailyQueue.goal || DAILY_REVIEW_GOAL,
     backlogMode: Boolean(dailyQueue.backlogMode),
@@ -423,7 +485,7 @@ export function dailyQueueSnapshot(dailyQueue, now = Date.now()) {
 }
 
 export function restoreDailyQueue(snapshot, vocab, now = Date.now()) {
-  if (!snapshot || snapshot.date !== localDateKey(now)) return null;
+  if (!snapshot || snapshot.date !== localDateKey(now) || snapshot.version !== DAILY_QUEUE_VERSION) return null;
   const byId = new Map((vocab || []).map((item) => [item.id, item]));
   const ids = (snapshot.ids || []).filter((id) => byId.has(id));
   const sourceIds = Object.fromEntries(["new", "due", "weak"].map((name) => [name, (snapshot.sourceIds?.[name] || []).filter((id) => byId.has(id))]));

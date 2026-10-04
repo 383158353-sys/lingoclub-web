@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { vocabRepository } from "@/lib/vocabRepository";
 import { useToast } from "@/components/ui/use-toast";
 import Flashcard from "@/components/study/Flashcard";
-import { scheduleStage, buildDailyQueue, dailyQueueSnapshot, restoreDailyQueue, localDateKey, STAGE_LABELS, stageOf } from "@/lib/srs";
+import { scheduleStage, isReviewSetCorrect, buildDailyQueue, dailyQueueSnapshot, restoreDailyQueue, localDateKey, DAILY_QUEUE_VERSION, STAGE_LABELS, stageOf } from "@/lib/srs";
 import { loadSession, saveSession, isResumable } from "@/lib/reviewSession";
 import { BookMarked, Brain, ArrowRight, Trash2, RotateCw, AlertTriangle } from "lucide-react";
 import { appendReviewLog, loadReviewLogs } from "@/lib/reviewLogs";
@@ -112,7 +112,7 @@ export default function Collection() {
     // 安全超时:接口卡死 12 秒后自动降级,避免列表一直空白/加载不出。
     const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 12000));
     try {
-      Promise.race([VocabApi.list("-created_date", 500), timeout])
+      Promise.race([VocabApi.list("-created_date"), timeout])
         .then((v) => setVocab((v || []).map(normalizeVocabularyProgress)))
         .catch(() => { setVocab([]); setLoadError(true); })
         .finally(() => setLoading(false));
@@ -149,10 +149,13 @@ export default function Collection() {
   }, [savedSession, vocab]);
 
   useEffect(() => {
-    if (loading || !vocab.length || savedSession?.dailyQueue?.date === todayISO()) return;
-    const next = saveSession({ date: todayISO(), dailyQueue: dailyQueueSnapshot(dailyQ), completedIds: [] });
+    const sameDaySnapshot = savedSession?.dailyQueue?.date === todayISO();
+    if (loading || !vocab.length || (sameDaySnapshot && savedSession.dailyQueue.version === DAILY_QUEUE_VERSION)) return;
+    const completedIds = (sameDaySnapshot ? savedSession.dailyQueue.completedIds || savedSession.completedIds : [])
+      .filter((id) => dailyQ.ids.includes(id));
+    const next = saveSession({ date: todayISO(), dailyQueue: dailyQueueSnapshot({ ...dailyQ, completedIds }), completedIds });
     if (next) setSavedSession(next);
-  }, [dailyQ, loading, savedSession?.dailyQueue?.date, vocab.length]);
+  }, [dailyQ, loading, savedSession?.dailyQueue?.date, savedSession?.dailyQueue?.version, savedSession?.completedIds, vocab.length]);
 
   // 保存同一天的队列快照和当前断点。完成后保留快照，避免当天再次抽题。
   useEffect(() => {
@@ -161,7 +164,7 @@ export default function Collection() {
         // Autonomous practice is intentionally not written over the daily queue snapshot.
         return;
       }
-      const snapshot = savedSession?.dailyQueue?.date === todayISO()
+      const snapshot = savedSession?.dailyQueue?.date === todayISO() && savedSession.dailyQueue.version === DAILY_QUEUE_VERSION
         ? savedSession.dailyQueue
         : dailyQueueSnapshot(dailyQ);
       const completed = [...new Set([...(snapshot.completedIds || []), ...completedIds])];
@@ -171,7 +174,7 @@ export default function Collection() {
       if (reviewMode !== "daily") {
         return;
       }
-      const snapshot = savedSession?.dailyQueue?.date === todayISO() ? savedSession.dailyQueue : dailyQueueSnapshot(dailyQ);
+      const snapshot = savedSession?.dailyQueue?.date === todayISO() && savedSession.dailyQueue.version === DAILY_QUEUE_VERSION ? savedSession.dailyQueue : dailyQueueSnapshot(dailyQ);
       const completed = [...new Set([...(snapshot.completedIds || []), ...originalQueue])];
       setSavedSession(saveSession({ date: todayISO(), dailyQueue: { ...snapshot, completedIds: completed }, reviewMode, sessionId: reviewSessionId, originalQueue, queue, idx, reviewed, phase, r1Res, r2Res, r3Res, retried, completedIds: completed, completed: true }) || null);
     }
@@ -220,12 +223,18 @@ export default function Collection() {
       return;
     }
     const existingSnapshot = restoreDailyQueue(session?.dailyQueue, vocab);
-    if (mode === "daily" && session?.dailyQueue?.date === todayISO() && (session.completed || session.phase === "done")) {
+    if (mode === "daily" && existingSnapshot && (session.completed || session.phase === "done")) {
       toast({ title: "今日复习已完成", description: "明天会生成新的每日队列。" });
       return;
     }
     const generated = existingSnapshot || buildDailyQueue(vocab);
-    const snapshot = existingSnapshot ? session.dailyQueue : dailyQueueSnapshot(generated);
+    const sameDayCompleted = session?.dailyQueue?.date === todayISO()
+      ? session.dailyQueue.completedIds || session.completedIds || []
+      : [];
+    const snapshot = existingSnapshot ? session.dailyQueue : dailyQueueSnapshot({
+      ...generated,
+      completedIds: sameDayCompleted.filter((id) => generated.ids.includes(id)),
+    });
     const finishedIds = new Set(snapshot.completedIds || session?.completedIds || []);
     let selectedCards;
     const pools = classifyReviewPools(vocab);
@@ -322,12 +331,16 @@ export default function Collection() {
     }
 
     const reviewedAt = new Date();
-    const fields = scheduleStage(card, correct, reviewedAt);
-    const updated = { ...card, ...fields };
-    Promise.resolve()
-      .then(() => VocabApi.updateReviewState(id, fields))
-      .catch(() => toast({ title: "复习进度暂存本机", description: "云端更新稍后重试。" }));
-    setVocab((vs) => vs.map((c) => (c.id === id ? updated : c)));
+    const fields = phase === "r3" && isFirst
+      ? scheduleStage(card, isReviewSetCorrect({ r1: r1Res[id] ?? true, r2: r2Res[id] ?? true, r3: correct }), reviewedAt)
+      : null;
+    if (fields) {
+      const updated = { ...card, ...fields };
+      Promise.resolve()
+        .then(() => VocabApi.updateReviewState(id, fields))
+        .catch(() => toast({ title: "复习进度暂存本机", description: "云端更新稍后重试。" }));
+      setVocab((vs) => vs.map((c) => (c.id === id ? updated : c)));
+    }
     const logMode = ["daily", "due", "weak", "mistakes", "random", "new", "recent", "today", "all", "focus", "occasional"].includes(reviewMode)
       ? reviewMode
       : reviewMode.startsWith("source:") ? "source" : "manual";
@@ -338,9 +351,9 @@ export default function Collection() {
       question_type: answer.question_type || phase, user_answer: answer.user_answer,
       correct_answer: answer.correct_answer, is_correct: correct, rating: answer.rating ?? (correct ? 4 : 0),
       response_time_ms: answer.response_time_ms, previous_mastery: card.mastery_level || "new",
-      previous_interval: card.interval_days ?? card.intervalDays ?? 0, new_interval: fields.interval_days ?? fields.intervalDays ?? 0,
-      new_mastery: fields.mastery_level, previous_next_review_at: card.next_review_at || card.next_review_date,
-      new_next_review_at: fields.next_review_at, review_mode: logMode,
+      previous_interval: card.interval_days ?? card.intervalDays ?? 0, new_interval: fields?.interval_days ?? fields?.intervalDays ?? card.interval_days ?? card.intervalDays ?? 0,
+      new_mastery: fields?.mastery_level || card.mastery_level, previous_next_review_at: card.next_review_at || card.next_review_date,
+      new_next_review_at: fields?.next_review_at || card.next_review_at || card.next_review_date, review_mode: logMode,
     });
     setReviewLogs((logs) => [...logs, log]);
 
@@ -459,7 +472,7 @@ export default function Collection() {
         {(tab === "list" ? [["daily", "今日计划"], ["new", "今天新增"], ["recent", "最近收藏"], ["random", "随机复习"], ["all", "全部内容"]] : [["mistakes", "全部错词"], ["weak", "复习薄弱词"], ["focus", "重点攻克"], ["occasional", "偶尔失误"]]).map(([mode, label]) => <button key={mode} onClick={() => startReview(mode)} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-copper/50 hover:text-copper">{label}</button>)}
         {tab === "list" && sourceGroups.length > 0 && <select aria-label="按影视来源复习" onChange={(event) => event.target.value && startReview(`source:${event.target.value}`)} defaultValue="" className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground"><option value="">按影视来源复习</option>{sourceGroups.map((title) => <option key={title} value={title}>{title}</option>)}</select>}
       </div>}
-      <details className="mt-3 text-xs text-muted-foreground"><summary className="w-fit cursor-pointer select-none">今日计划详情</summary><p className="mt-2">今日总任务 {dailyQ.ids.length} · 新词 {dailyQ.newCount} · 到期 {dailyQ.dueCount} · 薄弱 {dailyQ.weakCount} · 未首次复习积压 {dailyQ.backlogCount} · 错题 {errorWords.length} · 收藏 {vocab.length} · 已掌握 {vocab.filter((c) => c.mastery_level === "mastered").length} · 连续学习 {streak(vocab)} 天</p></details>
+      <details className="mt-3 text-xs text-muted-foreground"><summary className="w-fit cursor-pointer select-none">今日计划详情</summary><p className="mt-2">今日总任务 {dailyQ.ids.length} · 错词/薄弱 {dailyQ.weakCount} · 到期旧词 {dailyQ.dueCount} · 新词 {dailyQ.newCount} · 未首次复习积压 {dailyQ.backlogCount} · 错题 {errorWords.length} · 收藏 {vocab.length}（单词/短语 {sectionWords.length}，句子 {sectionSentences.length}）· 已掌握 {vocab.filter((c) => c.mastery_level === "mastered").length} · 连续学习 {streak(vocab)} 天</p></details>
 
       {loading && vocab.length === 0 ? (
         <p className="mt-10 text-sm text-muted-foreground">加载…</p>
