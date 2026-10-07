@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: lingoclub-subtitle-service-test
+    runtime: docker
+    plan: free
+    dockerfilePath: ./subtitle-service/Dockerfile
+    dockerContext: ./subtitle-service
+    healthCheckPath: /health
+    autoDeployTrigger: off
+    envVars:
+      - key: SUBTITLE_SERVICE_KEY
+        generateValue: true
