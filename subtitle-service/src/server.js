@@ -67,14 +67,20 @@ async function readJson(req) {
 
 async function startProvider() {
   const script = '/opt/bgutil/server/build/main.js';
+  const providerDiagnostics = [];
   providerProcess = spawn(process.execPath, [script, '--host', '127.0.0.1', '--port', String(providerPort)], {
+    cwd: '/opt/bgutil/server',
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   providerProcess.stderr.on('data', (chunk) => {
-    if (process.env.NODE_ENV === 'development') {
-      const safe = String(chunk).replace(/https?:\/\/[^\s"']+/gi, '[url]');
-      process.stderr.write(`[bgutil] ${safe.slice(0, 500)}`);
-    }
+    const safe = String(chunk)
+      .replace(/https?:\/\/[^\s"']+/gi, '[url]')
+      .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
+    providerDiagnostics.push(safe.slice(0, 1000));
+    if (process.env.NODE_ENV === 'development') process.stderr.write(`[bgutil] ${safe.slice(0, 500)}`);
+  });
+  providerProcess.on('error', (error) => {
+    providerDiagnostics.push(`process error: ${error.message}`);
   });
   providerProcess.on('exit', (code) => {
     process.stderr.write(`[bgutil] provider exited (${code})\n`);
@@ -82,13 +88,17 @@ async function startProvider() {
 
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if (providerProcess.exitCode !== null) throw new Error('PO Token provider exited during startup');
+    if (providerProcess.exitCode !== null) {
+      const detail = providerDiagnostics.join(' ').replace(/\s+/g, ' ').slice(0, 1500);
+      throw new Error(`PO Token provider exited during startup${detail ? `: ${detail}` : ''}`);
+    }
     try {
-      await fetch(`http://127.0.0.1:${providerPort}/`, { signal: AbortSignal.timeout(500) });
+      await fetch(`http://127.0.0.1:${providerPort}/ping`, { signal: AbortSignal.timeout(500) });
       return;
     } catch { await new Promise((resolve) => setTimeout(resolve, 200)); }
   }
-  throw new Error('PO Token provider did not become ready');
+  const detail = providerDiagnostics.join(' ').replace(/\s+/g, ' ').slice(0, 1500);
+  throw new Error(`PO Token provider did not become ready${detail ? `: ${detail}` : ''}`);
 }
 
 function cleanFailureDiagnostics(diagnostics = {}) {
