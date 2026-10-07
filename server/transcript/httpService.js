@@ -102,6 +102,12 @@ export function createTranscriptHttpServer() {
   return createServer(async (req, res) => {
     applyCors(req, res);
     const pathname = new URL(req.url || "/", "http://localhost").pathname;
+    if (req.method === "GET" && pathname === "/health") {
+      sendJson(res, 200, { ok: true, runtime: globalThis.__transcriptRuntimeHealth || {
+        node: process.version, platform: process.platform, arch: process.arch,
+      } });
+      return;
+    }
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();

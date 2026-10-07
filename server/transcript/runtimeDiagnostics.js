@@ -1,6 +1,15 @@
 // Standalone service observability only. Never alters requests, responses or retries.
-const log = (fields) => console.log(JSON.stringify({ scope: "transcript-runtime", ...fields }));
+const log = (fields) => {
+  console.log(JSON.stringify({ scope: "transcript-runtime", ...fields }));
+  if (process.env.TRANSCRIPT_RUNTIME_SELF_TEST === "1" && fields.roundSequence && globalThis.__transcriptRuntimeHealth) {
+    const diagnostics = globalThis.__transcriptRuntimeHealth.diagnostics ||= [];
+    if (diagnostics.length < 100) diagnostics.push(fields);
+  }
+};
 log({ event: "startup", node: process.version, platform: process.platform, arch: process.arch });
+globalThis.__transcriptRuntimeHealth = {
+  node: process.version, platform: process.platform, arch: process.arch,
+};
 
 const originalFetch = globalThis.fetch;
 let roundSequence = 0;
@@ -52,3 +61,32 @@ globalThis.fetch = async function observedFetch(input, options) {
   }
   return response;
 };
+
+// Temporary, one-shot experiment: authenticate against the existing local HTTP route.
+// It uses exactly that route's existing retry policy and never changes the extractor.
+if (process.env.TRANSCRIPT_RUNTIME_SELF_TEST === "1") {
+  globalThis.__transcriptRuntimeHealth.selfTest = { status: "pending" };
+  setTimeout(async () => {
+    const startedAt = Date.now();
+    globalThis.__transcriptRuntimeHealth.selfTest = { status: "running" };
+    try {
+      const response = await fetch(`http://127.0.0.1:${process.env.PORT || 8787}/transcript`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.TRANSCRIPT_SERVICE_TOKEN}` },
+        body: JSON.stringify({ videoId: "LCAY3PGHZyw" }),
+      });
+      const data = await response.json();
+      const subtitles = Array.isArray(data.subtitles) ? data.subtitles : [];
+      const report = { status: response.ok ? "success" : "failed", httpStatus: response.status,
+        videoId: "LCAY3PGHZyw", subtitleCount: subtitles.length, attemptCount: data.attemptCount,
+        reason: data.reason, elapsedMs: Date.now() - startedAt,
+        validTiming: subtitles.length > 0 && subtitles.every(cue => Number.isFinite(cue.start) && cue.duration > 0 && typeof cue.text === "string"),
+      };
+      globalThis.__transcriptRuntimeHealth.selfTest = report;
+      log({ event: "self-test", ...report });
+    } catch (error) {
+      globalThis.__transcriptRuntimeHealth.selfTest = { status: "failed", errorType: error?.name, elapsedMs: Date.now() - startedAt };
+      log({ event: "self-test", ...globalThis.__transcriptRuntimeHealth.selfTest });
+    }
+  }, 2000).unref();
+}
