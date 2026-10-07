@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'youtube-nocookie.com', 'www.youtube-nocookie.com']);
 const MAX_BUFFER = 8 * 1024 * 1024;
 const YTDLP_TIMEOUT_MS = 18_000;
+const YTDLP_EXTRACTOR_ARGS = process.env.YTDLP_EXTRACTOR_ARGS || 'youtube:player_client=mweb';
 
 export class SubtitleServiceError extends Error {
   constructor(status, stage, message, diagnostics = {}) {
@@ -131,7 +132,7 @@ export async function extractSubtitle(url, { videoId = getVideoId(url), log = co
 
   const metadata = await runYtDlp([
     '--ignore-config', '--no-update', '--no-warnings', '--verbose', '--no-playlist', '--skip-download',
-    '--dump-single-json', '--js-runtimes', 'node', canonicalUrl,
+    '--dump-single-json', '--js-runtimes', 'node', '--extractor-args', YTDLP_EXTRACTOR_ARGS, canonicalUrl,
   ]);
   const metadataDiagnostics = diagnosticsFrom(metadata.stderr, {
     ...baseDiagnostics,
@@ -172,6 +173,7 @@ export async function extractSubtitle(url, { videoId = getVideoId(url), log = co
       const result = await runYtDlp([
         '--ignore-config', '--no-update', '--no-warnings', '--verbose', '--no-playlist', '--skip-download',
         subtitleMode, '--sub-langs', candidate.language, '--sub-format', 'vtt/best',
+        '--extractor-args', YTDLP_EXTRACTOR_ARGS,
         '--output', path.join(tempDir, '%(id)s.%(ext)s'), '--windows-filenames', canonicalUrl,
       ]);
       const extractorDiagnostics = diagnosticsFrom(result.stderr);
