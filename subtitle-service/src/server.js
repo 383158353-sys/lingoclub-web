@@ -70,7 +70,12 @@ async function startProvider() {
   const providerDiagnostics = [];
   providerProcess = spawn(process.execPath, [script, '--host', '127.0.0.1', '--port', String(providerPort)], {
     cwd: '/opt/bgutil/server',
-    stdio: ['ignore', 'ignore', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  providerProcess.stdout.on('data', (chunk) => {
+    const safe = String(chunk).replace(/https?:\/\/[^\s"']+/gi, '[url]').slice(0, 1000);
+    providerDiagnostics.push(safe);
+    if (process.env.NODE_ENV === 'development') process.stdout.write(`[bgutil] ${safe}`);
   });
   providerProcess.stderr.on('data', (chunk) => {
     const safe = String(chunk)
@@ -86,7 +91,8 @@ async function startProvider() {
     process.stderr.write(`[bgutil] provider exited (${code})\n`);
   });
 
-  const deadline = Date.now() + 10_000;
+  const startupTimeoutMs = Number(process.env.BGUTIL_STARTUP_TIMEOUT_MS || 60_000);
+  const deadline = Date.now() + startupTimeoutMs;
   while (Date.now() < deadline) {
     if (providerProcess.exitCode !== null) {
       const detail = providerDiagnostics.join(' ').replace(/\s+/g, ' ').slice(0, 1500);
