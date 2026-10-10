@@ -165,6 +165,7 @@ export default function LocalStudy() {
       setFolders([]);
     }
   }, []);
+
   useEffect(() => {
     void refreshLibrary();
     void refreshFolders();
@@ -883,8 +884,8 @@ export default function LocalStudy() {
     }
     await localMovies.delete(id);
     await deleteLocalVideo(id, { deleteCopiedMedia }).catch(() => {});
-    await refreshLibrary();
-  }, [materials?.recordId, revokeCurrent, refreshLibrary]);
+    await Promise.all([refreshLibrary(), syncUserState(user?.id).catch(() => {})]);
+  }, [materials?.recordId, refreshLibrary, revokeCurrent, user?.id]);
 
   // 批量删除：一次 deleteMany + 一次刷新，避免逐条跳转
   const removeMetas = useCallback(async (ids, { deleteCopiedMedia = true } = {}) => {
@@ -894,8 +895,8 @@ export default function LocalStudy() {
     }
     await localMovies.deleteMany(ids);
     await deleteLocalVideoMany(ids, { deleteCopiedMedia }).catch(() => {});
-    await refreshLibrary();
-  }, [materials?.recordId, revokeCurrent, refreshLibrary]);
+    await Promise.all([refreshLibrary(), syncUserState(user?.id).catch(() => {})]);
+  }, [materials?.recordId, refreshLibrary, revokeCurrent, user?.id]);
 
   const removeSeason = useCallback(async (seasonId, episodeIds, { deleteCopiedMedia = true } = {}) => {
     if (materials?.recordId && episodeIds.includes(materials.recordId)) {
@@ -905,8 +906,8 @@ export default function LocalStudy() {
     await localMovies.deleteMany(episodeIds);
     await localFolders.delete(seasonId);
     await deleteLocalVideoMany([...episodeIds, `folder:${seasonId}`], { deleteCopiedMedia }).catch(() => {});
-    await Promise.all([refreshLibrary(), refreshFolders()]);
-  }, [materials?.recordId, refreshFolders, refreshLibrary, revokeCurrent]);
+    await Promise.all([refreshLibrary(), refreshFolders(), syncUserState(user?.id).catch(() => {})]);
+  }, [materials?.recordId, refreshFolders, refreshLibrary, revokeCurrent, user?.id]);
 
   // 批量重新排序：接收重排后的 id 顺序，写入 sort_order
   const reorderMetas = useCallback(async (reorderedIds) => {
@@ -1030,11 +1031,11 @@ export default function LocalStudy() {
         );
       }
       await localFolders.delete(folderId);
-      await Promise.all([refreshFolders(), refreshLibrary()]);
+      await Promise.all([refreshFolders(), refreshLibrary(), syncUserState(user?.id).catch(() => {})]);
     } catch (e) {
       toast({ title: "删除文件夹失败", description: e?.message, variant: "destructive" });
     }
-  }, [metas, refreshFolders, refreshLibrary, toast]);
+  }, [metas, refreshFolders, refreshLibrary, toast, user?.id]);
 
   // 字幕改动：同步到 materials（即时刷新学习视图）+ 持久化到 LocalMovieMeta.subtitles。
   const onSubsChanged = useCallback(async (newSubs, sourceName) => {
@@ -1198,7 +1199,7 @@ export default function LocalStudy() {
             <p className="mt-3 text-sm text-muted-foreground">当前设备未找到视频</p>
             <p className="mt-1 text-xs text-muted-foreground">影片、字幕、收藏和学习进度仍保留。请选择此设备上的原视频以继续播放。</p>
             <div className="mt-3 flex justify-center gap-2">
-      {materials.mediaAccess?.permissionRequired && <button type="button" onClick={requestVideoPermission} className="rounded-full border border-border px-3 py-1.5 text-xs text-foreground">允许访问本地视频</button>}
+      {materials.mediaAccess?.permissionRequired && <button type="button" onClick={requestVideoPermission} className="rounded-full border border-border px-3 py-1.5 text-xs text-foreground">重新授权本地媒体目录</button>}
               <button type="button" onClick={relinkOriginalVideo} className="rounded-full bg-copper px-3 py-1.5 text-xs font-medium text-copper-foreground">重新选择本地视频</button>
             </div>
             </div>

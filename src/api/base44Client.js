@@ -7,7 +7,7 @@ const createConfiguredClient = () => createClient({
   appId,
   token: getStoredAccessToken(),
   functionsVersion,
-  serverUrl: '',
+  serverUrl: appBaseUrl || '',
   requiresAuth: false,
   appBaseUrl,
 });

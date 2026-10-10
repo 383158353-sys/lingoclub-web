@@ -144,7 +144,10 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
   const handleDeleteSelected = async () => {
     if (!selectedIds.size) return;
     if (!window.confirm(`确定从 LingoClub 移除选中的 ${selectedIds.size} 个项目？原始磁盘文件不会被删除。`)) return;
-    const deleteCopiedMedia = window.confirm("是否同时清理 LingoClub 以前保存的视频副本？选择“取消”只移除条目和文件引用。");
+    // Local imports now keep only a FileSystemHandle/temporary File reference;
+    // remove any legacy IndexedDB copy automatically. The original disk file
+    // is never touched by the delete handlers.
+    const deleteCopiedMedia = true;
     const folderIds = [...selectedIds].filter((id) => id.startsWith("folder:")).map((id) => id.slice("folder:".length));
     const movieIds = [...selectedIds].filter((id) => !id.startsWith("folder:"));
     for (const folderId of folderIds) {
@@ -162,14 +165,14 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
       ? `从 LingoClub 移除“${movie.name || "此条目"}”？不会删除 YouTube 视频。`
       : `从 LingoClub 移除“${movie?.name || "此影片"}”？磁盘中的原始文件不会删除。`;
     if (!window.confirm(prompt)) return;
-    const deleteCopiedMedia = !youtube && window.confirm("是否同时清理 LingoClub 以前保存的视频副本？选择“取消”只删除条目和文件引用。");
+    const deleteCopiedMedia = !youtube;
     await onDelete(movie.id, { deleteCopiedMedia });
   };
 
   const handleDeleteSeason = async (season) => {
     const episodes = seasonEpisodes.filter((episode) => episode.folder === season.id);
     if (!window.confirm(`删除 Season Project“${season.display_title || season.name}”？其中包含 ${episodes.length} 集。原始磁盘文件不会删除。`)) return;
-    const deleteCopiedMedia = window.confirm("是否同时清理 LingoClub 以前保存的视频副本？选择“取消”只移除项目和文件引用。");
+    const deleteCopiedMedia = true;
     await onDeleteSeason?.(season.id, episodes.map((episode) => episode.id), { deleteCopiedMedia });
     setActiveSeasonId(null);
   };

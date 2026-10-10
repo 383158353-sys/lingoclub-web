@@ -1,14 +1,16 @@
 import React, { useState, useRef } from "react";
-import { Play, Loader2, CheckCircle2, AlertCircle, Link2, Smartphone, Monitor, RotateCw } from "lucide-react";
-import PageBackButton from "@/components/common/PageBackButton";
+import { Play, Loader2, ArrowLeft, CheckCircle2, AlertCircle, Link2, Smartphone, Monitor, RotateCw } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchYouTubeMeta } from "@/lib/localApi";
-import { extractYouTubeId, normalizeYouTubeUrl, transcribeYouTubeClient } from "@/lib/youtubeTranscriptClient";
+import { transcribeYouTubeClient } from "@/lib/youtubeTranscriptClient";
+import { base44 } from "@/api/base44Client";
 import { Image as BaseImage } from "@/components/ui/image";
 import { MobileTutorial, DesktopTutorial } from "./YoutubeImportGuide";
 
 // 「我的视频」专用导入器：移动端粘贴 YouTube 链接自动获取标题、封面和
 // 带时间戳的 CC 字幕；电脑端用书签一键提取字幕。与本地文件导入完全分离。
+const YT_RX = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{6,})/;
+
 export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
   const [url, setUrl] = useState("");
   const [fetchingMeta, setFetchingMeta] = useState(false);
@@ -18,8 +20,8 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
   const [posterUrl, setPosterUrl] = useState("");
   const [subtitles, setSubtitles] = useState(null);
   const [subError, setSubError] = useState("");
+  const [needsOriginalLogin, setNeedsOriginalLogin] = useState(false);
   const lastFetchedRef = useRef("");
-  const activeRequestRef = useRef(null);
   const { toast } = useToast();
   const [tab, setTab] = useState(() => {
     if (typeof window === "undefined") return "mobile";
@@ -32,9 +34,7 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
   // YouTube 风控与公共代理都偶发失败，首次没读到时用户应能一键重试，而不
   // 必反复改链接去绕开 lastFetchedRef 去重。
   const fetchMetaAndSubs = async (val, { force = false } = {}) => {
-    const videoId = extractYouTubeId(val);
-    if (!videoId) {
-      activeRequestRef.current = null;
+    if (!YT_RX.test(val)) {
       lastFetchedRef.current = "";
       setSubtitles(null);
       setSubError("");
@@ -42,55 +42,41 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
       setFetchingSubs(false);
       return;
     }
-    const canonicalUrl = normalizeYouTubeUrl(val);
-    if (!force && lastFetchedRef.current === videoId) return;
-    if (activeRequestRef.current === videoId) return;
-    lastFetchedRef.current = videoId;
-    activeRequestRef.current = videoId;
+    const trimmed = val.trim();
+    if (!force && lastFetchedRef.current === trimmed) return;
+    lastFetchedRef.current = trimmed;
 
     setFetchingMeta(true);
     setFetchingSubs(true);
     setSubtitles(null);
     setSubError("");
-    const transcriptStartedAt = performance.now();
 
-    // metadata 与 transcript 独立请求，任一失败都不会取消另一项。
-    const metaRequest = (async () => {
-      try {
-        const data = await fetchYouTubeMeta(canonicalUrl);
-        if (activeRequestRef.current !== videoId) return;
-        if (data?.title) { setTitle(data.title); setOriginalTitle(data.title); }
-        if (data?.thumbnail_url) setPosterUrl(data.thumbnail_url);
-      } catch { /* metadata 失败不影响字幕 */ }
-      finally { if (activeRequestRef.current === videoId) setFetchingMeta(false); }
-    })();
+    setNeedsOriginalLogin(false);
 
-    const transcriptRequest = (async () => {
-      try {
-        const result = await transcribeYouTubeClient(canonicalUrl);
-        const { lines, error, title: transcriptTitle } = result;
-        if (activeRequestRef.current !== videoId) return;
-        if (transcriptTitle) { setTitle(transcriptTitle); setOriginalTitle(transcriptTitle); }
-        if (lines?.length) setSubtitles(lines);
-        else setSubError(error || "未找到可用字幕轨");
-        if (import.meta.env.DEV) console.info("[youtube-import]", {
-          source: result.cached ? "cache" : result.extractor?.startsWith("browser-proxy") ? "browser-link" : "server",
-          extraction: result.extractor || (result.cached ? "cache" : "unavailable"),
-          subtitleCount: lines?.length || 0,
-          videoId,
-          elapsedMs: Math.round(performance.now() - transcriptStartedAt),
-          diagnostics: result.diagnostics || [],
-        });
-      } catch (e) {
-        if (activeRequestRef.current === videoId) setSubError(e?.message || "字幕获取失败");
-        if (import.meta.env.DEV) console.info("[youtube-import]", { source: "browser-link", extraction: "failed", subtitleCount: 0, videoId, elapsedMs: Math.round(performance.now() - transcriptStartedAt), reason: e?.message || "failed" });
-      } finally {
-        if (activeRequestRef.current === videoId) setFetchingSubs(false);
+    // 1. 标题 + 封面
+    const metadataRequest = fetchYouTubeMeta(trimmed).then((data) => {
+      if (data?.title) { setTitle(data.title); setOriginalTitle(data.title); }
+      if (data?.thumbnail_url) setPosterUrl(data.thumbnail_url);
+    }).catch(() => { /* metadata failure must not block subtitles */ })
+      .finally(() => setFetchingMeta(false));
+
+    // 2. CC 字幕（含时间戳）——后端直接提取 timedtext，失败回退浏览器代理
+    try {
+      const { lines, error, code } = await transcribeYouTubeClient(trimmed);
+      setNeedsOriginalLogin(code === "BASE44_AUTH_REQUIRED");
+      if (lines && lines.length) {
+        setSubtitles(lines);
+      } else if (error) {
+        setSubError(error);
+      } else {
+        setSubError("未找到可用字幕轨");
       }
-    })();
-
-    await Promise.allSettled([metaRequest, transcriptRequest]);
-    if (activeRequestRef.current === videoId) activeRequestRef.current = null;
+    } catch (e) {
+      setSubError(e?.message || "字幕获取失败");
+    } finally {
+      setFetchingSubs(false);
+    }
+    await metadataRequest;
   };
 
   const onUrlChange = (val) => {
@@ -100,27 +86,25 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
 
   const retrySubs = () => {
     const trimmed = url.trim();
-    if (!extractYouTubeId(trimmed)) {
+    if (!YT_RX.test(trimmed)) {
       toast({ title: "请粘贴有效的 YouTube 链接", variant: "destructive" });
       return;
     }
     fetchMetaAndSubs(trimmed, { force: true });
   };
 
-  const isValid = !!extractYouTubeId(url);
+  const isValid = YT_RX.test(url.trim());
   const hasSubs = subtitles && subtitles.length > 0;
   const busy = fetchingSubs;
 
   const start = () => {
-    const finalUrl = normalizeYouTubeUrl(url);
+    const finalUrl = url.trim();
     if (!isValid) {
       toast({ title: "请粘贴有效的 YouTube 链接", variant: "destructive" });
       return;
     }
     const subs = (subtitles || []).map((p, i) => ({
-      ...p,
-      id: p.sentenceId || p.id || `yt-${i + 1}`,
-      sentenceId: p.sentenceId || p.id || `yt-${i + 1}`,
+      id: `yt-${i + 1}`,
       text_en: p.text_en || "",
       text_zh: "",
       speaker: "",
@@ -140,7 +124,6 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
 
   return (
     <div className="mx-auto w-full max-w-2xl px-5 pt-28 pb-20">
-      {onCancel && <PageBackButton onClick={onCancel} disabled={saving} className="mb-3" />}
       <p className="text-[11px] uppercase tracking-luxe text-copper/80">工具箱 · 我的视频</p>
       <h1 className="mt-2 font-display text-3xl leading-tight text-foreground md:text-4xl">导入 YouTube 视频</h1>
       <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
@@ -199,29 +182,23 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
             <p className="mt-2 text-[11px] text-muted-foreground/70">
               YouTube「分享」按钮的短链 (youtu.be/…) 与网址栏长链 (youtube.com/watch?v=…) 均可直接粘贴，两种都能识别。
             </p>
-            {fetchingMeta && (
+            {busy && (
               <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
                 <Loader2 size={13} className="animate-spin text-copper" />
-                <span>正在获取标题和封面…</span>
-              </div>
-            )}
-            {fetchingSubs && (
-              <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 size={13} className="animate-spin text-copper" />
-                <span>正在提取 CC 字幕（含时间戳）…</span>
+                <span>{fetchingMeta ? "正在获取标题和封面…" : "正在提取 CC 字幕（含时间戳）…"}</span>
               </div>
             )}
             {!busy && !hasSubs && isValid && (
               <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-amber-500/25 bg-amber-500/5 px-3 py-2">
                 <span className="flex items-start gap-1.5 text-xs text-amber-400">
-                  <AlertCircle size={13} className="mt-0.5 shrink-0" /> {subError || "字幕暂未读到（YouTube 风控/代理偶发失败），点重试通常即可获取"}
+                  <AlertCircle size={13} className="mt-0.5 shrink-0" /> {subError || "尚未获取到字幕，可以重试或在 YouTube 页面提取转录文字"}
                 </span>
                 <button
                   type="button"
-                  onClick={retrySubs}
+                  onClick={needsOriginalLogin ? () => base44.auth.redirectToLogin(window.location.href) : retrySubs}
                   className="inline-flex shrink-0 items-center gap-1 rounded-full border border-copper/40 bg-copper/10 px-3 py-1.5 text-[11px] font-medium text-copper transition-colors hover:bg-copper/20"
                 >
-                  <RotateCw size={12} /> 重试获取字幕
+                  <RotateCw size={12} /> {needsOriginalLogin ? "连接原版账号" : "重试获取字幕"}
                 </button>
               </div>
             )}
@@ -254,6 +231,16 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
           {/* 下方教程 */}
           <MobileTutorial />
 
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            >
+              <ArrowLeft size={15} /> 返回我的视频
+            </button>
+          )}
         </div>
       )}
 
@@ -261,6 +248,16 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
       {tab === "desktop" && (
         <div className="mt-8 space-y-8">
           <DesktopTutorial />
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            >
+              <ArrowLeft size={15} /> 返回我的视频
+            </button>
+          )}
         </div>
       )}
     </div>

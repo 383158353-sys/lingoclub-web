@@ -1,5 +1,5 @@
 import { notifyLocalStateChanged, scopedStorageKey } from "./userStorage";
-import { deleteLocalVideoMany, getLocalMediaAssets, saveLocalMediaAssets } from "./localStudyLibrary";
+import { deleteLocalVideoMany, getLocalMediaAssets, getLocalMediaStorageStats, saveLocalMediaAssets } from "./localStudyLibrary";
 
 const MOVIES_KEY = "lingoclub_local_movies_v1";
 const FOLDERS_KEY = "lingoclub_local_folders_v1";
@@ -46,7 +46,12 @@ function recordTombstones(records, type) {
   const deletedAt = new Date().toISOString();
   for (const record of records) {
     if (!record?.id) continue;
-    latest.set(`${type}:${record.id}`, { id: record.id, type, deletedAt });
+    const tombstone = { id: record.id, type, deletedAt };
+    if (type === "movies") {
+      const videoId = record.youtube_video_id || youtubeVideoId(record.video_url);
+      if (videoId) tombstone.videoId = videoId;
+    }
+    latest.set(`${type}:${record.id}`, tombstone);
   }
   localStorage.setItem(scopedStorageKey(DELETED_KEY), JSON.stringify([...latest.values()]));
 }
@@ -84,11 +89,19 @@ function assetKey(item, kind) {
   return kind === "folder" ? `folder:${item.id}` : item.id;
 }
 
+export function isLocalMovieRecord(item) {
+  return Boolean(item && (!item.video_url || item.media_type === "episode"));
+}
+
+export function isLocalFolderRecord(item) {
+  return Boolean(item && (item.tab_type === "films" || !item.tab_type));
+}
+
 async function normalizeRecord(record, kind) {
   const item = { ...record };
   const belongsToLocalLibrary = kind === "movie"
-    ? !item.video_url || item.media_type === "episode"
-    : item.tab_type === "films" || !item.tab_type;
+    ? isLocalMovieRecord(item)
+    : isLocalFolderRecord(item);
   // Keep the YouTube Library's existing storage path untouched.
   if (!belongsToLocalLibrary) return { item, changed: false };
   const key = assetKey(item, kind);
@@ -290,6 +303,39 @@ export const localMovies = {
 };
 
 export const localFolders = collection(FOLDERS_KEY, "folder", "folder");
+
+/**
+ * Remove only Local Library records and their IndexedDB media assets.
+ * YouTube records use video_url and are deliberately left untouched.
+ * The original disk files are never accessed or deleted here.
+ */
+export async function clearLocalLibraryData() {
+  const [movies, folders] = await Promise.all([
+    localMovies.listMetadata(),
+    localFolders.listMetadata(),
+  ]);
+  const localMovieIds = movies.filter(isLocalMovieRecord).map((movie) => movie.id);
+  const localFolderIds = folders.filter(isLocalFolderRecord).map((folder) => folder.id);
+  if (localMovieIds.length) await localMovies.deleteMany(localMovieIds);
+  if (localFolderIds.length) await localFolders.deleteMany(localFolderIds);
+  await deleteLocalVideoMany([
+    ...localMovieIds,
+    ...localFolderIds.map((folderId) => `folder:${folderId}`),
+  ], { deleteCopiedMedia: true });
+  const [remainingMovies, remainingFolders, media] = await Promise.all([
+    localMovies.listMetadata(),
+    localFolders.listMetadata(),
+    getLocalMediaStorageStats(),
+  ]);
+  return {
+    deletedMovies: localMovieIds.length,
+    deletedFolders: localFolderIds.length,
+    remainingLocalMovies: remainingMovies.filter(isLocalMovieRecord).length,
+    remainingLocalFolders: remainingFolders.filter(isLocalFolderRecord).length,
+    remainingLegacyVideoBlobCount: media.legacyVideoBlobCount,
+  };
+}
+
 
 export function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {

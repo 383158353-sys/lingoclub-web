@@ -29,10 +29,14 @@ The container listens on port `8080`. Keep `TRANSCRIPT_SERVICE_TOKEN` in the hos
 
 ## API
 
+`GET /health` returns `{ "ok": true }` without authentication or any YouTube request. It is a process liveness check, not evidence of successful extraction.
+
 `POST /transcript` accepts either `{ "url": "https://youtu.be/VIDEO_ID" }` or `{ "videoId": "VIDEO_ID" }`, with `Authorization: Bearer <token>`. A successful response contains the video metadata and `subtitles: [{ start, duration, text }]`. Requests use the existing extractor and its current bounded retry handling.
 
 The service applies CORS for `https://lingoclub.vercel.app` and `http://localhost:5173` by default. Set `TRANSCRIPT_SERVICE_ALLOWED_ORIGINS` to a comma-separated list if browser clients need different origins. The current LingoClub adapter calls this service server-to-server, so the bearer token remains on the server and browser CORS is not part of that request path.
 
 ## LingoClub connection
 
-The Vercel `/api/youtube-transcript` adapter checks its 30-day process cache first, then uses `TRANSCRIPT_SERVICE_URL` when configured with `TRANSCRIPT_SERVICE_TOKEN` held server-side. If that service is missing or fails, the adapter falls back to the built-in multi-client YouTube extractor with bounded retries. If server extraction still fails, the browser client may try its historical proxy fallback. Successful results are cached on the client for 30 days as well. Test new service credentials in Preview before changing Production configuration.
+`server/transcriptResponse.js` converts the service response into the existing frontend `lines` contract, using the shared millisecond timecode formatter. `/api/youtube-transcript` uses this adapter only when `TRANSCRIPT_SERVICE_ENABLED=true`; otherwise it retains the original extractor, even if a URL/token already exists. After a successful remote extraction test, set that flag, `TRANSCRIPT_SERVICE_URL`, and `TRANSCRIPT_SERVICE_TOKEN` in the local test environment and restart Vite. For the independent `subtitle-service/` container, the client token must match that container's `SUBTITLE_SERVICE_KEY`. The API returns separate error codes for service authentication/configuration, network/timeout, YouTube rejection and invalid subtitle data. It does not silently run another extractor after an enabled service fails. Do not enable Production until Preview is verified and accepted.
+
+The repository-root `render.yaml` targets this existing Node Dockerfile, with a platform-generated `TRANSCRIPT_SERVICE_TOKEN`. Use an independent test branch. No local tunnel or local machine is required at runtime. Test `LCAY3PGHZyw` after `/health` succeeds, and measure full request elapsed time before deciding whether synchronous Vercel integration fits the deployed timeout.

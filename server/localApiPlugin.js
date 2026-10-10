@@ -2,8 +2,9 @@ import { handleAI } from "./ai.js";
 import { handleAICredentials } from "./aiCredentialsApi.js";
 import { sendCredentialFailure } from "./aiCredentialErrors.js";
 import { sendAIError } from "./aiErrorResponse.js";
-import { handleYouTubeTranscript } from "./youtubeTranscript.js";
 import { fetchDoubanPoster, searchLocalPosters } from "./posterSearch.js";
+import { handleYouTubeTranscript } from "./youtubeTranscript.js";
+import { handleFetchVideoMeta } from "./fetchVideoMeta.js";
 
 async function readBody(req) {
   const raw = await readRawBody(req);
@@ -139,16 +140,36 @@ function middleware(env, productionAiApiTarget = "", fetchImpl = fetch) {
       }
       return;
     }
-    if (req.method !== "POST" || !["/api/ai", "/api/youtube-transcript"].includes(path)) return next();
+    if (req.method === "POST" && path === "/api/youtube-transcript") {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      try {
+        await handleYouTubeTranscript(req, res, await readBody(req), { ...env, NODE_ENV: "development" });
+      } catch (error) {
+        res.statusCode = error instanceof SyntaxError ? 400 : 500;
+        res.end(JSON.stringify({ error: error instanceof SyntaxError ? "请求格式无效" : error?.message || "请求失败" }));
+      }
+      return;
+    }
+    if (req.method === "POST" && path === "/api/fetch-video-meta") {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      try {
+        await handleFetchVideoMeta(req, res, await readBody(req));
+      } catch (error) {
+        res.statusCode = error instanceof SyntaxError ? 400 : 500;
+        res.end(JSON.stringify({ error: error instanceof SyntaxError ? "请求格式无效" : error?.message || "请求失败" }));
+      }
+      return;
+    }
+    if (req.method !== "POST" || path !== "/api/ai") return next();
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     let body;
     try {
       body = await readBody(req);
-      if (path === "/api/ai") await handleAI(req, res, body, env);
-      else await handleYouTubeTranscript(req, res, body, env);
+      await handleAI(req, res, body, env);
     } catch (error) {
-      if (path === "/api/ai") sendAIError(res, error, { task: body?.task, credentialId: body?.credential_id });
-      else { res.statusCode = error instanceof SyntaxError ? 400 : 500; res.end(JSON.stringify({ error: error instanceof SyntaxError ? "请求格式无效" : "请求失败" })); }
+      sendAIError(res, error, { task: body?.task, credentialId: body?.credential_id });
     }
   };
 }

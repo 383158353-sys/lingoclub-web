@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { extractYouTubeTranscript, TranscriptExtractionError } from "./youtubeTranscriptService.js";
+import { extractYouTubeTranscriptDetailed, TranscriptExtractionError } from "./youtubeTranscriptService.js";
 
 const allowedOrigins = new Set(
   (process.env.TRANSCRIPT_SERVICE_ALLOWED_ORIGINS || "https://lingoclub.vercel.app,http://localhost:5173")
@@ -64,7 +64,8 @@ function transcriptFailureKind(error) {
 }
 
 export async function extractWithRetries(input, {
-  extractor = extractYouTubeTranscript,
+  // The HTTP wrapper owns the three rounds; each call runs one unchanged core round.
+  extractor = (input) => extractYouTubeTranscriptDetailed(input, { attempts: 1 }),
   wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
   const attempts = [];
@@ -90,6 +91,7 @@ export async function extractWithRetries(input, {
         finalError.reason = transcriptFailureKind(error);
         finalError.attemptCount = attempt;
         finalError.attempts = attempts;
+        finalError.diagnostics = error?.diagnostics || [];
         throw finalError;
       }
       await wait(1500);
@@ -102,6 +104,10 @@ export function createTranscriptHttpServer() {
   return createServer(async (req, res) => {
     applyCors(req, res);
     const pathname = new URL(req.url || "/", "http://localhost").pathname;
+    if (req.method === "GET" && pathname === "/health") {
+      sendJson(res, 200, { ok: true });
+      return;
+    }
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();
@@ -124,6 +130,7 @@ export function createTranscriptHttpServer() {
       sendJson(res, 401, { error: "Unauthorized" });
       return;
     }
+    const startedAt = Date.now();
     try {
       const body = await readJson(req);
       const input = typeof body?.url === "string" ? body.url : body?.videoId;
@@ -132,7 +139,7 @@ export function createTranscriptHttpServer() {
         return;
       }
       const result = await extractWithRetries(input);
-      sendJson(res, 200, result);
+      sendJson(res, 200, { ...result, elapsedMs: Date.now() - startedAt });
     } catch (error) {
       const status = error?.statusCode || 502;
       sendJson(res, status, {
@@ -140,6 +147,8 @@ export function createTranscriptHttpServer() {
         reason: error?.reason || "transcript_service_error",
         attemptCount: error?.attemptCount || 0,
         attempts: error?.attempts || [],
+        diagnostics: error?.diagnostics || [],
+        elapsedMs: Date.now() - startedAt,
       });
     }
   });

@@ -153,13 +153,24 @@ export async function invokeAI(task, payload = {}, options = {}) {
   return request;
 }
 
-export const fetchYouTubeTranscript = (url, options) =>
-  postJson("/api/youtube-transcript", { url }, options);
-
-export async function fetchYouTubeMeta(url, { signal } = {}) {
-  const endpoint = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}`;
-  const response = await fetch(endpoint, { signal });
-  if (!response.ok) throw new Error("无法获取 YouTube 视频信息");
-  const data = await response.json();
-  return { title: data?.title || "", thumbnail_url: data?.thumbnail_url || "" };
+async function postYouTubeApi(path, url, { signal } = {}) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+    signal,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data?.error || `YouTube API 返回 HTTP ${response.status}`);
+    error.status = response.status;
+    error.code = data?.code;
+    error.stage = data?.stage;
+    throw error;
+  }
+  return data;
 }
+
+export const fetchYouTubeTranscript = (url, options) => postYouTubeApi("/api/youtube-transcript", url, options);
+
+export const fetchYouTubeMeta = (url, options) => postYouTubeApi("/api/fetch-video-meta", url, options);
