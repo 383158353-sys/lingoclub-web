@@ -25,6 +25,7 @@ import YoutubeSubtitleHelper from "@/components/study/YoutubeSubtitleHelper";
 import { toSec } from "@/lib/timecode";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { extractYouTubeId } from "@/lib/youtubeTranscriptClient";
+import { fetchYouTubeMeta, isPlaceholderVideoTitle } from "@/lib/localApi";
 import { cleanSubtitleText, mergeFragments } from "@/lib/subtitleCleaner";
 import { useAuth } from "@/lib/AuthContext";
 import { readMovieSubtitles, syncUserState } from "@/lib/cloudState";
@@ -469,6 +470,21 @@ export default function LocalStudy() {
       pendingSourceStart: null,
     });
     setMaskOn(false);
+    // Older YouTube imports may carry a fallback title ("YouTube 视频" etc.);
+    // replace it with the real title in the background. User-edited titles are kept.
+    if (meta.video_url && extractYouTubeId(meta.video_url) && isPlaceholderVideoTitle(meta.name, meta.video_url)) {
+      fetchYouTubeMeta(meta.video_url).then(async (info) => {
+        if (!info?.title) return;
+        const updated = await localMovies.update(meta.id, {
+          name: info.title,
+          ...(isPlaceholderVideoTitle(meta.original_title, meta.video_url) ? { original_title: info.title } : {}),
+        });
+        setMetas((list) => list.map((item) => item.id === meta.id ? { ...item, ...updated } : item));
+        setMaterials((current) => (current?.recordId === meta.id && isPlaceholderVideoTitle(current.videoName, meta.video_url)
+          ? { ...current, videoName: info.title, originalTitle: current.originalTitle && !isPlaceholderVideoTitle(current.originalTitle, meta.video_url) ? current.originalTitle : info.title }
+          : current));
+      }).catch(() => { /* keep the stored title */ });
+    }
   }, [revokeCurrent, searchParams, user?.id]);
 
   useEffect(() => {

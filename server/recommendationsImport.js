@@ -1,6 +1,13 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { videoId as extractVideoId } from "./transcript/youtubeTranscriptService.js";
+import { checkOEmbed } from "./youtubeMeta.js";
+
+// oEmbed answers 401/403 when the owner disabled embedding: such videos cannot
+// play inside the app (only "在 YouTube 上观看"), though subtitles still work.
+async function defaultCheckEmbeddable(youtubeId) {
+  return (await checkOEmbed(youtubeId, { timeoutMs: 4000 })).embeddable;
+}
 
 // POST /api/recommendations/import
 // Authorization: Bearer <RECOMMENDATIONS_IMPORT_TOKEN>
@@ -122,7 +129,7 @@ export function getImportSupabase(env) {
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-export async function handleRecommendationsImport(req, res, body, env = process.env, { createSupabase = getImportSupabase } = {}) {
+export async function handleRecommendationsImport(req, res, body, env = process.env, { createSupabase = getImportSupabase, checkEmbeddable = defaultCheckEmbeddable } = {}) {
   const expectedToken = String(env.RECOMMENDATIONS_IMPORT_TOKEN || "");
   const userId = String(env.RECOMMENDATIONS_IMPORT_USER_ID || "").trim();
   if (!expectedToken || !UUID_RX.test(userId)) {
@@ -143,6 +150,7 @@ export async function handleRecommendationsImport(req, res, body, env = process.
   if (!client) return send(res, 503, { error: "Supabase service role is not configured", code: "IMPORT_NOT_CONFIGURED" });
 
   const ids = parsed.rows.map((row) => row.youtube_id);
+  const embeddableChecks = Promise.all(ids.map((id) => Promise.resolve().then(() => checkEmbeddable(id)).catch(() => null)));
   const existing = await client
     .from("daily_recommendations")
     .select("youtube_id")
@@ -161,6 +169,7 @@ export async function handleRecommendationsImport(req, res, body, env = process.
   if (error) throw Object.assign(new Error("Recommendation upsert failed"), { code: "DATABASE_ERROR" });
 
   const updated = ids.filter((id) => existingIds.has(id)).length;
+  const embeddable = await embeddableChecks;
   return send(res, 200, {
     ok: true,
     date: parsed.date,
@@ -168,6 +177,8 @@ export async function handleRecommendationsImport(req, res, body, env = process.
     inserted: ids.length - updated,
     updated,
     rejected: parsed.rejected,
+    // true / false (embedding disabled: watch on YouTube only) / null (unknown)
+    items: ids.map((youtube_id, index) => ({ youtube_id, embeddable: embeddable[index] ?? null })),
   });
 }
 

@@ -124,7 +124,7 @@ curl -X POST https://<your-app>/api/recommendations/import \
   }'
 ```
 
-响应：`{"ok":true,"date":"2026-10-12","received":1,"inserted":1,"updated":0,"rejected":[]}`。无效条目会出现在 `rejected`（含 `index` 和原因），其余有效条目照常写入；口令错误返回 401，未配置返回 503。
+响应：`{"ok":true,"date":"2026-10-12","received":1,"inserted":1,"updated":0,"rejected":[],"items":[{"youtube_id":"UF8uR6Z6KLc","embeddable":true}]}`。无效条目会出现在 `rejected`（含 `index` 和原因），其余有效条目照常写入；口令错误返回 401，未配置返回 503。
 
 ## YouTube 字幕提取
 
@@ -135,3 +135,9 @@ curl -X POST https://<your-app>/api/recommendations/import \
 3. 内置多客户端 innertube 提取。本地或住宅网络下可用，但在 Vercel 上常被 YouTube 要求“机器人验证”。
 
 同一视频提取成功后，服务端实例内存和浏览器 localStorage 都会缓存，重复打开不会再消耗额度。
+
+### 给推荐助手的提示：优先推荐可嵌入的视频
+
+部分视频的作者关闭了“允许嵌入”。这类视频在 App 里不能直接播放，只能点「在 YouTube 上观看」跳出，但字幕精读仍可用。判断方法：`https://www.youtube.com/oembed?format=json&url=<视频链接>` 返回 401 或 403 就是不可嵌入。请优先推荐可嵌入的视频。
+
+导入接口的响应里，每条推荐都会带上这个判断结果：`items: [{ "youtube_id": "...", "embeddable": true | false | null }]`。`false` 表示不可嵌入，`null` 表示暂时无法判断。不可嵌入的视频仍然会写入，不会因此被拒绝。

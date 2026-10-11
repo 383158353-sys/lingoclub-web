@@ -15,6 +15,7 @@ import TheaterOverlay from "@/components/study/TheaterOverlay";
 import BilibiliScrubber from "@/components/study/BilibiliScrubber";
 import YoutubeSubtitleHelper from "@/components/study/YoutubeSubtitleHelper";
 import { transcribeYouTubeClient, extractYouTubeId } from "@/lib/youtubeTranscriptClient";
+import { fetchYouTubeMeta } from "@/lib/localApi";
 import { cleanSubtitleText } from "@/lib/subtitleCleaner";
 import { isBilibiliUrl } from "@/lib/bilibiliTranscriptClient";
 import { useToast } from "@/components/ui/use-toast";
@@ -38,7 +39,8 @@ export default function QuickStudy() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const videoUrl = searchParams.get("url");
-  const title = searchParams.get("title") || "快速导入视频";
+  const titleParam = (searchParams.get("title") || "").trim();
+  // Explicit title (e.g. from 小萌's links) wins; otherwise the real YouTube title is fetched below.
   const subsB64 = searchParams.get("subs");
 
   const [materials, setMaterials] = useState(null);
@@ -73,6 +75,9 @@ export default function QuickStudy() {
   useEffect(() => {
     if (!videoUrl) { setLoading(false); return; }
     let cancelled = false;
+    const metaRequest = !titleParam && extractYouTubeId(videoUrl)
+      ? fetchYouTubeMeta(videoUrl).catch(() => null)
+      : null;
     (async () => {
       let subs = [];
 
@@ -175,12 +180,21 @@ export default function QuickStudy() {
 
       if (cancelled) return;
 
+      // 无 title 参数时用视频真实标题（与字幕抓取并行，见下方 metaRequest）。
+      let movieTitle = titleParam;
+      if (!movieTitle && metaRequest) {
+        const meta = await metaRequest;
+        if (meta?.title) movieTitle = meta.title;
+      }
+      movieTitle = movieTitle || "快速导入视频";
+      if (cancelled) return;
+
       // 3. 已登录则保存到 LocalMovieMeta（跨设备可见）
       let recordId = null;
       if (user) {
         try {
           const meta = await base44.entities.LocalMovieMeta.create({
-            name: title,
+            name: movieTitle,
             poster_url: "",
             video_url: videoUrl,
             subtitles: subs,
@@ -193,7 +207,7 @@ export default function QuickStudy() {
 
       setMaterials({
         videoUrl,
-        videoName: title,
+        videoName: movieTitle,
         subtitles: subs,
         posterUrl: "",
         recordId,
@@ -210,7 +224,7 @@ export default function QuickStudy() {
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoUrl, subsB64, title]);
+  }, [videoUrl, subsB64, titleParam]);
 
   // B站仿真时钟（跨域 iframe 无法读取真实进度）
   useEffect(() => {
