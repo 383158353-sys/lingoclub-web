@@ -2,15 +2,11 @@ import React, { useState } from 'react';
 import { Sparkles, Bookmark, MessageSquare, Loader2, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { vocabTypeLabel } from '@/lib/srs';
+import { pronounce } from '@/lib/pronunciation';
 
-// Speaks the English line using the browser's TTS.
+// Speaks the English line: dictionary audio for short words/phrases, best available voice otherwise.
 function speak(text) {
-  if (!window.speechSynthesis) return;
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = 'en-US';
-  u.rate = 0.92;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(u);
+  pronounce(text, { accent: 'en-US' });
 }
 
 export default function SubtitleCard({

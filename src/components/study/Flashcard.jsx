@@ -1,25 +1,21 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Volume2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Volume2, VolumeX } from "lucide-react";
 import { invokeAI } from "@/lib/localApi";
 import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer } from "@/lib/reviewDistractors";
 import { commitReviewAnswer, scheduleReviewAutoAdvance } from "@/lib/reviewFlow";
 import { WordDetailOverlay } from "@/components/vocab/WordDetailDialog";
+import { pronounce, unlockPronunciationAudio } from "@/lib/pronunciation";
+import { isReviewSoundEnabled, playReviewSound, setReviewSoundEnabled, unlockReviewSounds } from "@/lib/reviewSounds";
 
 function speak(text) {
-  try {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = 0.92;
-    window.speechSynthesis.speak(utterance);
-  } catch { /* noop */ }
+  pronounce(text, { accent: "en-US" });
 }
 
 export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScale = 1 }) {
   const [picked, setPicked] = useState(null);
   const [correct, setCorrect] = useState(null);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [soundOn, setSoundOn] = useState(() => isReviewSoundEnabled());
   const [questionState, setQuestionState] = useState({ key: null, question: null });
   const questionCache = useRef({ key: null, question: null });
   const autoTimer = useRef(null);
@@ -87,6 +83,13 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
   }, [card.id, mode]);
 
   useEffect(() => {
+    const unlock = () => { unlockReviewSounds(); unlockPronunciationAudio(); };
+    const events = ["pointerdown", "touchend", "click", "keydown"];
+    events.forEach((name) => document.addEventListener(name, unlock, { capture: true, passive: true }));
+    return () => events.forEach((name) => document.removeEventListener(name, unlock, { capture: true }));
+  }, []);
+
+  useEffect(() => {
     if (mode === "r3" && expr) speak(expr);
   }, [card.id, expr, mode]);
 
@@ -135,6 +138,7 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
     pendingAnswer.current = { token, card, correct: isCorrect, details: answerDetails, dueAt: Date.now() + delay, committed: false };
     setPicked(option.id);
     setCorrect(isCorrect);
+    playReviewSound(isCorrect ? "correct" : "wrong");
     if (isCorrect) autoTimer.current = scheduleReviewAutoAdvance(mode, () => commitAnswer(token));
     else setShowAnswer(true);
   };
@@ -162,7 +166,7 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
         <span className={mode === "r2" ? "text-mint" : "text-muted-foreground/60"}>② 中译英</span><ArrowRight size={11} className="text-muted-foreground/40" />
         <span className={mode === "r3" ? "text-mint" : "text-muted-foreground/60"}>③ 听音选词</span>
       </div>
-      <p className="mb-1 text-center text-[10px] text-muted-foreground/50 md:mb-2">键盘 1-4 快速选答案</p>
+      <div className="mb-1 flex items-center justify-center gap-3 text-[10px] text-muted-foreground/50 md:mb-2"><span>键盘 1-4 快速选答案</span><button type="button" onClick={() => { const next = !soundOn; setReviewSoundEnabled(next); setSoundOn(next); if (next) playReviewSound("correct"); }} aria-pressed={soundOn} aria-label={soundOn ? "关闭答题音效" : "开启答题音效"} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 hover:text-mint">{soundOn ? <Volume2 size={11} /> : <VolumeX size={11} />}音效{soundOn ? "开" : "关"}</button></div>
       <div className="flex flex-col rounded-2xl border border-white/10 bg-card p-4 md:min-h-[340px] md:flex-none md:p-6">
         <p className="text-[11px] uppercase tracking-luxe text-mint/80">{card.source_movie_title || "语料复习"} · {mode === "r1" ? "第一轮 · 英译中" : mode === "r2" ? "第二轮 · 中译英" : "第三轮 · 听音选词"}</p>
         {mode === "r1" && <><div className="mt-3 flex items-center justify-between gap-3 md:mt-4"><h3 style={{ "--review-font-scale": fontScale }} className="break-words font-display text-[calc(1.5rem*var(--review-font-scale))] font-bold leading-snug text-foreground md:text-[calc(1.875rem*var(--review-font-scale))]">{expr}</h3><button onClick={() => speak(expr)} className="rounded-full border border-white/10 p-2.5 text-muted-foreground hover:border-mint/40 hover:text-mint" aria-label="朗读"><Volume2 size={18} /></button></div>{ts && <p className="mt-1.5 font-mono text-[11px] text-mint/70">{ts}</p>}<p style={{ "--review-font-scale": fontScale }} className="mt-3 text-[calc(0.875rem*var(--review-font-scale))] text-muted-foreground md:mt-4">选择正确的中文词义</p></>}

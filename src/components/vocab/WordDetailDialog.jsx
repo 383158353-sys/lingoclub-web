@@ -11,6 +11,7 @@ import { openVocabularySource } from "@/lib/vocabularySourceNavigation";
 import SourcePreview from "@/components/vocab/SourcePreview";
 import { localMovies } from "@/lib/localStudyMeta";
 import { resolveVocabularySourceCue } from "@/lib/vocabularySourceCue";
+import { pronounce } from "@/lib/pronunciation";
 import { inferExpressionType, isCurrentWordProfile, normalizeWordProfile, summarizeWordProfileShape, WORD_PROFILE_SCHEMA_VERSION } from "@/lib/wordProfile";
 
 function isDetailed(profile) {
@@ -69,16 +70,7 @@ function meaningRows(profile, vocabulary, legacyProfile = {}) {
 }
 
 function speakExpression(expression, accent = "en-US") {
-  try {
-    if (!window.speechSynthesis || !expression) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(expression);
-    utterance.lang = accent;
-    const voices = window.speechSynthesis.getVoices?.() || [];
-    const voice = voices.find((item) => item.lang?.toLowerCase().startsWith(accent.toLowerCase()));
-    if (voice) utterance.voice = voice;
-    window.speechSynthesis.speak(utterance);
-  } catch { /* browser speech is optional */ }
+  pronounce(expression, { accent });
 }
 
 export function WordDetailBody({ vocabulary, onReturnToSource }) {
