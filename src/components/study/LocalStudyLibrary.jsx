@@ -1,3 +1,4 @@
+import { sortLibraryItems } from "@/lib/librarySort";
 import React, { useState, useMemo, useEffect } from "react";
 import LocalMovieCard from "./LocalMovieCard";
 import FolderBar from "./FolderBar";
@@ -110,7 +111,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
     } else if (activeFolder !== "all") {
       list = list.filter((m) => m.folder === activeFolder);
     }
-    return [...list].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    return sortLibraryItems(list);
   }, [currentMetas, activeFolder, tabFolders]);
   const displayCount = landscape ? filtered.length : activeSeason ? activeEpisodes.length : movieMetas.length + looseEpisodes.length + seasonProjects.length;
   const selectableKeys = landscape

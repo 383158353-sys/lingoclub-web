@@ -1,3 +1,4 @@
+import { cleanVideoTitle, isPlaceholderVideoTitle, needsTitleCleanup } from "./videoTitle.js";
 const AI_CACHE_TASKS = new Set(["word_lookup", "translate_sentence", "subtitle_batch", "subtitle_translate_batch", "subtitle_learning_batch", "vocabulary_analysis", "generate_distractors"]);
 const AI_CACHE_PREFIX = "lingoclub:ai:v1:";
 const AI_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -153,13 +154,71 @@ export async function invokeAI(task, payload = {}, options = {}) {
   return request;
 }
 
-export const fetchYouTubeTranscript = (url, options) =>
-  postJson("/api/youtube-transcript", { url }, options);
+// Transcript errors carry their own user-facing message and reason; they must
+// not go through the AI error mapping in postJson (which turned every failure
+// into "服务暂时不可用" / "模型不可用").
+export async function fetchYouTubeTranscript(url, { signal, timeoutMs = 50000 } = {}) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const response = await fetch("/api/youtube-transcript", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+      signal: controller.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data?.error || `字幕服务返回 HTTP ${response.status}`);
+      error.name = "TranscriptError";
+      error.status = response.status;
+      error.reason = data?.reason || (response.status >= 500 ? "server_error" : "request_failed");
+      error.details = { diagnostics: data?.diagnostics || null };
+      throw error;
+    }
+    return data;
+  } catch (error) {
+    if (timedOut) {
+      const timeoutError = new Error("字幕服务响应超时，请稍后重试");
+      timeoutError.name = "TimeoutError";
+      timeoutError.reason = "timeout";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
+}
 
-export async function fetchYouTubeMeta(url, { signal } = {}) {
+// Real title via the server (oEmbed → watch page → Supadata). The browser-only
+// oEmbed call fails for videos with embedding disabled (401) and is usually
+// unreachable from mainland China, which left imports titled "YouTube 视频".
+export async function fetchYouTubeMeta(url, { signal, timeoutMs = 15000 } = {}) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const combined = signal && typeof AbortSignal.any === "function" ? AbortSignal.any([signal, timeout]) : (signal || timeout);
+  try {
+    const response = await fetch("/api/youtube-meta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+      signal: combined,
+    });
+    if (response.ok) {
+      const data = await response.json();
+      if (data?.title) return { title: cleanVideoTitle(data.title), thumbnail_url: data.thumbnail_url || "", embeddable: data.embeddable ?? null };
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error;
+  }
   const endpoint = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}`;
   const response = await fetch(endpoint, { signal });
   if (!response.ok) throw new Error("无法获取 YouTube 视频信息");
   const data = await response.json();
-  return { title: data?.title || "", thumbnail_url: data?.thumbnail_url || "" };
+  return { title: cleanVideoTitle(data?.title), thumbnail_url: data?.thumbnail_url || "", embeddable: true };
 }
+
+export { cleanVideoTitle, isPlaceholderVideoTitle, needsTitleCleanup };

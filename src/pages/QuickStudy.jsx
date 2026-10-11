@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams, Link, useNavigate } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import { localMovies } from "@/lib/localStudyMeta";
+import { syncUserState } from "@/lib/cloudState";
+import { cleanVideoTitle } from "@/lib/videoTitle";
 import { useAuth } from "@/lib/AuthContext";
 import { useLocalStudy } from "@/hooks/useLocalStudy";
 import VideoPlayer from "@/components/study/VideoPlayer";
@@ -15,6 +17,7 @@ import TheaterOverlay from "@/components/study/TheaterOverlay";
 import BilibiliScrubber from "@/components/study/BilibiliScrubber";
 import YoutubeSubtitleHelper from "@/components/study/YoutubeSubtitleHelper";
 import { transcribeYouTubeClient, extractYouTubeId } from "@/lib/youtubeTranscriptClient";
+import { fetchYouTubeMeta } from "@/lib/localApi";
 import { cleanSubtitleText } from "@/lib/subtitleCleaner";
 import { isBilibiliUrl } from "@/lib/bilibiliTranscriptClient";
 import { useToast } from "@/components/ui/use-toast";
@@ -38,7 +41,8 @@ export default function QuickStudy() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const videoUrl = searchParams.get("url");
-  const title = searchParams.get("title") || "快速导入视频";
+  const titleParam = cleanVideoTitle(searchParams.get("title") || "");
+  // Explicit title (e.g. from 小萌's links) wins; otherwise the real YouTube title is fetched below.
   const subsB64 = searchParams.get("subs");
 
   const [materials, setMaterials] = useState(null);
@@ -73,6 +77,9 @@ export default function QuickStudy() {
   useEffect(() => {
     if (!videoUrl) { setLoading(false); return; }
     let cancelled = false;
+    const metaRequest = !titleParam && extractYouTubeId(videoUrl)
+      ? fetchYouTubeMeta(videoUrl).catch(() => null)
+      : null;
     (async () => {
       let subs = [];
 
@@ -141,13 +148,14 @@ export default function QuickStudy() {
         } catch { /* fall through to auto-fetch */ }
       }
 
-      // 2. 无扩展字幕时回退到站内抓取（15s 超时，避免长时间卡在加载中）
+      // 2. 无扩展字幕时回退到站内抓取。服务端最多用约 40s 尝试多个客户端，
+      //    原来的 15s 上限会在服务端还在重试时就提前判定“提取超时”。
       if (!subs.length) {
         if (extractYouTubeId(videoUrl)) {
           try {
             const res = await Promise.race([
               transcribeYouTubeClient(videoUrl),
-              new Promise((_, reject) => setTimeout(() => reject(new Error("提取超时")), 15000)),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("提取超时，请稍后重试")), 55000)),
             ]);
             if (!cancelled && res.lines) {
               subs = res.lines.map((l, i) => ({
@@ -174,25 +182,39 @@ export default function QuickStudy() {
 
       if (cancelled) return;
 
+      // 无 title 参数时用视频真实标题（与字幕抓取并行，见下方 metaRequest）。
+      let movieTitle = titleParam;
+      if (!movieTitle && metaRequest) {
+        const meta = await metaRequest;
+        if (meta?.title) movieTitle = meta.title;
+      }
+      movieTitle = movieTitle || "快速导入视频";
+      if (cancelled) return;
+
       // 3. 已登录则保存到 LocalMovieMeta（跨设备可见）
       let recordId = null;
       if (user) {
         try {
-          const meta = await base44.entities.LocalMovieMeta.create({
-            name: title,
+          // Same storage as the paste importer: local library + user_state sync,
+          // so the video shows up at the top of 我的视频. (The old base44 entity
+          // call failed silently on this deployment.)
+          const saved = await localMovies.importMovie({
+            name: movieTitle,
+            original_title: movieTitle === "快速导入视频" ? "" : movieTitle,
             poster_url: "",
             video_url: videoUrl,
             subtitles: subs,
           });
-          recordId = meta.id;
-        } catch { /* non-critical */ }
+          recordId = saved.movie.id;
+          if (user?.id) await syncUserState(user.id).catch(() => null);
+        } catch { /* non-critical: studying still works without saving */ }
       }
 
       if (cancelled) return;
 
       setMaterials({
         videoUrl,
-        videoName: title,
+        videoName: movieTitle,
         subtitles: subs,
         posterUrl: "",
         recordId,
@@ -209,7 +231,7 @@ export default function QuickStudy() {
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoUrl, subsB64, title]);
+  }, [videoUrl, subsB64, titleParam]);
 
   // B站仿真时钟（跨域 iframe 无法读取真实进度）
   useEffect(() => {
@@ -290,11 +312,12 @@ export default function QuickStudy() {
     const id = materials?.recordId;
     if (!id) return;
     try {
-      await base44.entities.LocalMovieMeta.update(id, { subtitles: newSubs });
+      await localMovies.update(id, { subtitles: newSubs });
+      if (user?.id) void syncUserState(user.id).catch(() => null);
     } catch (e) {
       toast({ title: "字幕未保存到服务器", description: e?.message, variant: "destructive" });
     }
-  }, [materials?.recordId, toast]);
+  }, [materials?.recordId, toast, user?.id]);
 
   const study = useLocalStudy({
     subtitles: materials?.subtitles,

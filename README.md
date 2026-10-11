@@ -71,3 +71,73 @@ npm run build
 See `.env.example` for variable names. `VITE_*` values are browser-visible; keep `AI_CREDENTIALS_MASTER_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `TRANSCRIPT_SERVICE_TOKEN` server-side only. Do not add Supabase service-role keys or provider API keys to the frontend or repository.
 
 For deployment, use the existing linked Vercel project and its configured environment variables. The production site is `https://lingoclub.vercel.app`.
+
+## 每日推荐导入接口（今日推荐）
+
+推荐助手每天把推荐视频 POST 到 `/api/recommendations/import`，App 的「今日推荐」页（`/recommendations`）按日期展示，点开进入 `/quick-study` 精读。
+
+服务端环境变量（只放 Vercel，不要用 `VITE_` 前缀）：
+
+- `RECOMMENDATIONS_IMPORT_TOKEN`：导入口令，调用方放在 `Authorization: Bearer <token>`。
+- `RECOMMENDATIONS_IMPORT_USER_ID`：推荐写入哪个用户（Supabase Auth 用户 UUID）。
+- `SUPABASE_SERVICE_ROLE_KEY` 与 `VITE_SUPABASE_URL`：与 `/api/ai-credentials` 共用。
+
+数据表由 `supabase/migrations/20261011000000_daily_recommendations.sql` 创建。浏览器只能读取自己的推荐、修改 `watched_at` / `favorited`，不能插入。
+
+请求体：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `date` | `YYYY-MM-DD` | 推荐日期（必填） |
+| `source` | `digest` \| `morning_read` | 默认来源，单条可覆盖 |
+| `items` | 数组，1–50 条 | 推荐列表 |
+| `items[].url` | string | YouTube 链接（watch / youtu.be / shorts / live 均可）；与 `youtube_id` 至少填一个 |
+| `items[].youtube_id` | string | 11 位视频 ID；缺省时从 `url` 解析 |
+| `items[].title` | string | 标题（必填） |
+| `items[].duration_seconds` | integer | 时长（秒） |
+| `items[].level` | string | 难度，如 `B1` |
+| `items[].tags` | string[] | 标签，最多 20 个 |
+| `items[].summary_zh` | string | 中文要点 |
+| `items[].why_relevant` | string | 为什么跟你有关 |
+| `items[].source` | `digest` \| `morning_read` | 单条来源 |
+
+同一用户、同一日期、同一视频重复导入只会更新内容，不会重置“已看/收藏”。
+
+```bash
+curl -X POST https://<your-app>/api/recommendations/import \
+  -H "Authorization: Bearer $RECOMMENDATIONS_IMPORT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "date": "2026-10-12",
+    "source": "morning_read",
+    "items": [
+      {
+        "url": "https://www.youtube.com/watch?v=UF8uR6Z6KLc",
+        "title": "Steve Jobs 2005 Stanford Commencement Address",
+        "duration_seconds": 904,
+        "level": "B2",
+        "tags": ["演讲", "人生"],
+        "summary_zh": "三个故事：连点成线、热爱与失去、死亡。",
+        "why_relevant": "语速适中、发音清晰，适合跟读练习。"
+      }
+    ]
+  }'
+```
+
+响应：`{"ok":true,"date":"2026-10-12","received":1,"inserted":1,"updated":0,"rejected":[],"items":[{"youtube_id":"UF8uR6Z6KLc","embeddable":true}]}`。无效条目会出现在 `rejected`（含 `index` 和原因），其余有效条目照常写入；口令错误返回 401，未配置返回 503。
+
+## YouTube 字幕提取
+
+`/api/youtube-transcript` 依次尝试：
+
+1. **Supadata**（配置了 `SUPADATA_API_KEY` 时）：由 Supadata 的服务器读取 YouTube 已有字幕（人工或自动生成），不受 Vercel 数据中心 IP 被 YouTube 拦截的影响。使用 `mode=native`，每次 1 credit，不会触发按分钟计费的 AI 转写。免费版每月 100 credits（1 次/秒），Basic 每年 $60，每月 300 credits。额度用完或 Key 无效时自动回退到下面的方式。
+2. 独立字幕服务（`TRANSCRIPT_SERVICE_URL`，见 `server/transcript/`）。
+3. 内置多客户端 innertube 提取。本地或住宅网络下可用，但在 Vercel 上常被 YouTube 要求“机器人验证”。
+
+同一视频提取成功后，服务端实例内存和浏览器 localStorage 都会缓存，重复打开不会再消耗额度。
+
+### 给推荐助手的提示：优先推荐可嵌入的视频
+
+部分视频的作者关闭了“允许嵌入”。这类视频在 App 里不能直接播放，只能点「在 YouTube 上观看」跳出，但字幕精读仍可用。判断方法：`https://www.youtube.com/oembed?format=json&url=<视频链接>` 返回 401 或 403 就是不可嵌入。请优先推荐可嵌入的视频。
+
+导入接口的响应里，每条推荐都会带上这个判断结果：`items: [{ "youtube_id": "...", "embeddable": true | false | null }]`。`false` 表示不可嵌入，`null` 表示暂时无法判断。不可嵌入的视频仍然会写入，不会因此被拒绝。

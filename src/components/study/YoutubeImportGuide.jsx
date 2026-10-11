@@ -10,7 +10,7 @@ import { Bookmark, Youtube, Check, Lightbulb, Smartphone, Share, Plus, Monitor, 
 export function buildBookmarklet(appUrl) {
   const code = `(function(){
 var u=window.location.href;
-var t=document.title.replace(/\\s*-\\s*YouTube\\s*$/,'').replace(/_哔哩哔哩.*/,'').trim();
+var t=document.title.replace(/^\\(\\d{1,3}\\+?\\)\\s+/,'').replace(/\\s*-\\s*YouTube\\s*$/,'').replace(/_哔哩哔哩.*/,'').trim();
 var app=${JSON.stringify(appUrl)};
 var ytUrl=null;try{ytUrl=new URL(u);}catch(e){}
 var host=ytUrl?ytUrl.hostname.toLowerCase():'';

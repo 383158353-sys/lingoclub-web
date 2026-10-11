@@ -1,3 +1,5 @@
+import { compareLibraryItems } from "./librarySort.js";
+import { cleanVideoTitle, isPlaceholderVideoTitle } from "./videoTitle.js";
 import { notifyLocalStateChanged, scopedStorageKey } from "./userStorage";
 import { deleteLocalVideoMany, getLocalMediaAssets, saveLocalMediaAssets } from "./localStudyLibrary";
 
@@ -180,12 +182,12 @@ function collection(key, prefix, kind) {
   return {
     async listMetadata() {
       await ensureMigrated(key, kind);
-      return read(key).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+      return read(key).sort(kind === "movie" ? compareLibraryItems : (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     },
     async list() {
       await ensureMigrated(key, kind);
       const items = await Promise.all(read(key).map((item) => hydrateRecord(item, kind)));
-      return items.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+      return items.sort(kind === "movie" ? compareLibraryItems : (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     },
     async get(recordId) {
       await ensureMigrated(key, kind);
@@ -270,14 +272,22 @@ export const localMovies = {
     const existing = incomingVideoId
       ? before.find((movie) => (movie.youtube_video_id || youtubeVideoId(movie.video_url)) === incomingVideoId)
       : null;
+    const importedAt = new Date().toISOString();
+    const cleanName = fields?.name ? cleanVideoTitle(fields.name) || fields.name : fields?.name;
+    const cleanOriginal = fields?.original_title ? cleanVideoTitle(fields.original_title) : fields?.original_title;
     if (!existing) {
-      const movie = await movieCollection.create({ ...fields, ...(incomingVideoId ? { youtube_video_id: incomingVideoId } : {}) });
+      const movie = await movieCollection.create({ ...fields, name: cleanName, original_title: cleanOriginal || "", imported_at: importedAt, ...(incomingVideoId ? { youtube_video_id: incomingVideoId } : {}) });
       return { movie, created: true, videoId: incomingVideoId, beforeCount: before.length, afterCount: before.length + 1 };
     }
 
+    // Re-importing an existing video does not duplicate it; it moves it to the
+    // top of 我的视频 (fresh imported_at, manual sort_order cleared).
+    const keepExistingName = isPlaceholderVideoTitle(cleanName, fields?.video_url) && !isPlaceholderVideoTitle(existing.name, existing.video_url);
     const next = {
-      name: fields?.name || existing.name,
-      original_title: fields?.original_title || existing.original_title || "",
+      name: keepExistingName ? cleanVideoTitle(existing.name) : (cleanName || cleanVideoTitle(existing.name) || existing.name),
+      original_title: cleanOriginal || cleanVideoTitle(existing.original_title) || "",
+      imported_at: importedAt,
+      sort_order: null,
       poster_url: fields?.poster_url || existing.poster_url || "",
       poster_blob: fields?.poster_blob || null,
       video_url: fields?.video_url || existing.video_url || "",
