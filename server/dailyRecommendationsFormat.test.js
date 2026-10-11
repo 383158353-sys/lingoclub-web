@@ -27,3 +27,23 @@ test("duration and thumbnail helpers", () => {
   assert.equal(formatDuration(null), "");
   assert.equal(youtubeThumbnail("dQw4w9WgXcQ"), "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg");
 });
+
+test("a day's recommendations are split into 今日主学 first, then sections by first tag", async () => {
+  const { groupRecommendationsBySection } = await import("../src/lib/dailyRecommendationsFormat.js");
+  const sections = groupRecommendationsBySection([
+    { id: 1, tags: ["脱口秀", "comedy"] },
+    { id: 2, tags: ["AI与科技"] },
+    { id: 3, tags: ["AI与科技", "今日主学"] },
+    { id: 4, tags: [] },
+    { id: 5, tags: ["脱口秀"] },
+    { id: 6 },
+    { id: 7, tags: ["今日主学", "影视幕后"] },
+  ]);
+  assert.deepEqual(sections.map((s) => [s.name, s.main, s.items.map((i) => i.id)]), [
+    ["今日主学", true, [3, 7]],
+    ["脱口秀", false, [1, 5]],
+    ["AI与科技", false, [2]],
+    ["其他", false, [4, 6]],
+  ]);
+  assert.deepEqual(groupRecommendationsBySection([{ id: 1, tags: ["游戏美术"] }]).map((s) => s.name), ["游戏美术"]);
+});

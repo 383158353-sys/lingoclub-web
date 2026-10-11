@@ -8,6 +8,7 @@ import {
   RECOMMENDATION_SOURCE_LABELS,
   formatDuration,
   groupRecommendationsByDate,
+  groupRecommendationsBySection,
   listDailyRecommendations,
   markRecommendationWatched,
   quickStudyPath,
@@ -139,9 +140,23 @@ export default function DailyRecommendations() {
                     {dateLabel(group.date, today)}
                     <span className="text-xs font-normal text-muted-foreground tabular-nums">{group.date} · {group.items.length} 个</span>
                   </h2>
-                  <div className="space-y-3">
-                    {group.items.map((item) => (
-                      <RecommendationCard key={item.id} item={item} onOpen={openItem} onToggleFavorite={toggleFavorite} />
+                  <div className="space-y-5 md:space-y-6">
+                    {groupRecommendationsBySection(group.items).map((section) => (
+                      <div
+                        key={section.name}
+                        className={section.main ? "rounded-2xl border border-copper/40 bg-copper/5 p-2.5 md:p-3" : ""}
+                      >
+                        <h3 className={`mb-2 flex items-center gap-1.5 text-xs font-medium md:text-sm ${section.main ? "text-copper" : "text-foreground/80"}`}>
+                          {section.main && <Sparkles size={14} />}
+                          {section.name}
+                          <span className="font-normal text-muted-foreground tabular-nums">· {section.items.length} 个</span>
+                        </h3>
+                        <div className="space-y-3">
+                          {section.items.map((item) => (
+                            <RecommendationCard key={item.id} item={item} onOpen={openItem} onToggleFavorite={toggleFavorite} />
+                          ))}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </section>

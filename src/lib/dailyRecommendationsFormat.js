@@ -36,3 +36,23 @@ export function groupRecommendationsByDate(items, today) {
     .sort(([a], [b]) => (a === today ? -1 : b === today ? 1 : b.localeCompare(a)))
     .map(([date, rows]) => ({ date, items: rows }));
 }
+
+export const MAIN_STUDY_TAG = "今日主学";
+export const OTHER_SECTION = "其他";
+
+// Split one day's items into sections: items tagged 今日主学 come first, then
+// sections named by each item's first non-今日主学 tag (the 板块 name), in the
+// order they first appear. Items without such a tag go to 其他.
+export function groupRecommendationsBySection(items) {
+  const main = [];
+  const sections = new Map();
+  for (const item of items || []) {
+    const tags = Array.isArray(item.tags) ? item.tags : [];
+    if (tags.includes(MAIN_STUDY_TAG)) { main.push(item); continue; }
+    const name = tags.find((tag) => tag && tag !== MAIN_STUDY_TAG) || OTHER_SECTION;
+    if (!sections.has(name)) sections.set(name, []);
+    sections.get(name).push(item);
+  }
+  const rest = [...sections].map(([name, list]) => ({ name, main: false, items: list }));
+  return main.length ? [{ name: MAIN_STUDY_TAG, main: true, items: main }, ...rest] : rest;
+}

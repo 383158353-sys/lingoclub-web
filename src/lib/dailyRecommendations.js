@@ -1,6 +1,6 @@
 import { supabase, supabaseConfigured } from "./supabaseClient";
 
-export { RECOMMENDATION_SOURCE_LABELS, formatDuration, groupRecommendationsByDate, quickStudyPath, youtubeThumbnail } from "./dailyRecommendationsFormat.js";
+export { RECOMMENDATION_SOURCE_LABELS, formatDuration, groupRecommendationsByDate, groupRecommendationsBySection, quickStudyPath, youtubeThumbnail } from "./dailyRecommendationsFormat.js";
 
 // Rows are inserted by /api/recommendations/import (service role). The browser
 // only reads its own rows and updates watched_at / favorited (enforced by RLS).
