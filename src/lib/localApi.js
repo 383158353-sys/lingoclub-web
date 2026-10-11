@@ -1,3 +1,4 @@
+import { cleanVideoTitle, isPlaceholderVideoTitle, needsTitleCleanup } from "./videoTitle.js";
 const AI_CACHE_TASKS = new Set(["word_lookup", "translate_sentence", "subtitle_batch", "subtitle_translate_batch", "subtitle_learning_batch", "vocabulary_analysis", "generate_distractors"]);
 const AI_CACHE_PREFIX = "lingoclub:ai:v1:";
 const AI_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -208,7 +209,7 @@ export async function fetchYouTubeMeta(url, { signal, timeoutMs = 15000 } = {}) 
     });
     if (response.ok) {
       const data = await response.json();
-      if (data?.title) return { title: data.title, thumbnail_url: data.thumbnail_url || "", embeddable: data.embeddable ?? null };
+      if (data?.title) return { title: cleanVideoTitle(data.title), thumbnail_url: data.thumbnail_url || "", embeddable: data.embeddable ?? null };
     }
   } catch (error) {
     if (signal?.aborted) throw error;
@@ -217,15 +218,7 @@ export async function fetchYouTubeMeta(url, { signal, timeoutMs = 15000 } = {}) 
   const response = await fetch(endpoint, { signal });
   if (!response.ok) throw new Error("无法获取 YouTube 视频信息");
   const data = await response.json();
-  return { title: data?.title || "", thumbnail_url: data?.thumbnail_url || "", embeddable: true };
+  return { title: cleanVideoTitle(data?.title), thumbnail_url: data?.thumbnail_url || "", embeddable: true };
 }
 
-const PLACEHOLDER_TITLES = new Set(["", "youtube 视频", "快速导入视频", "未命名影片", "youtube video"]);
-
-// True when a stored title is one of the import fallbacks rather than a real title.
-export function isPlaceholderVideoTitle(title, videoUrl = "") {
-  const value = String(title || "").trim();
-  if (PLACEHOLDER_TITLES.has(value.toLowerCase())) return true;
-  if (videoUrl && value === String(videoUrl).trim()) return true;
-  return /^https?:\/\//i.test(value);
-}
+export { cleanVideoTitle, isPlaceholderVideoTitle, needsTitleCleanup };

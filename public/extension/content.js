@@ -181,7 +181,8 @@ async function getAppUrl() {
 // ===== 获取页面标题（去掉 YouTube / B站 后缀）=====
 function getCleanTitle() {
   let t = document.title || "";
-  t = t.replace(/\s*-\s*YouTube\s*$/i, "")
+  t = t.replace(/^\(\d{1,3}\+?\)\s+/, "")
+       .replace(/\s*-\s*YouTube\s*$/i, "")
        .replace(/\s*_\s*哔哩哔哩.*$/i, "")
        .replace(/\s*-[^-]*哔哩哔哩.*$/i, "")
        .trim();

@@ -9,6 +9,7 @@
 // 返回一个明确的 error，UI 会引导用户走"复制 YouTube 转录"备选流程。
 import { fetchYouTubeTranscript } from "@/lib/localApi";
 import { mergeFragments } from "@/lib/subtitleCleaner";
+import { cleanVideoTitle } from "@/lib/videoTitle";
 
 const YOUTUBE_ID_RX = /^[A-Za-z0-9_-]{11}$/;
 const TRANSCRIPT_CACHE_PREFIX = "lingoclub:youtube-transcript:v1:";
@@ -222,7 +223,7 @@ async function fetchTranscriptOnce(videoId, signal) {
     if (data?.lines?.length) return {
       lines: mergeFragments(data.lines),
       videoId: data.videoId,
-      title: data.title,
+      title: cleanVideoTitle(data.title),
       language: data.language,
       originalLanguage: data.originalLanguage,
       translated: data.translated,

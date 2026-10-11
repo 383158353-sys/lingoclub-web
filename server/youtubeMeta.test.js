@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getYouTubeMeta, handleYouTubeMeta, titleFromWatchHtml } from "./youtubeMeta.js";
-import { isPlaceholderVideoTitle } from "../src/lib/localApi.js";
+import { isPlaceholderVideoTitle } from "../src/lib/videoTitle.js";
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
 

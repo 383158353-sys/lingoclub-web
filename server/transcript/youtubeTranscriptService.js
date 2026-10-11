@@ -1,3 +1,4 @@
+import { cleanVideoTitle } from "../../src/lib/videoTitle.js";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 const ID_RX = /^[A-Za-z0-9_-]{11}$/;
 // Ordered by reliability for caption access as of 2026-10. The API key query
@@ -187,7 +188,7 @@ async function innertubeTracks(id, diagnostics, client, attempt) {
   const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
   diagnostics.push({ attempt, extractor, step: "caption-tracks", found: tracks.length, playable: player?.playabilityStatus?.status === "OK" });
   if (!tracks.length) throw new Error(`${client.name} 未发现字幕轨`);
-  return { extractor, title: player?.videoDetails?.title || "", tracks, attempt };
+  return { extractor, title: cleanVideoTitle(player?.videoDetails?.title), tracks, attempt };
 }
 
 async function watchTracks(id, diagnostics, attempt, cookie) {
@@ -202,7 +203,7 @@ async function watchTracks(id, diagnostics, attempt, cookie) {
   diagnostics.push({ attempt, extractor, step: "caption-tracks", found: tracks.length,
     pageType: /consent\.youtube\.com|Before you continue to YouTube/i.test(html) ? "consent" : /Sign in to confirm you(?:'|’)re not a bot/i.test(html) ? "bot-challenge" : "watch" });
   if (!tracks.length) throw new Error("watch HTML 未发现字幕轨");
-  const title = clean(html.match(/<meta\s+name="title"\s+content="([^"]+)"/i)?.[1] || "");
+  const title = cleanVideoTitle(clean(html.match(/<meta\s+name="title"\s+content="([^"]+)"/i)?.[1] || ""));
   return { extractor, title, tracks, attempt };
 }
 

@@ -1,4 +1,5 @@
 import { videoId as extractVideoId } from "./transcript/youtubeTranscriptService.js";
+import { cleanVideoTitle } from "../src/lib/videoTitle.js";
 
 // Real YouTube title / thumbnail / embeddability for a video.
 // 1. oEmbed (free). Returns 401/403 when the owner disabled embedding, which
@@ -23,7 +24,7 @@ export function titleFromWatchHtml(html) {
   const raw = text.match(/<meta\s+name="title"\s+content="([^"]*)"/i)?.[1]
     || text.match(/<meta\s+property="og:title"\s+content="([^"]*)"/i)?.[1]
     || text.match(/<title>([^<]*)<\/title>/i)?.[1]?.replace(/\s*-\s*YouTube\s*$/i, "");
-  const title = decodeHtml(raw);
+  const title = cleanVideoTitle(decodeHtml(raw));
   return title && title !== "YouTube" ? title : "";
 }
 
@@ -35,7 +36,7 @@ export async function checkOEmbed(id, { fetchImpl = fetch, timeoutMs = 5000 } = 
     if (response.status === 404 || response.status === 400) return { embeddable: null, title: "", thumbnail_url: "", notFound: true };
     if (!response.ok) return { embeddable: null, title: "", thumbnail_url: "" };
     const data = await response.json().catch(() => ({}));
-    return { embeddable: true, title: String(data?.title || "").trim(), thumbnail_url: String(data?.thumbnail_url || ""), author: String(data?.author_name || "") };
+    return { embeddable: true, title: cleanVideoTitle(data?.title), thumbnail_url: String(data?.thumbnail_url || ""), author: String(data?.author_name || "") };
   } catch {
     return { embeddable: null, title: "", thumbnail_url: "" };
   }
@@ -64,7 +65,7 @@ async function supadataTitle(id, env, fetchImpl) {
     });
     if (!response.ok) return null;
     const data = await response.json().catch(() => null);
-    return data?.title ? { title: String(data.title).trim(), thumbnail_url: String(data.thumbnail || "") } : null;
+    return data?.title ? { title: cleanVideoTitle(data.title), thumbnail_url: String(data.thumbnail || "") } : null;
   } catch {
     return null;
   }

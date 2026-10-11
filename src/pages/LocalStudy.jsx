@@ -25,7 +25,8 @@ import YoutubeSubtitleHelper from "@/components/study/YoutubeSubtitleHelper";
 import { toSec } from "@/lib/timecode";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { extractYouTubeId } from "@/lib/youtubeTranscriptClient";
-import { fetchYouTubeMeta, isPlaceholderVideoTitle } from "@/lib/localApi";
+import { fetchYouTubeMeta } from "@/lib/localApi";
+import { cleanVideoTitle, isPlaceholderVideoTitle, needsTitleCleanup } from "@/lib/videoTitle";
 import { cleanSubtitleText, mergeFragments } from "@/lib/subtitleCleaner";
 import { useAuth } from "@/lib/AuthContext";
 import { readMovieSubtitles, syncUserState } from "@/lib/cloudState";
@@ -151,7 +152,11 @@ export default function LocalStudy() {
     setLoadingLib(true);
     try {
       const list = await localMovies.listMetadata();
-      setMetas(list || []);
+      // Display older titles without YouTube's "(5) " notification prefix;
+      // the stored record is fixed when the video is reopened.
+      setMetas((list || []).map((item) => needsTitleCleanup(item.name) || needsTitleCleanup(item.original_title)
+        ? { ...item, name: cleanVideoTitle(item.name) || item.name, original_title: cleanVideoTitle(item.original_title) }
+        : item));
     } catch {
       setMetas([]);
     } finally {
@@ -453,6 +458,14 @@ export default function LocalStudy() {
     }
     if (!videoUrl && meta.video_url) { videoUrl = meta.video_url; }
     revokeCurrent();
+    // Titles saved from a signed-in YouTube tab may carry "(5) " / " - YouTube".
+    if (needsTitleCleanup(meta.name) || needsTitleCleanup(meta.original_title)) {
+      const cleaned = { name: cleanVideoTitle(meta.name) || meta.name, original_title: cleanVideoTitle(meta.original_title) };
+      meta = { ...meta, ...cleaned };
+      localMovies.update(meta.id, cleaned)
+        .then((updated) => setMetas((list) => list.map((item) => item.id === meta.id ? { ...item, ...updated } : item)))
+        .catch(() => { /* display stays cleaned */ });
+    }
     setMaterials({
       videoUrl,
       videoName: meta.name,
