@@ -4,8 +4,8 @@ import { invokeAI } from "@/lib/localApi";
 import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer } from "@/lib/reviewDistractors";
 import { commitReviewAnswer, scheduleReviewAutoAdvance } from "@/lib/reviewFlow";
 import { WordDetailOverlay } from "@/components/vocab/WordDetailDialog";
-import { pronounce, unlockPronunciationAudio } from "@/lib/pronunciation";
-import { isReviewSoundEnabled, playReviewSound, setReviewSoundEnabled, unlockReviewSounds } from "@/lib/reviewSounds";
+import { pronounce } from "@/lib/pronunciation";
+import { answerFeedbackPlan, isReviewSoundEnabled, playReviewSound, setReviewSoundEnabled } from "@/lib/reviewSounds";
 
 function speak(text) {
   pronounce(text, { accent: "en-US" });
@@ -82,12 +82,8 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
     return () => { alive = false; };
   }, [card.id, mode]);
 
-  useEffect(() => {
-    const unlock = () => { unlockReviewSounds(); unlockPronunciationAudio(); };
-    const events = ["pointerdown", "touchend", "click", "keydown"];
-    events.forEach((name) => document.addEventListener(name, unlock, { capture: true, passive: true }));
-    return () => events.forEach((name) => document.removeEventListener(name, unlock, { capture: true }));
-  }, []);
+  const pronounceTimer = useRef(null);
+  useEffect(() => () => { if (pronounceTimer.current) clearTimeout(pronounceTimer.current); }, []);
 
   useEffect(() => {
     if (mode === "r3" && expr) speak(expr);
@@ -138,7 +134,13 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
     pendingAnswer.current = { token, card, correct: isCorrect, details: answerDetails, dueAt: Date.now() + delay, committed: false };
     setPicked(option.id);
     setCorrect(isCorrect);
-    playReviewSound(isCorrect ? "correct" : "wrong");
+    const feedback = answerFeedbackPlan(mode, isCorrect);
+    const chimed = playReviewSound(feedback.sound);
+    if (feedback.pronounceDelayMs !== null && expr) {
+      if (pronounceTimer.current) clearTimeout(pronounceTimer.current);
+      if (chimed) pronounceTimer.current = setTimeout(() => { pronounceTimer.current = null; speak(expr); }, feedback.pronounceDelayMs);
+      else speak(expr);
+    }
     if (isCorrect) autoTimer.current = scheduleReviewAutoAdvance(mode, () => commitAnswer(token));
     else setShowAnswer(true);
   };

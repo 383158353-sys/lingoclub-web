@@ -130,6 +130,7 @@ export function pronounce(text, { accent = "en-US", rate = 0.95, win = getWindow
     speakWithSynthesis(value, { accent, rate, win });
   };
   const started = () => {
+    unlocked = true;
     if (timer) clearTimeout(timer);
     if (token === playToken) settled = true;
   };
@@ -150,19 +151,28 @@ export function pronounce(text, { accent = "en-US", rate = 0.95, win = getWindow
 // after it has been played once inside a user gesture. Prime the shared element on first tap.
 const SILENT_WAV = "data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA";
 let unlocked = false;
+let unlocking = false;
+export function isPronunciationUnlocked() { return unlocked; }
 export function unlockPronunciationAudio(win = getWindow()) {
-  if (unlocked || !win) return;
+  if (unlocked || unlocking || !win) return;
   const audio = getAudioEl(win);
   if (!audio) return;
-  unlocked = true;
   hookVoices(win);
+  // Never interrupt a real pronunciation that is loading/playing.
+  if (audio.src && audio.src !== SILENT_WAV && !audio.paused && !audio.ended) return;
+  unlocking = true;
   try {
-    if (!audio.src || audio.src === "") {
-      audio.src = SILENT_WAV;
-      const result = audio.play();
-      if (result && typeof result.catch === "function") result.catch(() => { unlocked = false; });
+    audio.src = SILENT_WAV;
+    const result = audio.play();
+    if (result && typeof result.then === "function") {
+      result.then(() => { unlocked = true; }, () => {}).finally?.(() => { unlocking = false; });
+    } else {
+      unlocked = true;
+      unlocking = false;
     }
-  } catch { unlocked = false; }
+  } catch {
+    unlocking = false;
+  }
 }
 
 export function __resetPronunciationForTests() {
@@ -170,4 +180,5 @@ export function __resetPronunciationForTests() {
   playToken = 0;
   voicesHooked = false;
   unlocked = false;
+  unlocking = false;
 }
