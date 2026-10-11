@@ -6,6 +6,7 @@ import VocabSaveButton from "./VocabSaveButton";
 import SelectionBubble from "./SelectionBubble";
 import { AISettingsButton } from "@/components/AISettingsPanel";
 import { safeAIErrorMessage } from "@/lib/aiSettings";
+import { describeCloseReadingError, requestCloseReading } from "@/lib/closeReading";
 
 // Renders the structured AI language + cultural analysis for one subtitle line.
 export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, videoId = "local", sceneId, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, onSaved }) {
@@ -21,20 +22,19 @@ export default function SubtitleAnalysisPanel({ subtitle, movieTitle, movieId, v
     setLoading(true);
     setError(null);
     try {
-      const res = await invokeAI("translate_sentence", {
+      const a = await requestCloseReading(invokeAI, {
         text_en: subtitle.text_en,
         subtitle_text: subtitle.text_en,
         video_id: videoId,
         movie_title: movieTitle,
         speaker: subtitle.speaker,
       });
-      const a = res?.analysis;
-      if (!a) throw new Error("解析未返回内容");
       setAnalysis(a);
     } catch (e) {
-      const safeMessage = safeAIErrorMessage(e);
+      const described = describeCloseReadingError(e);
+      const safeMessage = e?.code === "AI_NOT_CONFIGURED" ? safeAIErrorMessage(e) : described.description;
       setError(safeMessage);
-      toast({ title: e?.code === "AI_NOT_CONFIGURED" ? "AI 解析尚未配置" : "AI 解析失败", description: safeMessage, variant: "destructive" });
+      toast({ title: e?.code === "AI_NOT_CONFIGURED" ? "AI 解析尚未配置" : described.title, description: safeMessage, variant: "destructive" });
     } finally {
       setLoading(false);
     }

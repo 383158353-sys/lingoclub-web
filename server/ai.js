@@ -87,6 +87,24 @@ const FAST_TASKS = new Set(["word_lookup", "subtitle_translate_batch", "subtitle
 const LEGACY_RELAY_GEMINI_FAST_TASKS = new Set(["generate_distractors", "subtitle_translate_batch", "subtitle_learning_batch"]);
 const IN_FLIGHT = new Map();
 const AI_TIMEOUT_MS = 25_000;
+// /api/*.js run with maxDuration=60 on Vercel (vercel.json). Every upstream
+// attempt plus any retry must finish inside this budget, otherwise Vercel kills
+// the function and the browser only ever sees its own timeout.
+const FUNCTION_BUDGET_MS = 55_000;
+// 精读 (translate_sentence) asks for translation + words + phrases + grammar +
+// culture in one call; slower relay/thinking models regularly need >25s, so it
+// gets one long attempt instead of two 25s attempts.
+const CLOSE_READING_TIMEOUT_MS = 50_000;
+const MIN_RETRY_WINDOW_MS = 5_000;
+
+export function upstreamTimeoutsForTask(task, env = {}) {
+  const budgetMs = Number(env.AI_FUNCTION_BUDGET_MS) || FUNCTION_BUDGET_MS;
+  if (["translate_sentence", "analyze-subtitle"].includes(task)) {
+    return { timeoutMs: Math.min(Number(env.AI_CLOSE_READING_TIMEOUT_MS) || CLOSE_READING_TIMEOUT_MS, budgetMs), budgetMs };
+  }
+  if (["vocabulary_analysis", "vocab-profile"].includes(task)) return { timeoutMs: 11_000, budgetMs };
+  return { timeoutMs: Math.min(AI_TIMEOUT_MS, budgetMs), budgetMs };
+}
 
 function isGeminiTextOutputModel(model) {
   return !/(?:^|[-_.])tts(?:$|[-_.])/i.test(String(model || ""));
@@ -235,13 +253,14 @@ function retryable(error) {
     || error instanceof TypeError;
 }
 
-async function requestJson(url, options, secret = "", { retry = true, timeoutMs = AI_TIMEOUT_MS } = {}) {
+export async function requestJson(url, options, secret = "", { retry = true, timeoutMs = AI_TIMEOUT_MS, budgetMs = FUNCTION_BUDGET_MS } = {}) {
   let lastError;
   const startedAt = Date.now();
   const maxAttempts = retry ? 2 : 1;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const attemptTimeoutMs = Math.max(1, Math.min(timeoutMs, budgetMs - (Date.now() - startedAt)));
+    const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
     let responseStatus = 0;
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
@@ -271,10 +290,14 @@ async function requestJson(url, options, secret = "", { retry = true, timeoutMs 
         ...(responseStatus || lastError?.upstreamStatus ? { upstreamStatus: responseStatus || lastError.upstreamStatus } : {}),
         timeout: lastError?.name === "TimeoutError" || lastError?.name === "AbortError",
         aborted: error?.name === "AbortError" || controller.signal.aborted,
+        attempts: attempt,
+        ...(lastError?.name === "TimeoutError" ? { timeoutMs: attemptTimeoutMs } : {}),
       });
       if (!lastError.providerMessage && !responseStatus) lastError.providerMessage = String(lastError.message || "Network request failed").slice(0, 300).split(secret).join("[redacted]").replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]");
       if (lastError.code === "UPSTREAM_OK_PARSE_FAILED" && !lastError.providerMessage) lastError.providerMessage = "Upstream returned non-JSON content with a success status";
       if (attempt >= maxAttempts || !retryable(lastError)) throw lastError;
+      // Only retry when a meaningful attempt still fits in the function budget.
+      if (budgetMs - (Date.now() - startedAt) - 250 < MIN_RETRY_WINDOW_MS) throw lastError;
       await new Promise((resolve) => setTimeout(resolve, 250));
     } finally {
       clearTimeout(timer);
@@ -525,7 +548,7 @@ export async function handleAI(req, res, body, env) {
           includeThinkingConfig: false,
         })
       : providerRequest;
-    const raw = await requestJson(request.url, request.options, apiKey, { retry: !isWordProfileTask && !isConnectionTest, timeoutMs: isWordProfileTask ? 11_000 : AI_TIMEOUT_MS });
+    const raw = await requestJson(request.url, request.options, apiKey, { retry: !isWordProfileTask && !isConnectionTest, ...upstreamTimeoutsForTask(body.task, env) });
     return { raw, model: requestedModel, endpoint: request.url };
   };
   const run = async () => {

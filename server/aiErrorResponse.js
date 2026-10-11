@@ -25,7 +25,20 @@ export function classifyAIError(error) {
   if (error?.code === "GEMINI_TEXT_MODEL_REQUIRED") return { status: 400, code: "GEMINI_TEXT_MODEL_REQUIRED", error: "该模型用于语音生成或未返回文本，不能用于文本分析；请选择文本输出模型", stage: "model_validation", endpoint: error?.endpoint, diagnostic: diagnosticCode("GEMINI_TEXT_MODEL_REQUIRED", 400) };
   if (error?.code === "AUTH_REQUIRED" || status === 401 && error?.stage === "auth") return { status: 401, code: "AUTH_REQUIRED", error: "请先登录", stage: "auth" };
   if (error?.code === "AI_NOT_CONFIGURED") return { status: 503, code: "AI_NOT_CONFIGURED", error: "AI 配置尚未完成", stage: "credential_lookup" };
-  if (error?.timeout || error?.name === "TimeoutError" || error?.name === "AbortError") return { status: 504, code: "TIMEOUT", error: "请求超时", stage: "upstream", diagnostic: diagnosticCode("TIMEOUT", 504) };
+  if (error?.timeout || error?.name === "TimeoutError" || error?.name === "AbortError") {
+    const seconds = Number(error?.timeoutMs) > 0 ? Math.round(Number(error.timeoutMs) / 1000) : 0;
+    const who = providerType === "relay" ? "中转站" : provider === "gemini" ? "Gemini" : provider === "openai" ? "OpenAI" : "AI 服务";
+    const modelLabel = error?.model ? `模型 ${String(error.model).slice(0, 80)} ` : "当前模型";
+    return {
+      status: 504, code: "TIMEOUT",
+      error: `${who}${seconds ? ` ${seconds} 秒内` : ""}没有返回结果（${modelLabel}可能太慢）`,
+      stage: "upstream",
+      ...(error?.model ? { model: String(error.model).slice(0, 120) } : {}),
+      ...(Number(error?.timeoutMs) > 0 ? { timeoutMs: Number(error.timeoutMs) } : {}),
+      ...(Number.isFinite(Number(error?.durationMs)) ? { durationMs: Number(error.durationMs) } : {}),
+      diagnostic: diagnosticCode("TIMEOUT", 504),
+    };
+  }
   if (!status && error?.code !== "AI_CREDENTIAL_INVALID") return { status: 502, code: "NETWORK_ERROR", error: "无法连接 AI 服务，请检查网络或服务地址", stage: "upstream", diagnostic: diagnosticCode("NETWORK_ERROR", 502) };
   if (status === 401 || status === 403) return { status: 502, code: "AUTH_ERROR", error: provider === "gemini" ? "Gemini API Key 无效或没有调用权限" : "API Key 无效或没有调用权限", stage: "upstream", upstreamStatus: status, upstreamCode, diagnostic: diagnosticCode("AUTH_ERROR", 502) };
   if (error?.code === "MODEL_NOT_AVAILABLE") return { status: 409, code: "MODEL_NOT_AVAILABLE", error: error.message || "当前 API Key 无权使用此模型", stage: "models", endpoint: error?.endpoint, diagnostic: diagnosticCode("MODEL_NOT_AVAILABLE", 409) };

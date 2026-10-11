@@ -94,6 +94,7 @@ async function postJson(path, body, { signal, timeoutMs = 26000, headers = {} } 
       timeoutError.name = "TimeoutError";
       timeoutError.code = "REQUEST_TIMEOUT";
       timeoutError.status = error?.status;
+      timeoutError.timeoutMs = timeoutMs;
       throw timeoutError;
     }
     throw error;

@@ -8,12 +8,14 @@ import { AISettingsButton } from "@/components/AISettingsPanel";
 export default function StudyAnalysisColumn({ study, movieTitle, movieId, videoId, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId }) {
   const { loading, subs, pinnedId, analyses, analyzingId, failedIds, retry } = study;
   const active = subs.find((s) => s.id === pinnedId) || null;
-  const [slow, setSlow] = useState(false);
+  const [slow, setSlow] = useState(0);
 
   useEffect(() => {
-    if (!analyzingId) { setSlow(false); return undefined; }
-    const timer = setTimeout(() => setSlow(true), 5000);
-    return () => clearTimeout(timer);
+    if (!analyzingId) { setSlow(0); return undefined; }
+    setSlow(0);
+    const timer = setTimeout(() => setSlow(1), 5000);
+    const verySlow = setTimeout(() => setSlow(2), 20000);
+    return () => { clearTimeout(timer); clearTimeout(verySlow); };
   }, [analyzingId]);
 
   if (loading) {
@@ -42,7 +44,7 @@ export default function StudyAnalysisColumn({ study, movieTitle, movieId, videoI
           analyzingId === active.id && !analyses[active.id] ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-border py-14 text-center">
               <Loader2 size={22} className="animate-spin text-copper" />
-              <p className="mt-3 text-sm text-muted-foreground">{slow ? "正在分析，请稍候…" : "正在精读这句台词…"}</p>
+              <p className="mt-3 text-sm text-muted-foreground">{slow === 2 ? "中转站响应较慢，最多再等约 40 秒…" : slow ? "正在分析，请稍候…" : "正在精读这句台词…"}</p>
             </div>
           ) : failedIds?.has?.(active.id) && !analyses[active.id] ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-border py-12 text-center">

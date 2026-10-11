@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invokeAI } from "@/lib/localApi";
+import { describeCloseReadingError, requestCloseReading } from "@/lib/closeReading";
 import { getCueContext, getSubtitleProcessingCache, isTranslationStalled, translationSetupMessage, processSubtitleEpisode, processSubtitleLearningWindow, recordSubtitleAICall, subtitleHash, CLOSE_READING_VERSION } from "@/lib/subtitleAiProcessing";
 import { useToast } from "@/components/ui/use-toast";
 import { toSec, fromSecPrecise } from "@/lib/timecode";
@@ -402,15 +403,15 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
     if (!sub?.text_en || !String(sub.text_en).trim()) return;
     setAnalyzingId(sub.id);
     try {
-      // 加 30 秒超时保护：精读 LLM 调用可能较慢，但超过 30 秒视为失败，
-      // 避免 UI 永久卡在"正在精读这句台词…"的 loading 状态。
+      // 精读超时预算见 lib/closeReading.js：客户端 58s > 服务端单次 50s，且都在
+      // Vercel 60s 函数上限内；快速失败的临时错误（5xx/网络/空响应）自动重试一次。
       const surrounding = getCueContext(subs, sub.id, 5);
       const hashValue = subtitleHash(subs);
       const processingCache = getSubtitleProcessingCache(videoId, hashValue);
       const cueProcessing = sub.ai_processing || processingCache.cues[sub.id] || {};
       const knownExpressions = [...(cueProcessing.difficultWords || []), ...(cueProcessing.phrases || [])];
       recordSubtitleAICall(videoId, hashValue, "closeReadingCalls");
-      const invokePromise = invokeAI("translate_sentence", {
+      const a = await requestCloseReading(invokeAI, {
         cache_key: `${videoId}:${hashValue}:${sub.id}:v${CLOSE_READING_VERSION}`,
         text_en: sub.text_en,
         subtitle_text: sub.text_en,
@@ -422,12 +423,6 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
         next_cues: surrounding.next,
         known_expressions: knownExpressions,
       });
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("精读超时，请重试")), 26000)
-      );
-      const res = await Promise.race([invokePromise, timeoutPromise]);
-      const a = res?.analysis;
-      if (!a || typeof a !== "object") throw new Error("解析未返回内容");
       failedRef.current.delete(sub.id);
       setFailedIds((s) => { const n = new Set(s); n.delete(sub.id); return n; });
       setAnalyses((prev) => mergeCompleteAnalysis(prev, sub.id, a));
@@ -439,8 +434,8 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
       failedRef.current.add(sub.id);
       setFailedIds((s) => new Set(s).add(sub.id));
       if (!silent) {
-        const msg = e?.response?.data?.error || e?.message || "解析失败";
-        toast({ title: "AI 解析失败", description: msg, variant: "destructive" });
+        const { title, description } = describeCloseReadingError(e);
+        toast({ title, description, variant: "destructive" });
       }
     } finally {
       setAnalyzingId((cur) => (cur === sub.id ? null : cur));

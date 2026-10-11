@@ -114,6 +114,7 @@ export function safeAIErrorMessage(error) {
   if (error?.code === "AI_REQUEST_FAILED" && error?.upstreamCode) return `AI 请求失败（${error.upstreamCode}）`;
   if (error?.code === "AI_RATE_LIMIT") return "当前 API 调用额度已用完或达到速率限制";
   if (error?.code === "AI_TIMEOUT") return "请求超时";
+  if (error?.code === "TIMEOUT") return error?.message || "AI 服务响应超时";
   if (error?.status === 403) return "API Key 无效或没有调用权限";
   if (error?.status === 404) return "模型不可用或当前 Key 无权访问";
   if (error?.status === 429) return "当前 API 调用额度已用完或达到速率限制";
