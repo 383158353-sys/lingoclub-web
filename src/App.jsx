@@ -31,6 +31,7 @@ const BuyCredits = lazy(() => import('./pages/BuyCredits'));
 const ThankYou = lazy(() => import('./pages/ThankYou'));
 const AdminUsers = lazy(() => import('./pages/AdminUsers'));
 const QuickStudy = lazy(() => import('./pages/QuickStudy'));
+const DailyRecommendations = lazy(() => import('./pages/DailyRecommendations'));
 const BilibiliStudy = lazy(() => import('./pages/BilibiliStudy'));
 const PublishFolder = lazy(() => import('./pages/PublishFolder'));
 const SubtitleSegmentation = lazy(() => import('./pages/SubtitleSegmentation'));
@@ -83,6 +84,7 @@ const AuthenticatedApp = () => {
         <Route path="/admin/users" element={<AdminUsers />} />
         <Route path="/local-study" element={<LocalStudy />} />
         <Route path="/quick-study" element={<QuickStudy />} />
+        <Route path="/recommendations" element={<DailyRecommendations />} />
         <Route path="/extension" element={<ExtensionGuide />} />
         <Route path="/publish-folder/:folderId" element={<PublishFolder />} />
         <Route path="/subtitle-segmentation" element={<SubtitleSegmentation />} />

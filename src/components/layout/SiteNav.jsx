@@ -7,6 +7,7 @@ import { AISettingsButton } from "@/components/AISettingsPanel";
 const links = [
   { label: "首页", to: "/" },
   { label: "我的影片", to: "/local-study" },
+  { label: "今日推荐", to: "/recommendations" },
   { label: "语料库", to: "/collection" },
 ];
 

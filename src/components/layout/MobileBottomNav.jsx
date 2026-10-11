@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { BookOpen, Captions, Clapperboard, Plus, Youtube } from "lucide-react";
+import { BookOpen, Captions, Clapperboard, Plus, Sparkles, Youtube } from "lucide-react";
 
 const importLinks = [
   { label: "YouTube 视频", icon: Youtube, to: "/local-study?import=youtube" },
@@ -17,6 +17,7 @@ export default function MobileBottomNav({ hidden = false }) {
 
   const learnActive = location.pathname === "/" || location.pathname === "/local-study" || location.pathname === "/quick-study";
   const collectionActive = location.pathname === "/collection";
+  const recommendationsActive = location.pathname === "/recommendations";
 
   return (
     <>
@@ -50,7 +51,7 @@ export default function MobileBottomNav({ hidden = false }) {
           </div>
         )}
 
-        <div className="mx-auto grid h-[3.75rem] max-w-lg grid-cols-3 items-center">
+        <div className="mx-auto grid h-[3.75rem] max-w-lg grid-cols-4 items-center">
           <NavLink
             to="/local-study"
             aria-label="学习"
@@ -58,6 +59,15 @@ export default function MobileBottomNav({ hidden = false }) {
           >
             <BookOpen size={19} strokeWidth={1.8} />
             <span>学习</span>
+          </NavLink>
+
+          <NavLink
+            to="/recommendations"
+            aria-label="今日推荐"
+            className={`flex h-full flex-col items-center justify-center gap-1 text-[10px] font-medium transition-colors ${recommendationsActive ? "text-mint" : "text-muted-foreground"}`}
+          >
+            <Sparkles size={19} strokeWidth={1.8} />
+            <span>推荐</span>
           </NavLink>
 
           <button
