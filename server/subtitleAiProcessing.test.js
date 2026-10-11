@@ -184,3 +184,11 @@ test("learning preload only analyzes the current 61-cue window and writes clicka
     else globalThis.localStorage = previous;
   }
 });
+
+test("translation stall watchdog trips after 60s without a new translated line", async () => {
+  const { isTranslationStalled, TRANSLATION_STALL_MS } = await import("../src/lib/subtitleAiProcessing.js");
+  assert.equal(TRANSLATION_STALL_MS, 60000);
+  assert.equal(isTranslationStalled(1000, 1000 + 59999), false);
+  assert.equal(isTranslationStalled(1000, 1000 + 60000), true);
+  assert.equal(isTranslationStalled(undefined, 999999), false);
+});

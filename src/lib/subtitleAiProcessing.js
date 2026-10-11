@@ -23,6 +23,13 @@ export function subtitleHash(subtitles = []) {
   return hash(subtitles.map((cue, index) => [cue.id || `cue-${index}`, cue.time_start || cue.start || "", cue.time_end || cue.duration || "", cue.text_en || ""].join("\u001f")).join("\u001e"));
 }
 
+// No new translated line for this long means the route is stalled; the UI
+// switches the remaining lines to a retryable error instead of "翻译中…".
+export const TRANSLATION_STALL_MS = 60000;
+export function isTranslationStalled(lastProgressAt, now = Date.now(), stallMs = TRANSLATION_STALL_MS) {
+  return Number.isFinite(lastProgressAt) && now - lastProgressAt >= stallMs;
+}
+
 export function resolveSubtitleTranslationState(cue, phase = "processing", failedCueIds = []) {
   if (String(cue?.text_zh || "").trim()) return "success";
   const failed = failedCueIds instanceof Set ? failedCueIds : new Set(failedCueIds || []);

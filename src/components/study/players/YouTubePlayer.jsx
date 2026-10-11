@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle, useMemo } from "react";
-import { createYouTubeEmbedUrl, createYouTubePlayerVars } from "@/lib/youtubePlayerConfig";
+import { checkYouTubeEmbeddable, createYouTubeEmbedUrl, createYouTubePlayerVars, describeYouTubeEmbedError } from "@/lib/youtubePlayerConfig";
 
 /**
  * YouTube 播放器：通过 IFrame Player API 嵌入。
@@ -49,6 +49,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
   const embed = useMemo(() => parseYouTube(url), [url]);
   const [playerErrorCode, setPlayerErrorCode] = useState(null);
   const [embedUnavailable, setEmbedUnavailable] = useState(false);
+  const [embeddable, setEmbeddable] = useState(null);
 
   // Host container React owns but renders NO JSX children into — so React never
   // tries to reconcile the iframe the YT API injects/destroys inside it.
@@ -74,6 +75,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     if (!embed?.videoId) return;
     setPlayerErrorCode(null);
     setEmbedUnavailable(false);
+    setEmbeddable(null);
     let cancelled = false;
     const host = ytHostRef.current;
     if (!host) return;
@@ -186,6 +188,15 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [embed?.videoId]);
 
+  // 101/150 is ambiguous (embedding disabled vs. YouTube bot check on this
+  // network); ask oEmbed once so the message says which one it is.
+  useEffect(() => {
+    if (!embed?.videoId || (playerErrorCode !== 101 && playerErrorCode !== 150)) return undefined;
+    let active = true;
+    checkYouTubeEmbeddable(embed.videoId).then((value) => { if (active) setEmbeddable(value); });
+    return () => { active = false; };
+  }, [embed?.videoId, playerErrorCode]);
+
   useImperativeHandle(ref, () => ({
     getVideoElement() { return null; },
     getCurrentTime() { try { return ytPlayerRef.current?.getCurrentTime?.() ?? null; } catch { return null; } },
@@ -232,13 +243,8 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
         <div ref={ytHostRef} className="absolute inset-0 h-full w-full" />
       </div>
       {(playerErrorCode !== null || embedUnavailable) && <p role="status" className="mt-2 text-xs text-amber-300/90">
-        {playerErrorCode === 153
-          ? "YouTube 未收到来源识别信息（153），这不是 LingoClub 登录失败。"
-          : playerErrorCode === 101 || playerErrorCode === 150
-            ? "该视频不允许嵌入播放。"
-            : playerErrorCode === 100
-              ? "该视频可能已删除或设为私密。"
-            : playerErrorCode !== null ? `YouTube 嵌入播放器无法播放（${playerErrorCode}）。` : "YouTube 内嵌播放暂不可用；这不是 LingoClub 登录问题。"}
+        {describeYouTubeEmbedError(playerErrorCode, embeddable)}
+        {" "}<a href={`https://www.youtube.com/watch?v=${embed.videoId}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">在 YouTube 打开</a>
       </p>}
     </div>
   );

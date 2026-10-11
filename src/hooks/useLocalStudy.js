@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invokeAI } from "@/lib/localApi";
-import { getCueContext, getSubtitleProcessingCache, processSubtitleEpisode, processSubtitleLearningWindow, recordSubtitleAICall, subtitleHash, CLOSE_READING_VERSION } from "@/lib/subtitleAiProcessing";
+import { getCueContext, getSubtitleProcessingCache, isTranslationStalled, processSubtitleEpisode, processSubtitleLearningWindow, recordSubtitleAICall, subtitleHash, CLOSE_READING_VERSION } from "@/lib/subtitleAiProcessing";
 import { useToast } from "@/components/ui/use-toast";
 import { toSec, fromSecPrecise } from "@/lib/timecode";
 import { mergeCompleteAnalysis, partialAnalysisForCue } from "@/lib/studyLearningCache";
@@ -215,6 +215,22 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
     processingAbortRef.current = controller;
     setProcessingStatus({ phase: "processing", completed: englishCues.filter((cue) => cue.text_zh?.trim()).length, total: englishCues.length, diagnostics: null });
     let retryTimer = null;
+    // Stall watchdog: if no new translation lands for TRANSLATION_STALL_MS
+    // (slow/unreachable AI route, a hung session/credential lookup, or the
+    // timeout→retry→split cascade), stop the job and show a retryable error
+    // instead of leaving every line on "翻译中…" for up to hours.
+    const translatedIds = new Set(englishCues.filter((cue) => cue.text_zh?.trim()).map((cue) => cue.id));
+    let lastProgressAt = Date.now();
+    let stalled = false;
+    const stallTimer = setInterval(() => {
+      if (controller.signal.aborted || stalled) return;
+      if (!isTranslationStalled(lastProgressAt, Date.now())) return;
+      stalled = true;
+      clearInterval(stallTimer);
+      const failedCueIds = englishCues.filter((cue) => !translatedIds.has(cue.id)).map((cue) => cue.id);
+      controller.abort();
+      setProcessingStatus({ phase: "error", stalled: true, retrying: false, failedCueIds, completed: englishCues.length - failedCueIds.length, total: englishCues.length, diagnostics: { stage: "translation_stalled", timeout: true } });
+    }, 5000);
     const retryOrFinish = (failedCueIds, diagnostics = {}) => {
       if (controller.signal.aborted) return;
       const attempt = translationRetryAttemptsRef.current.get(jobKey) || 0;
@@ -267,6 +283,11 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
           };
         }
         if (Array.isArray(progress.subtitles)) {
+          let gained = false;
+          for (const cue of progress.subtitles) {
+            if (cue.text_zh?.trim() && !translatedIds.has(cue.id)) { translatedIds.add(cue.id); gained = true; }
+          }
+          if (gained) lastProgressAt = Date.now();
           setSubs((current) => mergeSubtitleProgress(current, progress.subtitles));
           const persisted = await onSubtitlesProcessed?.(progress.subtitles);
           if (import.meta.env.DEV && typeof window !== "undefined" && progress.diagnostics) {
@@ -290,6 +311,7 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
         if (!controller.signal.aborted) startLearningPreload(jobKey, inputSubtitles);
       },
     }).then((result) => {
+      clearInterval(stallTimer);
       if (controller.signal.aborted) return;
       if (result?.failedCueIds?.length) {
         retryOrFinish(result.failedCueIds, result.diagnostics || {});
@@ -297,6 +319,8 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
       }
       translationRetryAttemptsRef.current.delete(jobKey);
     }).catch((error) => {
+      clearInterval(stallTimer);
+      if (controller.signal.aborted) return;
       const failedCueIds = englishCues.filter((cue) => !cue.text_zh?.trim()).map((cue) => cue.id);
       const diagnostics = {
         stage: error?.code === "TRANSLATION_PARSE_ERROR" ? "response_parse_error" : "translation_api_error",
@@ -310,6 +334,7 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
     });
     return () => {
       if (retryTimer) clearTimeout(retryTimer);
+      clearInterval(stallTimer);
       controller.abort();
       if (processingAbortRef.current === controller) processingAbortRef.current = null;
       if (learningJobRef.current === `${jobKey}:learning`) {

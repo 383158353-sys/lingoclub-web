@@ -20,7 +20,7 @@ import { getCueContext, resolveSubtitleTranslationState, subtitleHash } from "@/
 // activeId useEffect, guarded by programmaticRef so our own scrolls don't
 // trigger the listener.
 export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest }) {
-  const { loading, subs, activeId, analyzingId, hasAnyTs, onLineClick, onStudyClick, loopingId, updateSub, processingStatus = {} } = study;
+  const { loading, subs, activeId, analyzingId, hasAnyTs, onLineClick, onStudyClick, loopingId, updateSub, processingStatus = {}, retrySubtitleProcessing } = study;
   const listRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState({ time_start: "", time_end: "", text_en: "", text_zh: "" });
@@ -217,7 +217,11 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
                         />
                         {showChinese && s.text_en?.trim() && (
                           <p aria-live="polite" className={`mt-0.5 text-xs leading-snug ${s.text_zh ? (isActive ? "text-copper-soft/90" : "text-muted-foreground/55") : translationState === "error" ? "text-rose-300/80" : "text-muted-foreground/45"}`}>
-                            {s.text_zh || (translationState === "error" ? "翻译暂时失败" : "翻译中…")}
+                            {s.text_zh || (translationState === "error"
+                              ? (retrySubtitleProcessing
+                                ? <button type="button" onClick={(event) => { event.stopPropagation(); retrySubtitleProcessing(); }} className="underline decoration-dotted underline-offset-2 hover:text-rose-200">翻译失败，点此重试</button>
+                                : "翻译失败")
+                              : "翻译中…")}
                           </p>
                         )}
                       </div>
