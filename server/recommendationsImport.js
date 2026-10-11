@@ -157,7 +157,7 @@ export async function handleRecommendationsImport(req, res, body, env = process.
     .eq("user_id", userId)
     .eq("rec_date", parsed.date)
     .in("youtube_id", ids);
-  if (existing.error) throw Object.assign(new Error("Recommendation lookup failed"), { code: "DATABASE_ERROR" });
+  if (existing.error) throw Object.assign(new Error("Recommendation lookup failed"), { code: "DATABASE_ERROR", dbError: existing.error });
   const existingIds = new Set((existing.data || []).map((row) => row.youtube_id));
 
   // Content columns only: re-imports refresh text but keep watched/favorite state.
@@ -166,7 +166,7 @@ export async function handleRecommendationsImport(req, res, body, env = process.
   const { error } = await client
     .from("daily_recommendations")
     .upsert(records, { onConflict: "user_id,rec_date,youtube_id" });
-  if (error) throw Object.assign(new Error("Recommendation upsert failed"), { code: "DATABASE_ERROR" });
+  if (error) throw Object.assign(new Error("Recommendation upsert failed"), { code: "DATABASE_ERROR", dbError: error });
 
   const updated = ids.filter((id) => existingIds.has(id)).length;
   const embeddable = await embeddableChecks;
@@ -199,8 +199,9 @@ export function recommendationsImportApi(handle = handleRecommendationsImport) {
     try {
       await handle(req, res, body, process.env);
     } catch (error) {
-      console.error("[/api/recommendations/import] failed", { code: error?.code || null });
-      send(res, 502, { error: "Import failed, please retry later", code: error?.code === "DATABASE_ERROR" ? "DATABASE_ERROR" : "IMPORT_FAILED" });
+      const db = error?.dbError;
+      console.error("[/api/recommendations/import] failed", { code: error?.code || null, message: error?.message || null, dbCode: db?.code || null, dbMessage: db?.message || null, dbDetails: db?.details || null, dbHint: db?.hint || null });
+      send(res, 502, { error: "Import failed, please retry later", code: error?.code === "DATABASE_ERROR" ? "DATABASE_ERROR" : "IMPORT_FAILED", ...(db?.code ? { dbCode: db.code } : {}) });
     }
   };
 }
