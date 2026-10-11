@@ -192,3 +192,11 @@ test("translation stall watchdog trips after 60s without a new translated line",
   assert.equal(isTranslationStalled(1000, 1000 + 60000), true);
   assert.equal(isTranslationStalled(undefined, 999999), false);
 });
+
+test("setup errors map to a clear non-retry message", async () => {
+  const { translationSetupMessage } = await import("../src/lib/subtitleAiProcessing.js");
+  assert.equal(translationSetupMessage("AI_NOT_CONFIGURED"), "请先在 AI 设置里添加 API");
+  assert.match(translationSetupMessage("AUTH_REQUIRED"), /登录/);
+  assert.match(translationSetupMessage("SERVER_ENV_MISSING"), /服务端/);
+  assert.equal(translationSetupMessage("REQUEST_TIMEOUT"), "");
+});

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invokeAI } from "@/lib/localApi";
-import { getCueContext, getSubtitleProcessingCache, isTranslationStalled, processSubtitleEpisode, processSubtitleLearningWindow, recordSubtitleAICall, subtitleHash, CLOSE_READING_VERSION } from "@/lib/subtitleAiProcessing";
+import { getCueContext, getSubtitleProcessingCache, isTranslationStalled, translationSetupMessage, processSubtitleEpisode, processSubtitleLearningWindow, recordSubtitleAICall, subtitleHash, CLOSE_READING_VERSION } from "@/lib/subtitleAiProcessing";
 import { useToast } from "@/components/ui/use-toast";
 import { toSec, fromSecPrecise } from "@/lib/timecode";
 import { mergeCompleteAnalysis, partialAnalysisForCue } from "@/lib/studyLearningCache";
@@ -234,6 +234,11 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
     const retryOrFinish = (failedCueIds, diagnostics = {}) => {
       if (controller.signal.aborted) return;
       const attempt = translationRetryAttemptsRef.current.get(jobKey) || 0;
+      const setupMessage = translationSetupMessage(diagnostics.providerErrorType);
+      if (setupMessage) {
+        setProcessingStatus({ phase: "error", retrying: false, retryCount: attempt, setupMessage, failedCueIds, completed: englishCues.length - failedCueIds.length, total: englishCues.length, diagnostics });
+        return;
+      }
       if (attempt < 2) {
         const retryCount = attempt + 1;
         translationRetryAttemptsRef.current.set(jobKey, retryCount);

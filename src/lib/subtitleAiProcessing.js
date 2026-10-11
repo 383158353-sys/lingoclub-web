@@ -30,6 +30,19 @@ export function isTranslationStalled(lastProgressAt, now = Date.now(), stallMs =
   return Number.isFinite(lastProgressAt) && now - lastProgressAt >= stallMs;
 }
 
+// Errors that retrying cannot fix: the user has no AI API saved, is signed
+// out, or the server cannot read/store credentials.
+const TRANSLATION_SETUP_ERRORS = {
+  AI_NOT_CONFIGURED: "请先在 AI 设置里添加 API",
+  AI_CREDENTIALS_NOT_CONFIGURED: "请先在 AI 设置里添加 API",
+  AI_ROUTE_NOT_CONFIGURED: "请先在 AI 设置里添加 API",
+  AUTH_REQUIRED: "请先登录，再在 AI 设置里添加 API",
+  SERVER_ENV_MISSING: "服务端 AI 配置缺失，暂时无法翻译",
+};
+export function translationSetupMessage(code) {
+  return TRANSLATION_SETUP_ERRORS[String(code || "")] || "";
+}
+
 export function resolveSubtitleTranslationState(cue, phase = "processing", failedCueIds = []) {
   if (String(cue?.text_zh || "").trim()) return "success";
   const failed = failedCueIds instanceof Set ? failedCueIds : new Set(failedCueIds || []);

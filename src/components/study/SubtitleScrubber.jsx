@@ -3,6 +3,7 @@ import { Loader2, Pencil, Check, X, BookOpen, Repeat, ArrowUp, Languages } from 
 
 import { toSec } from "@/lib/timecode";
 import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
+import { AISettingsButton } from "@/components/AISettingsPanel";
 import { getCueContext, resolveSubtitleTranslationState, subtitleHash } from "@/lib/subtitleAiProcessing";
 
 // Subtitle list shown under the video. Bi-directional sync:
@@ -218,7 +219,9 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
                         {showChinese && s.text_en?.trim() && (
                           <p aria-live="polite" className={`mt-0.5 text-xs leading-snug ${s.text_zh ? (isActive ? "text-copper-soft/90" : "text-muted-foreground/55") : translationState === "error" ? "text-rose-300/80" : "text-muted-foreground/45"}`}>
                             {s.text_zh || (translationState === "error"
-                              ? (retrySubtitleProcessing
+                              ? (processingStatus.setupMessage
+                                ? <AISettingsButton onClick={(event) => event.stopPropagation()} className="underline decoration-dotted underline-offset-2 hover:text-rose-200">{processingStatus.setupMessage}</AISettingsButton>
+                                : retrySubtitleProcessing
                                 ? <button type="button" onClick={(event) => { event.stopPropagation(); retrySubtitleProcessing(); }} className="underline decoration-dotted underline-offset-2 hover:text-rose-200">翻译失败，点此重试</button>
                                 : "翻译失败")
                               : "翻译中…")}
