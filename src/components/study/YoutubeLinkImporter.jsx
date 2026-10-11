@@ -2,7 +2,7 @@ import React, { useState, useRef } from "react";
 import { Play, Loader2, CheckCircle2, AlertCircle, Link2, Smartphone, Monitor, RotateCw } from "lucide-react";
 import PageBackButton from "@/components/common/PageBackButton";
 import { useToast } from "@/components/ui/use-toast";
-import { fetchYouTubeMeta } from "@/lib/localApi";
+import { fetchYouTubeMeta, isPlaceholderVideoTitle } from "@/lib/localApi";
 import { extractYouTubeId, normalizeYouTubeUrl, transcribeYouTubeClient } from "@/lib/youtubeTranscriptClient";
 import { Image as BaseImage } from "@/components/ui/image";
 import { MobileTutorial, DesktopTutorial } from "./YoutubeImportGuide";
@@ -74,7 +74,7 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
         const result = await transcribeYouTubeClient(canonicalUrl);
         const { lines, error, title: transcriptTitle } = result;
         if (activeRequestRef.current !== videoId) return;
-        if (transcriptTitle) { setTitle(transcriptTitle); setOriginalTitle(transcriptTitle); }
+        if (transcriptTitle && !isPlaceholderVideoTitle(transcriptTitle, canonicalUrl)) { setTitle(transcriptTitle); setOriginalTitle(transcriptTitle); }
         if (lines?.length) {
           setSubtitles(lines);
           if (result.language && !/^en(?:-|$)/i.test(result.language)) setSubLanguageNote(`该视频没有英文字幕，已使用原语言（${result.language}）字幕`);
