@@ -141,13 +141,14 @@ export default function QuickStudy() {
         } catch { /* fall through to auto-fetch */ }
       }
 
-      // 2. 无扩展字幕时回退到站内抓取（15s 超时，避免长时间卡在加载中）
+      // 2. 无扩展字幕时回退到站内抓取。服务端最多用约 40s 尝试多个客户端，
+      //    原来的 15s 上限会在服务端还在重试时就提前判定“提取超时”。
       if (!subs.length) {
         if (extractYouTubeId(videoUrl)) {
           try {
             const res = await Promise.race([
               transcribeYouTubeClient(videoUrl),
-              new Promise((_, reject) => setTimeout(() => reject(new Error("提取超时")), 15000)),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("提取超时，请稍后重试")), 55000)),
             ]);
             if (!cancelled && res.lines) {
               subs = res.lines.map((l, i) => ({

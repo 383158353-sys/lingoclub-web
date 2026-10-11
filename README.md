@@ -71,3 +71,57 @@ npm run build
 See `.env.example` for variable names. `VITE_*` values are browser-visible; keep `AI_CREDENTIALS_MASTER_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `TRANSCRIPT_SERVICE_TOKEN` server-side only. Do not add Supabase service-role keys or provider API keys to the frontend or repository.
 
 For deployment, use the existing linked Vercel project and its configured environment variables. The production site is `https://lingoclub.vercel.app`.
+
+## 每日推荐导入接口（今日推荐）
+
+推荐助手每天把推荐视频 POST 到 `/api/recommendations/import`，App 的「今日推荐」页（`/recommendations`）按日期展示，点开进入 `/quick-study` 精读。
+
+服务端环境变量（只放 Vercel，不要用 `VITE_` 前缀）：
+
+- `RECOMMENDATIONS_IMPORT_TOKEN`：导入口令，调用方放在 `Authorization: Bearer <token>`。
+- `RECOMMENDATIONS_IMPORT_USER_ID`：推荐写入哪个用户（Supabase Auth 用户 UUID）。
+- `SUPABASE_SERVICE_ROLE_KEY` 与 `VITE_SUPABASE_URL`：与 `/api/ai-credentials` 共用。
+
+数据表由 `supabase/migrations/20261011000000_daily_recommendations.sql` 创建。浏览器只能读取自己的推荐、修改 `watched_at` / `favorited`，不能插入。
+
+请求体：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `date` | `YYYY-MM-DD` | 推荐日期（必填） |
+| `source` | `digest` \| `morning_read` | 默认来源，单条可覆盖 |
+| `items` | 数组，1–50 条 | 推荐列表 |
+| `items[].url` | string | YouTube 链接（watch / youtu.be / shorts / live 均可）；与 `youtube_id` 至少填一个 |
+| `items[].youtube_id` | string | 11 位视频 ID；缺省时从 `url` 解析 |
+| `items[].title` | string | 标题（必填） |
+| `items[].duration_seconds` | integer | 时长（秒） |
+| `items[].level` | string | 难度，如 `B1` |
+| `items[].tags` | string[] | 标签，最多 20 个 |
+| `items[].summary_zh` | string | 中文要点 |
+| `items[].why_relevant` | string | 为什么跟你有关 |
+| `items[].source` | `digest` \| `morning_read` | 单条来源 |
+
+同一用户、同一日期、同一视频重复导入只会更新内容，不会重置“已看/收藏”。
+
+```bash
+curl -X POST https://<your-app>/api/recommendations/import \
+  -H "Authorization: Bearer $RECOMMENDATIONS_IMPORT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "date": "2026-10-12",
+    "source": "morning_read",
+    "items": [
+      {
+        "url": "https://www.youtube.com/watch?v=UF8uR6Z6KLc",
+        "title": "Steve Jobs 2005 Stanford Commencement Address",
+        "duration_seconds": 904,
+        "level": "B2",
+        "tags": ["演讲", "人生"],
+        "summary_zh": "三个故事：连点成线、热爱与失去、死亡。",
+        "why_relevant": "语速适中、发音清晰，适合跟读练习。"
+      }
+    ]
+  }'
+```
+
+响应：`{"ok":true,"date":"2026-10-12","received":1,"inserted":1,"updated":0,"rejected":[]}`。无效条目会出现在 `rejected`（含 `index` 和原因），其余有效条目照常写入；口令错误返回 401，未配置返回 503。

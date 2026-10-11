@@ -18,6 +18,8 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
   const [posterUrl, setPosterUrl] = useState("");
   const [subtitles, setSubtitles] = useState(null);
   const [subError, setSubError] = useState("");
+  const [subErrorReason, setSubErrorReason] = useState("");
+  const [subLanguageNote, setSubLanguageNote] = useState("");
   const lastFetchedRef = useRef("");
   const activeRequestRef = useRef(null);
   const { toast } = useToast();
@@ -52,6 +54,8 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
     setFetchingSubs(true);
     setSubtitles(null);
     setSubError("");
+    setSubErrorReason("");
+    setSubLanguageNote("");
     const transcriptStartedAt = performance.now();
 
     // metadata 与 transcript 独立请求，任一失败都不会取消另一项。
@@ -71,8 +75,14 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
         const { lines, error, title: transcriptTitle } = result;
         if (activeRequestRef.current !== videoId) return;
         if (transcriptTitle) { setTitle(transcriptTitle); setOriginalTitle(transcriptTitle); }
-        if (lines?.length) setSubtitles(lines);
-        else setSubError(error || "未找到可用字幕轨");
+        if (lines?.length) {
+          setSubtitles(lines);
+          if (result.language && !/^en(?:-|$)/i.test(result.language)) setSubLanguageNote(`该视频没有英文字幕，已使用原语言（${result.language}）字幕`);
+          else if (result.translated) setSubLanguageNote(`英文字幕由 YouTube 从 ${result.originalLanguage || "原语言"} 自动翻译`);
+        } else {
+          setSubError(error || "未找到可用字幕轨");
+          setSubErrorReason(result.reason || "");
+        }
         if (import.meta.env.DEV) console.info("[youtube-import]", {
           source: result.cached ? "cache" : result.extractor?.startsWith("browser-proxy") ? "browser-link" : "server",
           extraction: result.extractor || (result.cached ? "cache" : "unavailable"),
@@ -216,13 +226,13 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
                 <span className="flex items-start gap-1.5 text-xs text-amber-400">
                   <AlertCircle size={13} className="mt-0.5 shrink-0" /> {subError || "字幕暂未读到（YouTube 风控/代理偶发失败），点重试通常即可获取"}
                 </span>
-                <button
+                {!["no_captions", "video_unavailable", "invalid_video_id"].includes(subErrorReason) && <button
                   type="button"
                   onClick={retrySubs}
                   className="inline-flex shrink-0 items-center gap-1 rounded-full border border-copper/40 bg-copper/10 px-3 py-1.5 text-[11px] font-medium text-copper transition-colors hover:bg-copper/20"
                 >
                   <RotateCw size={12} /> 重试获取字幕
-                </button>
+                </button>}
               </div>
             )}
             {/* 预览卡片 */}
@@ -246,6 +256,7 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
                       <RotateCw size={12} /> 点此重试获取字幕
                     </button>
                   )}
+                  {hasSubs && subLanguageNote && <p className="mt-1 text-[11px] text-amber-400/90">{subLanguageNote}</p>}
                 </div>
               </div>
             )}

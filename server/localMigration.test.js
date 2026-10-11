@@ -552,10 +552,11 @@ test("YouTube bot challenge is reported as inaccessible existing transcript, not
   try {
     const res = responseRecorder();
     await handleYouTubeTranscript({}, res, { url: "https://youtu.be/oX7OduG1YmI" });
-    assert.equal(res.statusCode, 502);
+    // 503: YouTube refused this server temporarily; retry / transcript service may help.
+    assert.equal(res.statusCode, 503);
     const body = JSON.parse(res.body);
     assert.equal(body.reason, "youtube_bot_challenge");
-    assert.match(body.error, /服务器端 bot challenge/);
+    assert.match(body.error, /机器人验证/);
     assert.equal(body.diagnostics.subtitleCount, 0);
   } finally {
     globalThis.fetch = previousFetch;

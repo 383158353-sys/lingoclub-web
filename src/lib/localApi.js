@@ -153,8 +153,45 @@ export async function invokeAI(task, payload = {}, options = {}) {
   return request;
 }
 
-export const fetchYouTubeTranscript = (url, options) =>
-  postJson("/api/youtube-transcript", { url }, options);
+// Transcript errors carry their own user-facing message and reason; they must
+// not go through the AI error mapping in postJson (which turned every failure
+// into "服务暂时不可用" / "模型不可用").
+export async function fetchYouTubeTranscript(url, { signal, timeoutMs = 50000 } = {}) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const response = await fetch("/api/youtube-transcript", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+      signal: controller.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data?.error || `字幕服务返回 HTTP ${response.status}`);
+      error.name = "TranscriptError";
+      error.status = response.status;
+      error.reason = data?.reason || (response.status >= 500 ? "server_error" : "request_failed");
+      error.details = { diagnostics: data?.diagnostics || null };
+      throw error;
+    }
+    return data;
+  } catch (error) {
+    if (timedOut) {
+      const timeoutError = new Error("字幕服务响应超时，请稍后重试");
+      timeoutError.name = "TimeoutError";
+      timeoutError.reason = "timeout";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
+}
 
 export async function fetchYouTubeMeta(url, { signal } = {}) {
   const endpoint = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}`;
