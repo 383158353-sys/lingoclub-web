@@ -125,3 +125,13 @@ curl -X POST https://<your-app>/api/recommendations/import \
 ```
 
 响应：`{"ok":true,"date":"2026-10-12","received":1,"inserted":1,"updated":0,"rejected":[]}`。无效条目会出现在 `rejected`（含 `index` 和原因），其余有效条目照常写入；口令错误返回 401，未配置返回 503。
+
+## YouTube 字幕提取
+
+`/api/youtube-transcript` 依次尝试：
+
+1. **Supadata**（配置了 `SUPADATA_API_KEY` 时）：由 Supadata 的服务器读取 YouTube 已有字幕（人工或自动生成），不受 Vercel 数据中心 IP 被 YouTube 拦截的影响。使用 `mode=native`，每次 1 credit，不会触发按分钟计费的 AI 转写。免费版每月 100 credits（1 次/秒），Basic 每年 $60，每月 300 credits。额度用完或 Key 无效时自动回退到下面的方式。
+2. 独立字幕服务（`TRANSCRIPT_SERVICE_URL`，见 `server/transcript/`）。
+3. 内置多客户端 innertube 提取。本地或住宅网络下可用，但在 Vercel 上常被 YouTube 要求“机器人验证”。
+
+同一视频提取成功后，服务端实例内存和浏览器 localStorage 都会缓存，重复打开不会再消耗额度。

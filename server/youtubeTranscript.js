@@ -6,6 +6,8 @@ import {
   videoId,
 } from "./transcript/youtubeTranscriptService.js";
 
+import { fetchSupadataTranscript } from "./transcript/supadataTranscript.js";
+
 export { linesFromEvents, normalizeYouTubeUrl, videoId };
 
 const TRANSCRIPT_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -106,6 +108,19 @@ function cacheTranscript(id, value) {
 
 async function resolveTranscript(rawInput, env) {
   let serviceFallback = null;
+  let supadata = null;
+  // 1. Supadata (when configured): does not depend on YouTube accepting the
+  //    Vercel datacenter IP, which YouTube now answers with a bot challenge.
+  if (env.SUPADATA_API_KEY) {
+    try {
+      const result = await fetchSupadataTranscript(videoId(rawInput), env);
+      return { result, serviceFallback: { configured: true, used: true, provider: "supadata", status: 200, reason: null } };
+    } catch (error) {
+      if (error instanceof TranscriptExtractionError) throw error; // no captions / unavailable: definitive
+      supadata = { provider: "supadata", configured: true, used: false, status: error?.status || null, reason: error?.quota ? "supadata_quota" : error?.config ? "supadata_key_rejected" : (error?.code || "supadata_error") };
+      console.warn("[/api/youtube-transcript] Supadata failed, falling back", supadata);
+    }
+  }
   if (env.TRANSCRIPT_SERVICE_URL) {
     try {
       const serviceResult = await fetchIndependentService(env.TRANSCRIPT_SERVICE_URL, { url: rawInput }, env);
@@ -137,12 +152,21 @@ async function resolveTranscript(rawInput, env) {
     const result = await extractYouTubeTranscriptDetailed(rawInput, { attempts: 3, retryDelayMs: 250, budgetMs: 40_000 });
     if (serviceFallback) serviceFallback.used = true;
     else serviceFallback = { configured: false, used: true, reason: "direct_extractor" };
+    if (supadata) serviceFallback.supadata = supadata;
     return { result, serviceFallback };
   } catch (error) {
     lastError = error;
   }
-  if (serviceFallback) lastError.serviceFallback = serviceFallback;
+  if (serviceFallback || supadata) lastError.serviceFallback = { ...(serviceFallback || {}), supadata };
   throw lastError;
+}
+
+function supadataNote(error) {
+  const reason = error?.serviceFallback?.supadata?.reason;
+  if (reason === "supadata_quota") return "（Supadata 本月额度已用完或请求过快）";
+  if (reason === "supadata_key_rejected") return "（Supadata API Key 无效，请检查 Vercel 环境变量 SUPADATA_API_KEY）";
+  if (reason) return "（Supadata 暂时不可用）";
+  return "";
 }
 
 export async function handleYouTubeTranscript(_req, res, body, env = process.env) {
@@ -181,7 +205,7 @@ export async function handleYouTubeTranscript(_req, res, body, env = process.env
     const diagnostics = knownError ? error.diagnostics : [];
     res.statusCode = statusCode;
     res.end(JSON.stringify({
-      error: knownError ? error.message : "未能读取 YouTube 字幕，请稍后重试。",
+      error: `${knownError ? error.message : "未能读取 YouTube 字幕，请稍后重试。"}${supadataNote(error)}`,
       reason: knownError ? error.reason : "transcript_unavailable",
       errors: knownError ? error.errors : [],
       diagnostics: {
