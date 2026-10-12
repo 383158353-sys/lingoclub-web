@@ -5,6 +5,7 @@ import { toSec } from "@/lib/timecode";
 import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
 import { AISettingsButton } from "@/components/AISettingsPanel";
 import { resolveSubtitleTranslationState, subtitleHash } from "@/lib/subtitleAiProcessing";
+import { createScrollIntentTracker } from "@/lib/subtitleScrollIntent";
 
 // Subtitle list shown under the video. Bi-directional sync:
 //   · Click subtitle row → video seeks to that timestamp (via onLineClick)
@@ -40,6 +41,11 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
   const scrollTimerRef = useRef(null);
   const resumeTimerRef = useRef(null);
   const resumeFollowRef = useRef(null);
+  // Decides manual-vs-programmatic scroll from real finger/wheel input (not timers), and
+  // whether a row click is a tap or the end of a scroll gesture (must never seek).
+  const intentRef = useRef(null);
+  if (!intentRef.current) intentRef.current = createScrollIntentTracker();
+  const touchingRef = useRef(false);
   // Index once per subs change instead of a findIndex per row per render (was O(n²) on every tick).
   const contextTextById = useMemo(() => {
     const map = new Map();
@@ -91,6 +97,7 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
       const delta = elRect.top - cRect.top - padTop;
       if (Math.abs(delta) < 8) return;
       programmaticRef.current = true;
+      intentRef.current.programmatic();
       container.scrollTo({ top: Math.max(0, container.scrollTop + delta), behavior: smooth ? "smooth" : "auto" });
     } else {
       // 用户已手动滚动：完全不干预滚动位置，直到点击「回到当前台词」
@@ -118,18 +125,47 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
     if (subs.length === 0) return;
     const container = listRef.current;
     if (!container) return;
+    const intent = intentRef.current;
+    const scheduleResume = () => {
+      if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = setTimeout(() => {
+        if (touchingRef.current) { scheduleResume(); return; } // finger still down
+        resumeFollowRef.current?.();
+      }, 4000);
+    };
+    const onTouchStart = (e) => { const t = e.touches[0]; touchingRef.current = true; intent.touchStart(t?.clientX || 0, t?.clientY || 0); };
+    const onTouchMove = (e) => { const t = e.touches[0]; if (t) intent.touchMove(t.clientX, t.clientY); };
+    const onTouchEnd = () => { touchingRef.current = false; intent.touchEnd(); };
+    const onWheel = () => intent.wheel();
     const onScroll = () => {
-      if (programmaticRef.current) return; // our own scroll, ignore
+      // Only finger / wheel driven scrolls (incl. iOS momentum) count as manual. Our own
+      // scrollTo + smooth animation, layout shifts and content-visibility reflow are ignored.
+      if (!intent.scroll()) return;
       if (followOnRef.current) {
         followOnRef.current = false;
         setFollowOff(true);
       }
       // Resume auto-follow 4s after the user stops scrolling manually.
-      if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
-      resumeTimerRef.current = setTimeout(() => { resumeFollowRef.current?.(); }, 4000);
+      scheduleResume();
     };
-    container.addEventListener("scroll", onScroll, { passive: true });
-    return () => { container.removeEventListener("scroll", onScroll); if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current); };
+    const opts = { passive: true };
+    container.addEventListener("touchstart", onTouchStart, opts);
+    container.addEventListener("touchmove", onTouchMove, opts);
+    container.addEventListener("touchend", onTouchEnd, opts);
+    container.addEventListener("touchcancel", onTouchEnd, opts);
+    container.addEventListener("wheel", onWheel, opts);
+    container.addEventListener("keydown", onWheel, opts);
+    container.addEventListener("scroll", onScroll, opts);
+    return () => {
+      container.removeEventListener("touchstart", onTouchStart);
+      container.removeEventListener("touchmove", onTouchMove);
+      container.removeEventListener("touchend", onTouchEnd);
+      container.removeEventListener("touchcancel", onTouchEnd);
+      container.removeEventListener("wheel", onWheel);
+      container.removeEventListener("keydown", onWheel);
+      container.removeEventListener("scroll", onScroll);
+      if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    };
   }, [subs.length]);
 
   // Cleanup timer on unmount
@@ -137,6 +173,7 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
 
   const focusActiveTranscriptCue = useCallback((cueId, { smooth = false } = {}) => {
     if (!cueId || !listRef.current) return;
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
     followOnRef.current = true;
     setFollowOff(false);
     const el = listRef.current.querySelector(`[data-sub-id="${cueId}"]`);
@@ -152,6 +189,7 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
     const container = listRef.current;
     if (container) {
       programmaticRef.current = true;
+      intentRef.current.programmatic();
       container.scrollTo({ top: 0, behavior: "smooth" });
       if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
       scrollTimerRef.current = setTimeout(() => { programmaticRef.current = false; }, 1200);
@@ -213,7 +251,11 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
                     <div className={`relative flex items-stretch rounded-md transition-colors ${isActive ? "bg-copper/20 ring-1 ring-copper/30" : "hover:bg-white/[0.03]"}`}>
                       {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-[4px] rounded-full bg-copper-soft" />}
                       <div
-                        onClick={() => onLineClick(s)}
+                        onClick={() => {
+                          // A tap that ends/stops a scroll on mobile must never seek the video.
+                          if (!intentRef.current.consumeClick()) return;
+                          onLineClick(s);
+                        }}
                         title={hasAnyTs ? "点击单词查释义，点击空白处定位视频" : "点击单词查释义"}
                         className="min-w-0 flex-1 cursor-pointer px-3 py-3 text-left"
                       >
@@ -260,6 +302,7 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
                         <button
                           type="button"
                           onClick={(event) => {
+                            if (!intentRef.current.consumeClick()) return; // scroll gesture, not a tap
                             onStudyClick(s);
                             if (event.detail > 0) event.currentTarget.blur();
                           }}
