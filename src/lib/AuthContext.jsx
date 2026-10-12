@@ -24,6 +24,17 @@ function toAppUser(value) {
   };
 }
 
+
+// supabase.auth.getSession() can hang on slow/blocked mobile networks in China (token refresh
+// against supabase.co). Never let it hold the whole app behind the auth spinner.
+const SESSION_TIMEOUT_MS = 5000;
+function getSessionWithTimeout(ms = SESSION_TIMEOUT_MS) {
+  return Promise.race([
+    supabase.auth.getSession(),
+    new Promise((resolve) => setTimeout(() => resolve({ data: { session: null }, error: { message: "session_timeout", timeout: true } }), ms)),
+  ]);
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
@@ -47,7 +58,7 @@ export function AuthProvider({ children }) {
     const shouldMigrateGuest = !localStorage.getItem(migrationKey);
     const legacyState = shouldMigrateGuest ? collectLegacyLocalState() : null;
     try {
-      const { data: readyAuth, error: sessionError } = await supabase.auth.getSession();
+      const { data: readyAuth, error: sessionError } = await getSessionWithTimeout();
       if (sessionError) throw sessionError;
       const readySession = readyAuth?.session;
       if (!readySession?.access_token || readySession.user?.id !== nextUser.id) {
@@ -114,8 +125,14 @@ export function AuthProvider({ children }) {
       return undefined;
     }
     let mounted = true;
-    supabase.auth.getSession().then(({ data, error }) => {
+    getSessionWithTimeout().then(({ data, error }) => {
       if (!mounted) return;
+      if (error?.timeout) {
+        // Render as guest now; onAuthStateChange applies the real session when it arrives.
+        console.warn("[LingoClub auth] getSession timed out, rendering without waiting");
+        setIsLoadingAuth(false);
+        return;
+      }
       if (error) setAuthError({ type: "session", message: error.message });
       void applySession(data?.session || null);
     });

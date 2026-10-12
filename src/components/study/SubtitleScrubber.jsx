@@ -5,7 +5,8 @@ import { toSec } from "@/lib/timecode";
 import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
 import { AISettingsButton } from "@/components/AISettingsPanel";
 import { resolveSubtitleTranslationState, subtitleHash } from "@/lib/subtitleAiProcessing";
-import { createScrollIntentTracker } from "@/lib/subtitleScrollIntent";
+import { createScrollIntentTracker, computeRowScrollTop, cueIndexAtTime, forceScrollTo } from "@/lib/subtitleScrollIntent";
+import { toSec as toSecForArrow } from "@/lib/timecode";
 
 // Subtitle list shown under the video. Bi-directional sync:
 //   · Click subtitle row → video seeks to that timestamp (via onLineClick)
@@ -21,7 +22,7 @@ import { createScrollIntentTracker } from "@/lib/subtitleScrollIntent";
 // It does NOT check visibility or trigger scrolls. All scrolling happens in the
 // activeId useEffect, guarded by programmaticRef so our own scrolls don't
 // trigger the listener.
-export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest }) {
+export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest, getCurrentTime }) {
   const { loading, subs, activeId, analyzingId, hasAnyTs, onLineClick, onStudyClick, loopingId, updateSub, processingStatus = {}, retrySubtitleProcessing } = study;
   const listRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
@@ -180,21 +181,57 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
     if (el) scrollToEl(el, { smooth, forceTop: true });
   }, [scrollToEl]);
 
-  // "回到当前台词": same list-only top alignment used by keyboard shortcuts.
+  // "回到当前台词" (↑). Must work every time on iOS:
+  //  · target = live player time (activeId is null in gaps between lines / may lag a tick)
+  //  · jump via direct scrollTop (smooth scrollTo / scrollIntoView get cancelled by momentum)
+  //  · our own scroll is never treated as manual until the position has settled; retry once.
+  const cancelArrowRef = useRef(null);
+  const resolveCurrentCueId = useCallback(() => {
+    const t = Number(getCurrentTime?.());
+    if (Number.isFinite(t) && t >= 0) {
+      const starts = subs.map((cue) => toSecForArrow(cue.time_start));
+      const ordered = starts.every((v, i) => i === 0 || !Number.isFinite(v) || !Number.isFinite(starts[i - 1]) || v >= starts[i - 1]);
+      if (ordered) {
+        const idx = cueIndexAtTime(starts, t);
+        if (idx >= 0) return subs[idx].id;
+      }
+    }
+    return activeId || null;
+  }, [getCurrentTime, subs, activeId]);
   const backToCurrent = useCallback(() => {
-    if (activeId) { focusActiveTranscriptCue(activeId, { smooth: true }); return; }
-    // No playback position yet → still do something visible: re-enable follow and go to the top.
+    const container = listRef.current;
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
     followOnRef.current = true;
     setFollowOff(false);
-    const container = listRef.current;
-    if (container) {
-      programmaticRef.current = true;
-      intentRef.current.programmatic();
-      container.scrollTo({ top: 0, behavior: "smooth" });
-      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
-      scrollTimerRef.current = setTimeout(() => { programmaticRef.current = false; }, 1200);
-    }
-  }, [activeId, focusActiveTranscriptCue]);
+    if (!container) return;
+    const cueId = resolveCurrentCueId();
+    const targetTop = () => {
+      const el = cueId ? container.querySelector(`[data-sub-id="${cueId}"]`) : null;
+      if (!el) return 0;
+      return computeRowScrollTop({
+        scrollTop: container.scrollTop,
+        rowTop: el.getBoundingClientRect().top,
+        containerTop: container.getBoundingClientRect().top,
+        padTop: 12,
+        scrollHeight: container.scrollHeight,
+        clientHeight: container.clientHeight,
+      });
+    };
+    cancelArrowRef.current?.();
+    programmaticRef.current = true;
+    intentRef.current.programmatic();
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    cancelArrowRef.current = forceScrollTo(container, targetTop, {
+      onDone: () => {
+        programmaticRef.current = false;
+        intentRef.current.programmatic();
+        // Follow stays on: the activeId effect keeps pinning the playing line from here.
+        followOnRef.current = true;
+        setFollowOff(false);
+      },
+    });
+  }, [resolveCurrentCueId]);
+  useEffect(() => () => cancelArrowRef.current?.(), []);
   resumeFollowRef.current = () => { if (!followOnRef.current && activeId) focusActiveTranscriptCue(activeId, { smooth: true }); };
 
   // Keyboard focus requests are explicit even when the active cue did not change.

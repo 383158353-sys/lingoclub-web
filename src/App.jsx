@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
@@ -10,31 +10,61 @@ import SiteLayout from './components/layout/SiteLayout';
 import Home from './pages/Home';
 import Login from '@/pages/Login';
 
+// Chunk downloads fail intermittently on mobile networks in China; retry once, then
+// reload the page once (fresh index.html after a deploy) instead of a dead screen.
+function lazyRetry(factory) {
+  return lazy(() => factory().catch(() => new Promise((r) => setTimeout(r, 1500)).then(factory)).catch((error) => {
+    try {
+      if (!sessionStorage.getItem('lc:chunk-reload')) { sessionStorage.setItem('lc:chunk-reload', '1'); window.location.reload(); return new Promise(() => {}); }
+    } catch { /* storage optional */ }
+    throw error;
+  }));
+}
+
 // Keep legacy Base44 pages available without loading their SDK on core local routes.
-const PageNotFound = lazy(() => import('./lib/PageNotFound'));
-const Collection = lazy(() => import('./pages/Collection'));
-const LocalStudy = lazy(() => import('./pages/LocalStudy'));
-const ExtensionGuide = lazy(() => import('./pages/ExtensionGuide'));
-const Communities = lazy(() => import('./pages/Communities'));
-const MovieCommunity = lazy(() => import('./pages/MovieCommunity'));
-const EpisodePage = lazy(() => import('./pages/EpisodePage'));
-const SceneStudy = lazy(() => import('./pages/SceneStudy'));
-const MyProjects = lazy(() => import('./pages/MyProjects'));
-const Profile = lazy(() => import('./pages/Profile'));
-const CreatorStudio = lazy(() => import('./pages/CreatorStudio'));
-const StudioManage = lazy(() => import('./pages/StudioManage'));
-const ReviewQueue = lazy(() => import('./pages/ReviewQueue'));
-const Register = lazy(() => import('@/pages/Register'));
-const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'));
-const ResetPassword = lazy(() => import('@/pages/ResetPassword'));
-const BuyCredits = lazy(() => import('./pages/BuyCredits'));
-const ThankYou = lazy(() => import('./pages/ThankYou'));
-const AdminUsers = lazy(() => import('./pages/AdminUsers'));
-const QuickStudy = lazy(() => import('./pages/QuickStudy'));
-const DailyRecommendations = lazy(() => import('./pages/DailyRecommendations'));
-const BilibiliStudy = lazy(() => import('./pages/BilibiliStudy'));
-const PublishFolder = lazy(() => import('./pages/PublishFolder'));
-const SubtitleSegmentation = lazy(() => import('./pages/SubtitleSegmentation'));
+const PageNotFound = lazyRetry(() => import('./lib/PageNotFound'));
+const Collection = lazyRetry(() => import('./pages/Collection'));
+const LocalStudy = lazyRetry(() => import('./pages/LocalStudy'));
+const ExtensionGuide = lazyRetry(() => import('./pages/ExtensionGuide'));
+const Communities = lazyRetry(() => import('./pages/Communities'));
+const MovieCommunity = lazyRetry(() => import('./pages/MovieCommunity'));
+const EpisodePage = lazyRetry(() => import('./pages/EpisodePage'));
+const SceneStudy = lazyRetry(() => import('./pages/SceneStudy'));
+const MyProjects = lazyRetry(() => import('./pages/MyProjects'));
+const Profile = lazyRetry(() => import('./pages/Profile'));
+const CreatorStudio = lazyRetry(() => import('./pages/CreatorStudio'));
+const StudioManage = lazyRetry(() => import('./pages/StudioManage'));
+const ReviewQueue = lazyRetry(() => import('./pages/ReviewQueue'));
+const Register = lazyRetry(() => import('@/pages/Register'));
+const ForgotPassword = lazyRetry(() => import('@/pages/ForgotPassword'));
+const ResetPassword = lazyRetry(() => import('@/pages/ResetPassword'));
+const BuyCredits = lazyRetry(() => import('./pages/BuyCredits'));
+const ThankYou = lazyRetry(() => import('./pages/ThankYou'));
+const AdminUsers = lazyRetry(() => import('./pages/AdminUsers'));
+const QuickStudy = lazyRetry(() => import('./pages/QuickStudy'));
+const DailyRecommendations = lazyRetry(() => import('./pages/DailyRecommendations'));
+const BilibiliStudy = lazyRetry(() => import('./pages/BilibiliStudy'));
+const PublishFolder = lazyRetry(() => import('./pages/PublishFolder'));
+const SubtitleSegmentation = lazyRetry(() => import('./pages/SubtitleSegmentation'));
+
+
+// Dark, theme-matching loader. If it is still visible after 12s (slow chunk / network),
+// show a retry button instead of spinning forever.
+function PageLoader() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setSlow(true), 12000); return () => clearTimeout(t); }, []);
+  return (
+    <div className="fixed inset-0 flex flex-col items-center justify-center gap-4 bg-[#0b0c0f] text-sm text-slate-400">
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/15 border-t-white/80" />
+      {slow && (
+        <>
+          <p>网络有点慢，还在加载…</p>
+          <button type="button" onClick={() => window.location.reload()} className="rounded-full bg-white/10 px-4 py-2 text-white active:bg-white/20">重新加载</button>
+        </>
+      )}
+    </div>
+  );
+}
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, authError } = useAuth();
@@ -42,11 +72,7 @@ const AuthenticatedApp = () => {
   // Identity gates protected requests. Public settings load independently and
   // must not keep a valid guest session on a blank spinner.
   if (isLoadingAuth) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
-      </div>
-    );
+    return <PageLoader />;
   }
 
   // Authentication errors: only user_not_registered aborts rendering;
@@ -58,7 +84,7 @@ const AuthenticatedApp = () => {
 
   // Render the main app
   return (
-    <Suspense fallback={<div className="fixed inset-0 flex items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-slate-800" /></div>}>
+    <Suspense fallback={<PageLoader />}>
     <Routes>
       {/* Public auth routes — no site chrome */}
       <Route path="/login" element={<Login />} />

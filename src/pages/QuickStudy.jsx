@@ -498,7 +498,7 @@ export default function QuickStudy() {
         />
       )}
       {hasSubs ? (
-        <SubtitleScrubber study={study} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} />
+        <SubtitleScrubber study={study} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} />
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-background-elev/30 p-6 text-sm leading-relaxed text-muted-foreground">
           {fetchError ? (
