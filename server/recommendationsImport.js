@@ -177,7 +177,7 @@ export async function handleRecommendationsImport(req, res, body, env = process.
   if (!env.LINGOCLUB_SKIP_TRANSCRIPT_WARM) {
     let timer;
     warmed = await Promise.race([
-      Promise.all(ids.map((id) => warmTranscript(id, env).catch(() => "failed"))),
+      (async () => { const out = []; for (const id of ids) out.push(await warmTranscript(id, env).catch(() => "failed")); return out; })(), // sequential: never parallel Supadata calls
       new Promise((resolve) => { timer = setTimeout(() => resolve(ids.map(() => "pending")), warmBudgetMs); }),
     ]).finally(() => clearTimeout(timer));
   }

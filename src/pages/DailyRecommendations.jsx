@@ -1,4 +1,3 @@
-import { transcribeYouTubeClient } from "@/lib/youtubeTranscriptClient";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { CheckCircle2, Clock, Heart, Loader2, PlayCircle, RotateCw, Sparkles } from "lucide-react";
@@ -32,10 +31,6 @@ function dateLabel(date, today) {
   return `${Number(month)}月${Number(day)}日`;
 }
 
-function prefetchTranscript(url) {
-  if (url) transcribeYouTubeClient(url).catch(() => null);
-}
-
 export default function DailyRecommendations() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -62,17 +57,6 @@ export default function DailyRecommendations() {
 
   useEffect(() => { load(); }, [load]);
 
-  // 预取今天前几条推荐的字幕（服务端有共享缓存，客户端结果存 localStorage），
-  // 点进观看页时字幕基本可以秒出。
-  useEffect(() => {
-    const targets = items.filter((item) => item.rec_date === today && !item.watched_at).slice(0, 3);
-    if (!targets.length) return undefined;
-    const run = () => targets.forEach((item) => { prefetchTranscript(item.url); });
-    const idle = globalThis.requestIdleCallback;
-    const handle = idle ? idle(run, { timeout: 2500 }) : setTimeout(run, 1200);
-    return () => (idle ? globalThis.cancelIdleCallback?.(handle) : clearTimeout(handle));
-  }, [items, today]);
-
   const patchItem = (id, fields) => setItems((current) => current.map((item) => (item.id === id ? { ...item, ...fields } : item)));
 
   const openItem = (item) => {
@@ -81,7 +65,6 @@ export default function DailyRecommendations() {
       patchItem(item.id, { watched_at: watchedAt });
       markRecommendationWatched(item.id, watchedAt).catch(() => patchItem(item.id, { watched_at: null }));
     }
-    prefetchTranscript(item.url);
     navigate(quickStudyPath(item));
   };
 
