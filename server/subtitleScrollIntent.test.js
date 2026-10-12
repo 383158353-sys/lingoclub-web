@@ -51,3 +51,36 @@ test("mouse click (no touch) still seeks", () => {
   const s = createScrollIntentTracker(clock());
   assert.equal(s.consumeClick(), true);
 });
+
+import { computeRowScrollTop, cueIndexAtTime, forceScrollTo } from "../src/lib/subtitleScrollIntent.js";
+
+test("computeRowScrollTop puts row at top and clamps", () => {
+  assert.equal(computeRowScrollTop({ scrollTop: 500, rowTop: 300, containerTop: 100, padTop: 12, scrollHeight: 5000, clientHeight: 600 }), 688);
+  assert.equal(computeRowScrollTop({ scrollTop: 0, rowTop: 50, containerTop: 100, padTop: 12 }), 0);
+  assert.equal(computeRowScrollTop({ scrollTop: 4000, rowTop: 2000, containerTop: 0, scrollHeight: 5000, clientHeight: 600 }), 4400);
+});
+
+test("cueIndexAtTime finds last started cue", () => {
+  const s = [0, 2, 5, 9];
+  assert.equal(cueIndexAtTime(s, 6), 2);
+  assert.equal(cueIndexAtTime(s, 9), 3);
+  assert.equal(cueIndexAtTime(s, -1), -1);
+  assert.equal(cueIndexAtTime(s, NaN), -1);
+});
+
+test("forceScrollTo retries once when momentum overrides the first jump", () => {
+  const queue = [];
+  const raf = (cb) => queue.push(cb);
+  let hijack = true;
+  const c = { style: { overflowY: "auto" }, _t: 0,
+    get scrollTop() { return this._t; },
+    set scrollTop(v) { this._t = hijack ? 9999 : v; } };
+  let result;
+  forceScrollTo(c, () => 300, { raf, onDone: (r) => { result = r; } });
+  // first attempt hijacked by "momentum"
+  for (let i = 0; i < 10 && queue.length; i++) { if (i === 3) hijack = false; queue.shift()(); }
+  while (queue.length) queue.shift()();
+  assert.equal(result, true);
+  assert.equal(c.scrollTop, 300);
+  assert.equal(c.style.overflowY, "auto");
+});

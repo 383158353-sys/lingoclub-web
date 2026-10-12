@@ -16,11 +16,16 @@
     <meta name="lingoclub-build-marker" content="lc-build-2026-08-05" />
     <!-- Google Fonts loaded non-blocking: fonts.googleapis.com is blocked in mainland China and a CSS @import hung rendering (white screen). -->
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" media="print" onload="this.media='all'" />
-    <style>html,body{background:#0b0c0f;color:#e5e7eb}</style>
+    <style>html,body{background:#0b0c0f;color:#e5e7eb;margin:0}@keyframes lcspin{to{transform:rotate(360deg)}}</style>
     <title>Lingo Club · 在故事里学会一门语言</title>
   </head>
   <body>
-    <div id="root"><div style="padding:40vh 24px 0;text-align:center;font-family:-apple-system,sans-serif;color:#9ca3af">Lingo Club 加载中…<br/><small>如果一直停在这里，请检查网络或打开 VPN 后刷新</small></div></div>
+    <div id="root"><div id="lc-boot" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#0b0c0f;color:#9ca3af;font:14px -apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:0 24px">
+      <div style="width:32px;height:32px;border-radius:50%;border:4px solid rgba(255,255,255,.15);border-top-color:rgba(255,255,255,.8);animation:lcspin .8s linear infinite"></div>
+      <div>Lingo Club 加载中…</div>
+      <div id="lc-boot-slow" style="display:none">网络有点慢。可以再等等，或<br/><button onclick="location.reload()" style="margin-top:10px;border:0;border-radius:999px;background:rgba(255,255,255,.12);color:#fff;padding:8px 18px;font:inherit">重新加载</button></div>
+    </div></div>
+    <script>setTimeout(function(){var e=document.getElementById('lc-boot-slow');if(e)e.style.display='block'},10000)</script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

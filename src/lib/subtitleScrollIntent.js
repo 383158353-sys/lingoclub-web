@@ -54,3 +54,54 @@ export function createScrollIntentTracker(now = () => Date.now()) {
     },
   };
 }
+
+// ---- "↑ 回到当前台词" helpers ----
+// Target scrollTop that puts `row` at the top of `container` (minus padTop), clamped to range.
+// Uses layout rects instead of scrollIntoView (iOS ignores/cancels it during momentum).
+export function computeRowScrollTop({ scrollTop, rowTop, containerTop, padTop = 12, scrollHeight = Infinity, clientHeight = 0 }) {
+  const raw = scrollTop + (rowTop - containerTop) - padTop;
+  const max = Math.max(0, scrollHeight - clientHeight);
+  return Math.round(Math.min(Math.max(0, raw), max));
+}
+
+// Pick the cue that should be "current" at time t (seconds): last cue whose start <= t.
+export function cueIndexAtTime(starts, t) {
+  if (!Number.isFinite(t) || !starts.length) return -1;
+  let lo = 0, hi = starts.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (Number.isFinite(starts[mid]) && starts[mid] <= t + 0.05) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return ans;
+}
+
+// Hard-jump a scroll container to `getTarget()`; robust against iOS momentum scrolling:
+// 1) briefly set overflow hidden (kills momentum), 2) assign scrollTop directly,
+// 3) after the position is stable for 2 frames verify; retry once if not reached.
+// Calls onDone(reached:boolean). Returns a cancel function.
+export function forceScrollTo(container, getTarget, { onDone, raf = (cb) => requestAnimationFrame(cb), tolerance = 4, maxFrames = 60 } = {}) {
+  let cancelled = false;
+  let attempts = 0;
+  const jump = () => {
+    attempts += 1;
+    const prev = container.style.overflowY;
+    container.style.overflowY = "hidden";
+    container.scrollTop = getTarget();
+    // Re-enable scrolling on the next frame (setting it back in the same frame can resume momentum on iOS).
+    raf(() => { container.style.overflowY = prev; container.scrollTop = getTarget(); waitStable(); });
+  };
+  let last = null, stable = 0, frames = 0;
+  const waitStable = () => {
+    if (cancelled) return;
+    frames += 1;
+    const pos = container.scrollTop;
+    stable = pos === last ? stable + 1 : 0;
+    last = pos;
+    if (stable < 2 && frames < maxFrames) { raf(waitStable); return; }
+    const reached = Math.abs(container.scrollTop - getTarget()) <= tolerance;
+    if (!reached && attempts < 2) { last = null; stable = 0; frames = 0; jump(); return; }
+    onDone?.(reached);
+  };
+  jump();
+  return () => { cancelled = true; };
+}

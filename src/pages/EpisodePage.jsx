@@ -591,7 +591,7 @@ export default function EpisodePage() {
                 onRelease={(v) => { study.exitCloseReading(); if (clockRunning) playFromLine(v); else seekAndPause(v); }}
               />
             )}
-            <SubtitleScrubber study={study} movieId={movie?.id} sourceRecordId={episode?.id} sourceUrl={episode?.video_url || movie?.video_url} movieTitle={movie?.title} episodeId={episode?.id} episodeTitle={episode?.title} sourceType="episode" editable={canEdit} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} />
+            <SubtitleScrubber study={study} movieId={movie?.id} sourceRecordId={episode?.id} sourceUrl={episode?.video_url || movie?.video_url} movieTitle={movie?.title} episodeId={episode?.id} episodeTitle={episode?.title} sourceType="episode" editable={canEdit} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} />
             <SubListResizer height={subHeight} onChange={setSubHeight} />
           </div>
         ) : null;
