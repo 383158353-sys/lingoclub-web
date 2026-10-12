@@ -115,12 +115,34 @@ export function mergeFragments(subs, opts = {}) {
     return result;
   };
 
+  // 片段内拆出的句子：按「前面有几个词」在片段的真实发声区间内定位起点。
+  // 真实区间 = [本片段起点, min(本片段终点, 下一片段起点)]——滚动式自动字幕的
+  // time_end 会和后面 1~2 条重叠，若按 time_end 平均分配，句中后半句会被算晚
+  // 最多 4s+（RiO6yDxDui4 实测 212/815 行晚于其所在片段的发声区间）。
+  const splitInCue = (splitSubs, sub, nextSub) => {
+    const start = toSec(sub.time_start);
+    if (!Number.isFinite(start)) return splitSubs;
+    let end = toSec(sub.time_end);
+    const nextStart = nextSub ? toSec(nextSub.time_start) : NaN;
+    if (Number.isFinite(nextStart) && nextStart > start && (!Number.isFinite(end) || nextStart < end)) end = nextStart;
+    if (!(end > start)) return distributeTime(splitSubs, sub.time_start, sub.time_end);
+    const counts = splitSubs.map((p) => Math.max(1, wordCount(p.text_en)));
+    const total = counts.reduce((a, b) => a + b, 0);
+    let before = 0;
+    const starts = counts.map((c) => { const t = start + (end - start) * (before / total); before += c; return t; });
+    return splitSubs.map((p, i) => ({
+      ...p,
+      time_start: fmtTime(starts[i]),
+      time_end: i + 1 < starts.length ? fmtTime(starts[i + 1]) : sub.time_end,
+    }));
+  };
+
   const preSplit = [];
-  for (const sub of filled) {
+  for (const [subIndex, sub] of filled.entries()) {
     const parts = splitBySentence(sub.text_en);
     if (parts.length <= 1) { preSplit.push(sub); continue; }
     const splitSubs = parts.map((p, i) => ({ ...sub, text_en: p, id: i === 0 ? sub.id : genId() }));
-    preSplit.push(...distributeTime(splitSubs, sub.time_start, sub.time_end));
+    preSplit.push(...splitInCue(splitSubs, sub, filled[subIndex + 1]));
   }
 
   // ===== Phase 2: 合并碎片 =====

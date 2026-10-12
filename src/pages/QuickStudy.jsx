@@ -271,6 +271,12 @@ export default function QuickStudy() {
     else if (api) { try { api.currentTime = sec; api.play?.(); } catch { /* noop */ } }
   }, [isBili]);
 
+  // 点台词行 = 跳到该句并直接播放；B 站 iframe 仍定位并暂停。
+  const seekAndPlayLine = useCallback((sec) => {
+    if (isBili) seekAndPause(sec);
+    else playFromLine(sec);
+  }, [isBili, seekAndPause, playFromLine]);
+
   const playOnly = useCallback(() => {
     if (isBili) setClockRunning(true);
     videoRef.current?.playOnly?.();
@@ -320,7 +326,7 @@ export default function QuickStudy() {
   const study = useLocalStudy({
     subtitles: materials?.subtitles,
     currentTime: studyTime,
-    onSeek: seekAndPause,
+    onSeek: seekAndPlayLine,
     onPlay: playFromLine,
     onPlayOnly: playOnly,
     onStudyEnter,

@@ -12,7 +12,7 @@ import { mergeFragments } from "@/lib/subtitleCleaner";
 import { cleanVideoTitle } from "@/lib/videoTitle";
 
 const YOUTUBE_ID_RX = /^[A-Za-z0-9_-]{11}$/;
-const TRANSCRIPT_CACHE_PREFIX = "lingoclub:youtube-transcript:v1:";
+const TRANSCRIPT_CACHE_PREFIX = "lingoclub:youtube-transcript:v2:";
 const TRANSCRIPT_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const transcriptCache = new Map();
 const transcriptRequests = new Map();
