@@ -108,7 +108,7 @@ test("only missing Chinese cues remain eligible for translation", async () => {
   }
 });
 
-test("250 translations stream in chronological 16-cue batches and map results by stable cueId", async () => {
+test("250 translations stream in playback-prioritised 16-cue batches and map results by stable cueId", async () => {
   const previous = globalThis.localStorage;
   globalThis.localStorage = { getItem: () => null, setItem: () => {} };
   try {
@@ -138,8 +138,9 @@ test("250 translations stream in chronological 16-cue batches and map results by
       onProgress: (item) => progress.push(item),
     });
     assert.equal(calls, 16);
-    assert.equal(peakConcurrency, 1);
-    assert.deepEqual(batchStarts.slice(0, 3), ["cue-0", "cue-16", "cue-32"]);
+    assert.equal(peakConcurrency, 3);
+    // Playback is at 125s → the batch containing it goes first, then the ones just ahead.
+    assert.deepEqual(batchStarts.slice(0, 3), ["cue-112", "cue-128", "cue-144"]);
     assert.equal(result.diagnostics.apiCalls, 16);
     assert.equal(result.diagnostics.completedCues, 250);
     assert.ok(progress.some((item) => item.completed >= 16 && item.subtitles?.some((cue) => cue.text_zh)));

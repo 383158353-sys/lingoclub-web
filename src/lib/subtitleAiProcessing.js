@@ -5,7 +5,7 @@ export const SUBTITLE_BATCH_SIZE = 36;
 export const SUBTITLE_BATCH_OVERLAP = 4;
 export const SUBTITLE_TRANSLATION_BATCH_SIZE = 16;
 export const SUBTITLE_TRANSLATION_BATCH_OVERLAP = 4;
-export const SUBTITLE_TRANSLATION_CONCURRENCY = 1;
+export const SUBTITLE_TRANSLATION_CONCURRENCY = 3;
 export const SUBTITLE_LEARNING_PRELOAD_BEFORE = 20;
 export const SUBTITLE_LEARNING_PRELOAD_AFTER = 40;
 export const SUBTITLE_LEARNING_BATCH_SIZE = 20;
@@ -180,6 +180,15 @@ function sanitizeLearning(items = [], type, cueId) {
   }).filter((item) => item?.basicMeaning || item?.contextMeaning);
 }
 
+function timeToSeconds(value) {
+  if (typeof value === "number") return value;
+  const text = String(value || "").trim();
+  if (!text) return NaN;
+  const parts = text.replace(",", ".").split(":").map(Number);
+  if (parts.some((n) => Number.isNaN(n))) return NaN;
+  return parts.reduce((acc, n) => acc * 60 + n, 0);
+}
+
 export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTime, signal, onProgress, onPriorityTranslationReady, translateBatch = invokeAI }) {
   const startedAt = Date.now();
   const hashValue = subtitleHash(subtitles);
@@ -330,9 +339,27 @@ export async function processSubtitleEpisode({ videoId, subtitles, getCurrentTim
     }
   };
 
+  // Priority queue: each free worker takes the remaining batch closest to the current playback
+  // position (the first batch wins at t=0), so the rows the learner is watching fill first.
+  const remaining = orderedBatches.slice();
+  const batchStart = (batch) => { const t = timeToSeconds(batch.coreCues[0]?.time_start); return Number.isFinite(t) ? t : 0; };
+  const nextBatch = () => {
+    if (!remaining.length) return null;
+    let now = 0;
+    try { now = Number(getCurrentTime?.()) || 0; } catch { now = 0; }
+    let best = 0; let bestScore = Infinity;
+    remaining.forEach((batch, index) => {
+      const start = batchStart(batch);
+      const end = timeToSeconds(batch.coreCues.at(-1)?.time_start);
+      const score = now >= start && now <= (Number.isFinite(end) ? end : start) ? -1 : (start < now ? (now - start) * 3 : start - now);
+      if (score < bestScore) { bestScore = score; best = index; }
+    });
+    cursor += 1;
+    return remaining.splice(best, 1)[0];
+  };
   const worker = async () => {
     while (!signal?.aborted) {
-      const batch = orderedBatches[cursor++];
+      const batch = nextBatch();
       if (!batch) return;
       const targets = batch.coreCues.filter((cue) => pending.has(cue.id));
       if (!targets.length) continue;
