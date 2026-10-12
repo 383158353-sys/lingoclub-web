@@ -2,7 +2,7 @@
 // 及其后的分隔符（- ♪ 空格等），只保留纯净台词文本。
 // 在所有字幕导入入口（书签解码、API 抓取、粘贴解析）统一调用，确保无论数据来源
 // 是否已清洗，进入数据库前 text_en 都是干净的。
-import { fromSecPrecise } from "@/lib/timecode";
+import { fromSecPrecise } from "./timecode.js";
 
 const LOC_TC_PREFIX_RX =
   /^\s*(?:\d+\s*(?:分(?:鐘|钟)?|min(?:ute)?s?)\s*(?:\d+\s*(?:秒(?:钟)?|sec(?:ond)?s?))?|\d+\s*(?:秒(?:钟)?|sec(?:ond)?s?))\s*[-–—:♪♫♩♬\s]*/i;
@@ -124,12 +124,23 @@ export function mergeFragments(subs, opts = {}) {
   }
 
   // ===== Phase 2: 合并碎片 =====
+  // anchorsOf 记录合并行里每个原始片段的起始字符位置与原始时间轴，Phase 3 拆分时
+  // 用它还原真实 time_start，而不是在整段（可能 20s+）上按词数平均分配。
+  const anchorsOf = new WeakMap();
   const merged = [];
   let cur = null;
 
-  for (const sub of preSplit) {
+  // 滚动式自动字幕的片段互相重叠：锚点结束时间截到下一片段起点，避免尾部半句被算晚。
+  const anchorEnd = (i) => {
+    const end = toSec(preSplit[i].time_end);
+    const next = i + 1 < preSplit.length ? toSec(preSplit[i + 1].time_start) : NaN;
+    return Number.isFinite(next) && (!Number.isFinite(end) || next < end) ? next : end;
+  };
+
+  for (const [subIndex, sub] of preSplit.entries()) {
     if (!cur) {
       cur = { ...sub, text_en: (sub.text_en || "").trim() };
+      anchorsOf.set(cur, [{ at: 0, start: toSec(sub.time_start), end: anchorEnd(subIndex) }]);
       continue;
     }
     const curText = cur.text_en || "";
@@ -143,12 +154,14 @@ export function mergeFragments(subs, opts = {}) {
     const shouldMerge = !endsSentence(curText) && gap <= maxGapSec && combinedLen <= maxLen;
 
     if (shouldMerge) {
+      anchorsOf.get(cur).push({ at: curText.length + 1, start: nextStart, end: anchorEnd(subIndex) });
       cur.text_en = (curText + " " + nextText).trim();
       if (sub.time_end) cur.time_end = sub.time_end;
       if (sub.text_zh) cur.text_zh = cur.text_zh ? (cur.text_zh + " " + sub.text_zh).trim() : sub.text_zh;
     } else {
       merged.push(cur);
       cur = { ...sub, text_en: nextText };
+      anchorsOf.set(cur, [{ at: 0, start: nextStart, end: anchorEnd(subIndex) }]);
     }
   }
   if (cur) merged.push(cur);
@@ -195,12 +208,42 @@ export function mergeFragments(subs, opts = {}) {
     return [t.slice(0, idx).trim(), ...splitLong(t.slice(idx).trim().replace(/^[,;:]\s*/, ""))];
   };
 
+  // 按原始片段锚点给拆分后的半句定时：半句首字符落在哪个原始片段里，就取该片段
+  // 的真实起点（片段内部再按字符比例插值，误差不超过单个片段的时长）。
+  const anchorTime = (parts, s, anchors) => {
+    if (!anchors || anchors.length < 2 || anchors.some((a) => !Number.isFinite(a.start))) return null;
+    const text = s.text_en || "";
+    const mergedEnd = toSec(s.time_end);
+    const timeAt = (offset) => {
+      let i = 0;
+      while (i + 1 < anchors.length && anchors[i + 1].at <= offset) i++;
+      const a = anchors[i];
+      const nextAt = i + 1 < anchors.length ? anchors[i + 1].at : text.length;
+      let spanEnd = i + 1 < anchors.length ? anchors[i + 1].start : (Number.isFinite(a.end) ? a.end : a.start);
+      if (Number.isFinite(a.end) && a.end < spanEnd) spanEnd = a.end; // 滚动字幕重叠时取较早者
+      if (!(spanEnd > a.start) || nextAt <= a.at) return a.start;
+      return a.start + (spanEnd - a.start) * Math.min(1, (offset - a.at) / (nextAt - a.at));
+    };
+    let pos = 0;
+    const starts = parts.map((p) => {
+      const idx = text.indexOf(p.text_en, pos);
+      const offset = idx >= 0 ? idx : pos;
+      pos = offset + (p.text_en || "").length;
+      return timeAt(offset);
+    });
+    return parts.map((p, i) => {
+      const end = i + 1 < parts.length ? starts[i + 1] : (Number.isFinite(mergedEnd) ? mergedEnd : starts[i] + 1);
+      return { ...p, time_start: fmtTime(starts[i]), time_end: fmtTime(Math.max(starts[i], end)) };
+    });
+  };
+
   const result = [];
   for (const s of merged) {
     const parts = splitLong(s.text_en);
     if (parts.length <= 1) { result.push(s); continue; }
     const splitSubs = parts.map((p, i) => ({ ...s, text_en: p, id: i === 0 ? s.id : genId() }));
-    result.push(...distributeTime(splitSubs, s.time_start, s.time_end));
+    const anchored = anchorTime(splitSubs, s, anchorsOf.get(s));
+    result.push(...(anchored || distributeTime(splitSubs, s.time_start, s.time_end)));
   }
 
   const ordered = result.map((s, i) => ({ ...s, order: i + 1 }));
