@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
+import { isQuotaError, shouldShowToast, STORAGE_FULL_MESSAGE } from "@/lib/storageQuota";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import LocalStudyImporter from "@/components/study/LocalStudyImporter";
 import LocalSeasonImporter from "@/components/study/LocalSeasonImporter";
@@ -821,7 +822,11 @@ export default function LocalStudy() {
       if (temporaryLocalFile) toast({ title: "本地视频已关联", description: TEMP_VIDEO_NOTICE });
       return meta;
     } catch (e) {
-      toast({ title: "保存影片失败", description: e?.message || "请稍后重试", variant: "destructive" });
+      const quota = isQuotaError(e);
+      const description = quota ? STORAGE_FULL_MESSAGE : (e?.message || "请稍后重试");
+      if (shouldShowToast(`save-movie:${quota ? "quota" : description}`)) {
+        toast({ title: "保存影片失败", description, variant: "destructive" });
+      }
       return null;
     } finally {
       setSaving(false);

@@ -1,6 +1,7 @@
 import { compareLibraryItems } from "./librarySort.js";
 import { cleanVideoTitle, isPlaceholderVideoTitle } from "./videoTitle.js";
 import { notifyLocalStateChanged, scopedStorageKey } from "./userStorage";
+import { setItemWithCacheEviction } from "./storageQuota.js";
 import { deleteLocalVideoMany, getLocalMediaAssets, saveLocalMediaAssets } from "./localStudyLibrary";
 
 const MOVIES_KEY = "lingoclub_local_movies_v1";
@@ -31,7 +32,8 @@ function read(key) {
 }
 
 function write(key, value) {
-  localStorage.setItem(scopedStorageKey(key), JSON.stringify(value));
+  // 配额满时先清可再生缓存再重试；仍失败则抛错，原数据保持不变。
+  setItemWithCacheEviction(scopedStorageKey(key), JSON.stringify(value));
   notifyLocalStateChanged();
 }
 
@@ -50,7 +52,7 @@ function recordTombstones(records, type) {
     if (!record?.id) continue;
     latest.set(`${type}:${record.id}`, { id: record.id, type, deletedAt });
   }
-  localStorage.setItem(scopedStorageKey(DELETED_KEY), JSON.stringify([...latest.values()]));
+  setItemWithCacheEviction(scopedStorageKey(DELETED_KEY), JSON.stringify([...latest.values()]));
 }
 
 export function getLocalDeletionTombstones() { return readTombstones(); }
@@ -60,7 +62,7 @@ export function replaceLocalDeletionTombstones(tombstones) {
   for (const item of Array.isArray(tombstones) ? tombstones : []) {
     if (item?.id && item?.type && item?.deletedAt) latest.set(`${item.type}:${item.id}`, item);
   }
-  localStorage.setItem(scopedStorageKey(DELETED_KEY), JSON.stringify([...latest.values()]));
+  setItemWithCacheEviction(scopedStorageKey(DELETED_KEY), JSON.stringify([...latest.values()]));
 }
 
 function id(prefix) {

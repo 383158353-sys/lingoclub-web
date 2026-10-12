@@ -5,6 +5,10 @@ import AppErrorBoundary from '@/components/AppErrorBoundary.jsx'
 import '@/index.css'
 import { startMobilePerformanceDiagnostics } from '@/lib/mobilePerformanceDiagnostics.js'
 import { installAudioUnlock } from '@/lib/audioUnlock.js'
+import { cleanupObsoleteStorage, enforceTranscriptCacheLimit } from '@/lib/storageQuota.js'
+
+cleanupObsoleteStorage()
+enforceTranscriptCacheLimit()
 
 startMobilePerformanceDiagnostics()
 installAudioUnlock()

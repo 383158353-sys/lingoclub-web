@@ -10,9 +10,9 @@
 import { fetchYouTubeTranscript } from "@/lib/localApi";
 import { mergeFragments } from "@/lib/subtitleCleaner";
 import { cleanVideoTitle } from "@/lib/videoTitle";
+import { TRANSCRIPT_CACHE_PREFIX, writeTranscriptCache } from "@/lib/storageQuota";
 
 const YOUTUBE_ID_RX = /^[A-Za-z0-9_-]{11}$/;
-const TRANSCRIPT_CACHE_PREFIX = "lingoclub:youtube-transcript:v2:";
 const TRANSCRIPT_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const transcriptCache = new Map();
 const transcriptRequests = new Map();
@@ -29,6 +29,11 @@ function readPersistentTranscript(videoId) {
     }
     if (!Array.isArray(cached?.lines) || !cached.lines.length) return null;
     if (cached.lines.some((line) => !line || typeof line.text_en !== "string" || !line.time_start)) return null;
+    try {
+      if (Date.now() - Number(cached.usedAt || 0) > 60_000) {
+        globalThis.localStorage.setItem(`${TRANSCRIPT_CACHE_PREFIX}${videoId}`, JSON.stringify({ ...cached, usedAt: Date.now() }));
+      }
+    } catch { /* LRU touch is best effort */ }
     return cached.lines;
   } catch {
     return null;
@@ -36,15 +41,8 @@ function readPersistentTranscript(videoId) {
 }
 
 function writePersistentTranscript(videoId, lines) {
-  try {
-    if (typeof globalThis.localStorage === "undefined") return;
-    globalThis.localStorage.setItem(`${TRANSCRIPT_CACHE_PREFIX}${videoId}`, JSON.stringify({
-      savedAt: Date.now(),
-      lines,
-    }));
-  } catch {
-    // Private mode, disabled storage, or quota limits must not break importing.
-  }
+  // LRU + 配额保护，绝不抛错、不弹提示。
+  writeTranscriptCache(videoId, lines);
 }
 
 export function extractYouTubeId(url) {
