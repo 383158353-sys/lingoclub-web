@@ -84,3 +84,35 @@ test("forceScrollTo retries once when momentum overrides the first jump", () => 
   assert.equal(c.scrollTop, 300);
   assert.equal(c.style.overflowY, "auto");
 });
+
+test("ignoreScrollFor swallows late programmatic scroll events but not touches", async () => {
+  const { createScrollIntentTracker } = await import("../src/lib/subtitleScrollIntent.js");
+  let t = 1000;
+  const intent = createScrollIntentTracker(() => t);
+  intent.ignoreScrollFor(500);
+  t = 1300; assert.equal(intent.scroll(), false);
+  intent.touchStart(0, 0); assert.equal(intent.scroll(), true);
+  intent.touchEnd(); t = 1400; assert.equal(intent.scroll(), true); // real momentum still counts as user
+});
+
+test("resolvePlaybackTime falls back when iframe reports 0 / NaN", async () => {
+  const { resolvePlaybackTime } = await import("../src/lib/subtitleScrollIntent.js");
+  assert.equal(resolvePlaybackTime(0, 42), 42);
+  assert.equal(resolvePlaybackTime(undefined, 42), 42);
+  assert.equal(resolvePlaybackTime(12.5, 42), 12.5);
+  assert.equal(resolvePlaybackTime(0, null), 0);
+});
+
+test("forceScrollTo keeps re-aligning while the target moves during settle", async () => {
+  const { forceScrollTo } = await import("../src/lib/subtitleScrollIntent.js");
+  const queue = [];
+  const raf = (cb) => queue.push(cb);
+  const container = { style: {}, scrollTop: 0 };
+  let target = 100;
+  let done = null;
+  forceScrollTo(container, () => target, { raf, settleFrames: 10, onDone: (ok) => { done = ok; } });
+  let frames = 0;
+  while (queue.length && frames < 200) { if (frames === 5) target = 180; queue.shift()(); frames += 1; }
+  assert.equal(container.scrollTop, 180);
+  assert.equal(done, true);
+});

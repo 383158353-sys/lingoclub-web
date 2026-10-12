@@ -5,7 +5,7 @@ import { toSec } from "@/lib/timecode";
 import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
 import { AISettingsButton } from "@/components/AISettingsPanel";
 import { resolveSubtitleTranslationState, subtitleHash } from "@/lib/subtitleAiProcessing";
-import { createScrollIntentTracker, computeRowScrollTop, cueIndexAtTime, forceScrollTo } from "@/lib/subtitleScrollIntent";
+import { createScrollIntentTracker, computeRowScrollTop, cueIndexAtTime, forceScrollTo, resolvePlaybackTime } from "@/lib/subtitleScrollIntent";
 import { toSec as toSecForArrow } from "@/lib/timecode";
 
 // Subtitle list shown under the video. Bi-directional sync:
@@ -47,6 +47,8 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
   const intentRef = useRef(null);
   if (!intentRef.current) intentRef.current = createScrollIntentTracker();
   const touchingRef = useRef(false);
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
   // Index once per subs change instead of a findIndex per row per render (was O(n²) on every tick).
   const contextTextById = useMemo(() => {
     const map = new Map();
@@ -120,6 +122,25 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
     scrollToEl(el, { forceTop: false });
   }, [activeId, subs, scrollToEl]);
 
+  // Rows grow when translations stream in, which pushes the pinned line down while
+  // follow is on. Re-pin (instant) whenever the list's size changes.
+  useEffect(() => {
+    const container = listRef.current;
+    const list = container?.querySelector("ul");
+    if (!list || typeof ResizeObserver === "undefined") return undefined;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (!followOnRef.current || touchingRef.current || !activeIdRef.current) return;
+        const el = container.querySelector(`[data-sub-id="${activeIdRef.current}"]`);
+        if (el) { intentRef.current.ignoreScrollFor(200); scrollToEl(el, { forceTop: true }); }
+      });
+    });
+    observer.observe(list);
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); };
+  }, [subs.length, scrollToEl]);
+
   // User scroll detection: any scroll NOT caused by our own scrollTo → user scrolled → disable pin-to-top
   // Re-attach when subs load (list isn't rendered until subs are available)
   useEffect(() => {
@@ -186,8 +207,20 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
   //  · jump via direct scrollTop (smooth scrollTo / scrollIntoView get cancelled by momentum)
   //  · our own scroll is never treated as manual until the position has settled; retry once.
   const cancelArrowRef = useRef(null);
+  const lastTimeRef = useRef(0);
+  // Remember the last good playback time (fallback when the iframe API reports 0).
+  useEffect(() => {
+    if (!activeId) return;
+    try {
+      const t = Number(getCurrentTime?.());
+      if (Number.isFinite(t) && t > 0.25) lastTimeRef.current = t;
+    } catch { /* player not ready */ }
+  }, [activeId, getCurrentTime]);
   const resolveCurrentCueId = useCallback(() => {
-    const t = Number(getCurrentTime?.());
+    let live;
+    try { live = getCurrentTime?.(); } catch { live = undefined; }
+    const activeCue = activeId ? subs.find((cue) => cue.id === activeId) : null;
+    const t = resolvePlaybackTime(live, (lastTimeRef.current > 0.5 ? lastTimeRef.current : null) ?? toSecForArrow(activeCue?.time_start));
     if (Number.isFinite(t) && t >= 0) {
       const starts = subs.map((cue) => toSecForArrow(cue.time_start));
       const ordered = starts.every((v, i) => i === 0 || !Number.isFinite(v) || !Number.isFinite(starts[i - 1]) || v >= starts[i - 1]);
@@ -204,8 +237,9 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
     followOnRef.current = true;
     setFollowOff(false);
     if (!container) return;
-    const cueId = resolveCurrentCueId();
+    // Resolve the cue on every frame: playback keeps moving while we settle.
     const targetTop = () => {
+      const cueId = resolveCurrentCueId();
       const el = cueId ? container.querySelector(`[data-sub-id="${cueId}"]`) : null;
       if (!el) return 0;
       return computeRowScrollTop({
@@ -220,11 +254,15 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
     cancelArrowRef.current?.();
     programmaticRef.current = true;
     intentRef.current.programmatic();
+    intentRef.current.ignoreScrollFor(1600);
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
     cancelArrowRef.current = forceScrollTo(container, targetTop, {
+      isInterrupted: () => touchingRef.current, // user grabbed the list again: stop fighting them
       onDone: () => {
         programmaticRef.current = false;
         intentRef.current.programmatic();
+        // Swallow iOS's trailing scroll events (~300ms) after the jump (unless the user touched).
+        if (!touchingRef.current) intentRef.current.ignoreScrollFor(300);
         // Follow stays on: the activeId effect keeps pinning the playing line from here.
         followOnRef.current = true;
         setFollowOff(false);

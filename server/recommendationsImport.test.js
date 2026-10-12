@@ -99,9 +99,9 @@ test("import upserts valid rows for the configured user and reports counts", asy
   const db = fakeSupabase({ existing: ["arj7oStGLkU"] });
   const res = response();
   const body = { ...validBody, items: [...validBody.items, { title: "missing url" }] };
-  await handleRecommendationsImport({ headers: { authorization: "Bearer secret-token" } }, res, body, ENV, { createSupabase: () => db.client, checkEmbeddable: async (id) => id !== "arj7oStGLkU" });
+  await handleRecommendationsImport({ headers: { authorization: "Bearer secret-token" } }, res, body, ENV, { createSupabase: () => db.client, checkEmbeddable: async (id) => id !== "arj7oStGLkU", warmTranscript: async (id) => (id === "dQw4w9WgXcQ" ? "stored" : "cached") });
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.body.items, [{ youtube_id: "dQw4w9WgXcQ", embeddable: true }, { youtube_id: "arj7oStGLkU", embeddable: false }]);
+  assert.deepEqual(res.body.items, [{ youtube_id: "dQw4w9WgXcQ", embeddable: true, transcript: "stored" }, { youtube_id: "arj7oStGLkU", embeddable: false, transcript: "cached" }]);
   assert.deepEqual({ ...res.body, rejected: res.body.rejected.length, items: undefined }, { ok: true, date: "2026-10-11", received: 3, inserted: 1, updated: 1, rejected: 1, items: undefined });
   assert.equal(db.calls.table, "daily_recommendations");
   assert.deepEqual(db.calls.filters.slice(0, 2), [["user_id", USER_ID], ["rec_date", "2026-10-11"]]);
