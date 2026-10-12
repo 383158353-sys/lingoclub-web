@@ -14,10 +14,13 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Lingo Club" />
     <meta name="lingoclub-build-marker" content="lc-build-2026-08-05" />
+    <!-- Google Fonts loaded non-blocking: fonts.googleapis.com is blocked in mainland China and a CSS @import hung rendering (white screen). -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" media="print" onload="this.media='all'" />
+    <style>html,body{background:#0b0c0f;color:#e5e7eb}</style>
     <title>Lingo Club · 在故事里学会一门语言</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div style="padding:40vh 24px 0;text-align:center;font-family:-apple-system,sans-serif;color:#9ca3af">Lingo Club 加载中…<br/><small>如果一直停在这里，请检查网络或打开 VPN 后刷新</small></div></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

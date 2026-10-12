@@ -1296,15 +1296,15 @@ export default function LocalStudy() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] px-4 lg:px-10 pt-20 pb-16 md:pt-28 md:pb-20">
+    <div className="mx-auto w-full max-w-[1600px] px-4 lg:px-10 pt-20 pb-16 md:pt-28 md:pb-20" style={{ paddingTop: "max(5rem, calc(4rem + env(safe-area-inset-top)))" }}>
       <PageBackButton onClick={() => {
         const context = searchParams.get("returnContext");
         if (context === "review") navigate("/collection?resumeReview=1");
         else if (context === "mistakes") navigate("/collection?tab=errors&restore=1");
         else if (context === "collection") navigate("/collection?restore=1");
-        else if (window.history.state?.lingoclubLocalPlayer) window.history.back();
+        else if (window.history.state?.lingoclubLocalPlayer && window.history.length > 1) window.history.back();
         else resetImport();
-      }} className="mb-3" />
+      }} className="relative z-40 mb-3 min-h-11 pr-4" style={{ touchAction: "manipulation" }} />
 
       <div className="mt-4 border-b border-border/50 pb-5 md:mt-6 md:pb-8">
         <p className="text-[11px] uppercase tracking-luxe text-copper/80">我的影片 · 本机</p>

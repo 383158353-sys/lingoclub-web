@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Loader2, Pencil, Check, X, BookOpen, Repeat, ArrowUp, Languages } from "lucide-react";
 
 import { toSec } from "@/lib/timecode";
 import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
 import { AISettingsButton } from "@/components/AISettingsPanel";
-import { getCueContext, resolveSubtitleTranslationState, subtitleHash } from "@/lib/subtitleAiProcessing";
+import { resolveSubtitleTranslationState, subtitleHash } from "@/lib/subtitleAiProcessing";
 
 // Subtitle list shown under the video. Bi-directional sync:
 //   · Click subtitle row → video seeks to that timestamp (via onLineClick)
@@ -38,6 +38,16 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
   });
   const programmaticRef = useRef(false);   // true while we're scrolling via scrollTo (suppress user-scroll detection)
   const scrollTimerRef = useRef(null);
+  const resumeTimerRef = useRef(null);
+  const resumeFollowRef = useRef(null);
+  // Index once per subs change instead of a findIndex per row per render (was O(n²) on every tick).
+  const contextTextById = useMemo(() => {
+    const map = new Map();
+    subs.forEach((cue, index) => {
+      map.set(cue.id, subs.slice(Math.max(0, index - 4), index + 5).map((c) => c.text_en || "").filter(Boolean).join("\n"));
+    });
+    return map;
+  }, [subs]);
 
   const startEdit = (s) => {
     setEditErr("");
@@ -88,8 +98,10 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
     }
 
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
-    // Reset programmatic flag quickly after instant scroll so user scroll detection stays responsive
-    scrollTimerRef.current = setTimeout(() => { programmaticRef.current = false; }, smooth ? 400 : 80);
+    // Reset programmatic flag after the scroll settles. iOS Safari smooth scrolling runs well past
+    // 400ms; resetting too early made our own scroll look like a user scroll, which turned follow
+    // off again right after tapping ↑ (the "arrow does nothing" bug).
+    scrollTimerRef.current = setTimeout(() => { programmaticRef.current = false; }, smooth ? 1200 : 150);
   }, []);
 
   // Auto-scroll on activeId change (video progressed or user scrubbed to a new line)
@@ -112,9 +124,12 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
         followOnRef.current = false;
         setFollowOff(true);
       }
+      // Resume auto-follow 4s after the user stops scrolling manually.
+      if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = setTimeout(() => { resumeFollowRef.current?.(); }, 4000);
     };
     container.addEventListener("scroll", onScroll, { passive: true });
-    return () => container.removeEventListener("scroll", onScroll);
+    return () => { container.removeEventListener("scroll", onScroll); if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current); };
   }, [subs.length]);
 
   // Cleanup timer on unmount
@@ -130,8 +145,19 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
 
   // "回到当前台词": same list-only top alignment used by keyboard shortcuts.
   const backToCurrent = useCallback(() => {
-    focusActiveTranscriptCue(activeId, { smooth: true });
+    if (activeId) { focusActiveTranscriptCue(activeId, { smooth: true }); return; }
+    // No playback position yet → still do something visible: re-enable follow and go to the top.
+    followOnRef.current = true;
+    setFollowOff(false);
+    const container = listRef.current;
+    if (container) {
+      programmaticRef.current = true;
+      container.scrollTo({ top: 0, behavior: "smooth" });
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+      scrollTimerRef.current = setTimeout(() => { programmaticRef.current = false; }, 1200);
+    }
   }, [activeId, focusActiveTranscriptCue]);
+  resumeFollowRef.current = () => { if (!followOnRef.current && activeId) focusActiveTranscriptCue(activeId, { smooth: true }); };
 
   // Keyboard focus requests are explicit even when the active cue did not change.
   // This uses the same list-only top alignment as the existing return-to-current control.
@@ -163,9 +189,8 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
               const isActive = s.id === activeId;
               const isEditing = editingId === s.id;
               const translationState = resolveSubtitleTranslationState(s, processingStatus.phase, failedTranslationIds);
-              const cueContext = getCueContext(subs, s.id, 4);
               return (
-                <li key={s.id} data-sub-id={s.id}>
+                <li key={s.id} data-sub-id={s.id} style={isActive || isEditing ? undefined : { contentVisibility: "auto", containIntrinsicSize: "auto 64px" }}>
                   {isEditing ? (
                     <div className="rounded-md border border-copper/40 bg-background-elev/40 p-3">
                       <div className="flex flex-wrap items-center gap-2">
@@ -213,7 +238,7 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
                           translation={s.text_zh}
                           aiProcessing={s.ai_processing}
                           subtitleHash={processingHash}
-                          contextText={[...cueContext.previous, cueContext.target, ...cueContext.next].filter(Boolean).map((cue) => cue.text).join("\n")}
+                          contextText={contextTextById.get(s.id) || ""}
                           className={`leading-snug ${isActive ? "text-base font-semibold text-foreground" : "text-sm text-foreground/60"}`}
                         />
                         {showChinese && s.text_en?.trim() && (
@@ -264,15 +289,15 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
           <div className="h-52" aria-hidden />
         </div>
         {followOff && (
-          <div className="absolute left-1/2 top-2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full bg-black/55 p-1 text-white backdrop-blur-sm">
+          <div className="absolute left-1/2 top-2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-full bg-black/70 p-1 text-white" style={{ transform: "translate3d(-50%,0,0)", touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}>
             <button
               type="button"
               onClick={backToCurrent}
               title="回到当前台词"
               aria-label="回到当前台词"
-              className="inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors hover:bg-white/15"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:bg-white/15 active:bg-white/25"
             >
-              <ArrowUp size={14} />
+              <ArrowUp size={16} />
             </button>
             <button
               type="button"
@@ -284,7 +309,7 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
               title={showChinese ? "隐藏中文" : "显示中文"}
               aria-label={showChinese ? "隐藏中文" : "显示中文"}
               aria-pressed={showChinese}
-              className={`inline-flex h-7 min-w-8 items-center justify-center gap-1 rounded-full px-1.5 text-[11px] font-semibold transition-colors hover:bg-white/15 ${showChinese ? "text-mint" : "text-white"}`}
+              className={`inline-flex h-9 min-w-9 items-center justify-center gap-1 rounded-full px-1.5 text-[11px] font-semibold transition-colors hover:bg-white/15 ${showChinese ? "text-mint" : "text-white"}`}
             >
               <Languages size={13} />
             </button>

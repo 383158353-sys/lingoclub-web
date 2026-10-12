@@ -87,7 +87,10 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
 
     const origin = typeof window !== "undefined" ? window.location.origin : undefined;
 
-    // Fallback: if YT IFrame API doesn't load within 6s, inject a plain iframe.
+    // Fallback: if YT IFrame API doesn't load within 6s, inject a plain iframe (enablejsapi=1).
+    // When the API arrives later we attach YT.Player to THIS iframe, so time sync, highlight and
+    // the playing-state check keep working (previously the player bound to a detached node).
+    let fallbackIframe = null;
     const fallbackTimer = setTimeout(() => {
       if (cancelled || ytPlayerRef.current) return;
       host.innerHTML = "";
@@ -99,10 +102,12 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
       iframe.title = "YouTube video player";
       iframe.setAttribute("allowfullscreen", "");
       host.appendChild(iframe);
+      fallbackIframe = iframe;
     }, 6000);
     const availabilityTimer = setTimeout(() => {
       const state = ytPlayerRef.current?.getPlayerState?.();
-      if (!cancelled && state !== 1 && state !== 3) setEmbedUnavailable(true);
+      const t = lastClockRef.current.time;
+      if (!cancelled && state !== 1 && state !== 3 && !(t > 0)) setEmbedUnavailable(true);
     }, 12000);
 
     const emit = (t) => {
@@ -117,11 +122,9 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     loadYTApi().then(() => {
       if (cancelled) return;
       try { ytPlayerRef.current?.destroy?.(); } catch { /* noop */ }
-      ytPlayerRef.current = new window.YT.Player(mount, {
-        videoId: embed.videoId,
-        width: "100%",
-        height: "100%",
-        playerVars: createYouTubePlayerVars(origin),
+      const target = fallbackIframe && fallbackIframe.isConnected ? fallbackIframe : mount;
+      ytPlayerRef.current = new window.YT.Player(target, {
+        ...(target === mount ? { videoId: embed.videoId, width: "100%", height: "100%", playerVars: createYouTubePlayerVars(origin) } : {}),
         events: {
           onReady: (e) => {
             if (cancelled) return;
@@ -141,7 +144,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
             }
           },
           onStateChange: (e) => {
-            if (e.data === 1) setEmbedUnavailable(false);
+            if (e.data === 1 || e.data === 3) { setEmbedUnavailable(false); setPlayerErrorCode(null); }
             // 1=playing, 2=paused, 3=buffering → emit time for snappy scrub feedback
             if (e.data === 1 || e.data === 2 || e.data === 3) {
               try { emit(e.target.getCurrentTime()); } catch { /* noop */ }
@@ -169,6 +172,8 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
         if (previous.time != null && Math.abs(time - previous.time) > jumpThreshold && now >= suppressSeekDetectionUntilRef.current) {
           onUserSeekRef.current?.(time);
         }
+        // Time is advancing → the embed is really playing; drop any stale "unavailable" warning.
+        if (previous.time != null && time > previous.time + 0.05) { setEmbedUnavailable(false); setPlayerErrorCode(null); }
         lastClockRef.current = { time, at: now };
         emit(time);
       } catch { /* not ready */ }
