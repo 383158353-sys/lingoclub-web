@@ -52,10 +52,10 @@ export async function fetchSupadataTranscript(id, env, { fetchImpl = fetch, wait
   if (status === 202 && body?.jobId) {
     const jobId = body.jobId;
     const deadline = Date.now() + pollBudgetMs;
-    // Short, growing poll interval (300ms → 1s) instead of a flat 1.5s.
+    // Reliability first: 1.5s then exponential backoff (max 4s) to avoid Supadata 429.
     for (let poll = 0; ; poll += 1) {
       if (Date.now() >= deadline) throw new SupadataError("Supadata job timed out", { status: 202, code: "job-timeout" });
-      await wait(Math.min(1000, 300 + poll * 150));
+      await wait(Math.min(4000, 1500 * 1.5 ** poll));
       ({ status, body } = await fetchJson(`${API_BASE}/transcript/${encodeURIComponent(jobId)}`, apiKey, fetchImpl, 10_000));
       if (status !== 200) break;
       if (body?.status === "failed") throw new SupadataError("Supadata job failed", { status, code: "job-failed" });
