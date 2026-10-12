@@ -80,6 +80,10 @@ export default function QuickStudy() {
     const metaRequest = !titleParam && extractYouTubeId(videoUrl)
       ? fetchYouTubeMeta(videoUrl).catch(() => null)
       : null;
+    // 字幕请求与页面渲染/扩展字幕解码并行启动；有扩展字幕时结果直接丢弃。
+    const transcriptRequest = !subsB64 && extractYouTubeId(videoUrl)
+      ? transcribeYouTubeClient(videoUrl).catch((error) => ({ error: error?.message || "提取失败" }))
+      : null;
     (async () => {
       let subs = [];
 
@@ -154,7 +158,7 @@ export default function QuickStudy() {
         if (extractYouTubeId(videoUrl)) {
           try {
             const res = await Promise.race([
-              transcribeYouTubeClient(videoUrl),
+              transcriptRequest || transcribeYouTubeClient(videoUrl),
               new Promise((_, reject) => setTimeout(() => reject(new Error("提取超时，请稍后重试")), 55000)),
             ]);
             if (!cancelled && res.lines) {
@@ -182,22 +186,28 @@ export default function QuickStudy() {
 
       if (cancelled) return;
 
-      // 无 title 参数时用视频真实标题（与字幕抓取并行，见下方 metaRequest）。
-      let movieTitle = titleParam;
-      if (!movieTitle && metaRequest) {
-        const meta = await metaRequest;
-        if (meta?.title) movieTitle = meta.title;
-      }
-      movieTitle = movieTitle || "快速导入视频";
-      if (cancelled) return;
+      // 先显示学习页，标题和保存/同步放到后台（国内网络下 syncUserState 可能要好几秒）。
+      let movieTitle = titleParam || "快速导入视频";
+      setMaterials({
+        videoUrl,
+        videoName: movieTitle,
+        subtitles: subs,
+        posterUrl: "",
+        recordId: null,
+        hasLocalVideo: false,
+      });
+      setLoading(false);
 
-      // 3. 已登录则保存到 LocalMovieMeta（跨设备可见）
-      let recordId = null;
-      if (user) {
+      (async () => {
+        if (!titleParam && metaRequest) {
+          const meta = await metaRequest;
+          if (meta?.title) movieTitle = meta.title;
+          if (!cancelled && meta?.title) setMaterials((current) => current && ({ ...current, videoName: movieTitle }));
+        }
+        if (!user || cancelled) return;
         try {
           // Same storage as the paste importer: local library + user_state sync,
-          // so the video shows up at the top of 我的视频. (The old base44 entity
-          // call failed silently on this deployment.)
+          // so the video shows up at the top of 我的视频.
           const saved = await localMovies.importMovie({
             name: movieTitle,
             original_title: movieTitle === "快速导入视频" ? "" : movieTitle,
@@ -205,22 +215,10 @@ export default function QuickStudy() {
             video_url: videoUrl,
             subtitles: subs,
           });
-          recordId = saved.movie.id;
+          if (!cancelled) setMaterials((current) => current && ({ ...current, recordId: saved.movie.id }));
           if (user?.id) await syncUserState(user.id).catch(() => null);
         } catch { /* non-critical: studying still works without saving */ }
-      }
-
-      if (cancelled) return;
-
-      setMaterials({
-        videoUrl,
-        videoName: movieTitle,
-        subtitles: subs,
-        posterUrl: "",
-        recordId,
-        hasLocalVideo: false,
-      });
-      setLoading(false);
+      })();
 
       if (subs.length > 0) {
         toast({ title: `已导入 ${subs.length} 条字幕`, description: "可以开始逐句精读了。" });

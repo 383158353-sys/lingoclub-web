@@ -7,6 +7,7 @@ import {
 } from "./transcript/youtubeTranscriptService.js";
 
 import { fetchSupadataTranscript } from "./transcript/supadataTranscript.js";
+import { readSharedTranscript, writeSharedTranscript } from "./transcriptStore.js";
 
 export { linesFromEvents, normalizeYouTubeUrl, videoId };
 
@@ -169,7 +170,7 @@ function supadataNote(error) {
   return "";
 }
 
-export async function handleYouTubeTranscript(_req, res, body, env = process.env) {
+export async function handleYouTubeTranscript(_req, res, body, env = process.env, options = {}) {
   const rawInput = String(body?.url || "");
   const normalizedUrl = normalizeYouTubeUrl(rawInput);
   const id = videoId(rawInput);
@@ -189,16 +190,24 @@ export async function handleYouTubeTranscript(_req, res, body, env = process.env
 
   let request = transcriptRequests.get(id);
   if (!request) {
-    request = resolveTranscript(rawInput, env)
+    request = (async () => {
+      // Shared Supabase cache: a video imported before (by anyone, or warmed by
+      // the daily recommendations import) returns without calling Supadata.
+      const shared = await readSharedTranscript(id, env, { createSupabase: options.createSupabase });
+      if (shared) return { result: shared, serviceFallback: { provider: "supabase-cache", used: true }, fromShared: true };
+      const value = await resolveTranscript(rawInput, env);
+      await writeSharedTranscript(id, value.result, env, { createSupabase: options.createSupabase });
+      return value;
+    })()
       .then((value) => { cacheTranscript(id, value); return value; })
       .finally(() => transcriptRequests.delete(id));
     transcriptRequests.set(id, request);
   }
 
   try {
-    const { result, serviceFallback } = await request;
+    const { result, serviceFallback, fromShared } = await request;
     res.statusCode = 200;
-    res.end(JSON.stringify(successPayload(result, rawInput, normalizedUrl, { serviceFallback })));
+    res.end(JSON.stringify(successPayload(result, rawInput, normalizedUrl, { cached: Boolean(fromShared), serviceFallback })));
   } catch (error) {
     const knownError = error instanceof TranscriptExtractionError;
     const statusCode = knownError ? error.statusCode : 502;
@@ -222,5 +231,18 @@ export async function handleYouTubeTranscript(_req, res, body, env = process.env
         upstream: diagnostics,
       },
     }));
+  }
+}
+
+// Fetch and store a transcript without an HTTP response (used to pre-warm the
+// shared cache for newly imported daily recommendations). Never throws.
+export async function warmTranscript(id, env = process.env, options = {}) {
+  try {
+    if (await readSharedTranscript(id, env, options)) return "cached";
+    const value = await resolveTranscript(id, env);
+    cacheTranscript(id, value);
+    return (await writeSharedTranscript(id, value.result, env, options)) ? "stored" : "fetched";
+  } catch {
+    return "failed";
   }
 }

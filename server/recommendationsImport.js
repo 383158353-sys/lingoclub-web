@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { videoId as extractVideoId } from "./transcript/youtubeTranscriptService.js";
 import { checkOEmbed } from "./youtubeMeta.js";
+import { warmTranscript as defaultWarmTranscript } from "./youtubeTranscript.js";
 
 // oEmbed answers 401/403 when the owner disabled embedding: such videos cannot
 // play inside the app (only "在 YouTube 上观看"), though subtitles still work.
@@ -129,7 +130,7 @@ export function getImportSupabase(env) {
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-export async function handleRecommendationsImport(req, res, body, env = process.env, { createSupabase = getImportSupabase, checkEmbeddable = defaultCheckEmbeddable } = {}) {
+export async function handleRecommendationsImport(req, res, body, env = process.env, { createSupabase = getImportSupabase, checkEmbeddable = defaultCheckEmbeddable, warmTranscript = defaultWarmTranscript, warmBudgetMs = 18_000 } = {}) {
   const expectedToken = String(env.RECOMMENDATIONS_IMPORT_TOKEN || "");
   const userId = String(env.RECOMMENDATIONS_IMPORT_USER_ID || "").trim();
   if (!expectedToken || !UUID_RX.test(userId)) {
@@ -170,6 +171,16 @@ export async function handleRecommendationsImport(req, res, body, env = process.
 
   const updated = ids.filter((id) => existingIds.has(id)).length;
   const embeddable = await embeddableChecks;
+  // Pre-warm the shared transcript cache so opening a recommendation shows
+  // subtitles instantly. Bounded so the import response is never held long.
+  let warmed = [];
+  if (!env.LINGOCLUB_SKIP_TRANSCRIPT_WARM) {
+    let timer;
+    warmed = await Promise.race([
+      Promise.all(ids.map((id) => warmTranscript(id, env).catch(() => "failed"))),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(ids.map(() => "pending")), warmBudgetMs); }),
+    ]).finally(() => clearTimeout(timer));
+  }
   return send(res, 200, {
     ok: true,
     date: parsed.date,
@@ -178,7 +189,7 @@ export async function handleRecommendationsImport(req, res, body, env = process.
     updated,
     rejected: parsed.rejected,
     // true / false (embedding disabled: watch on YouTube only) / null (unknown)
-    items: ids.map((youtube_id, index) => ({ youtube_id, embeddable: embeddable[index] ?? null })),
+    items: ids.map((youtube_id, index) => ({ youtube_id, embeddable: embeddable[index] ?? null, transcript: warmed[index] ?? null })),
   });
 }
 
