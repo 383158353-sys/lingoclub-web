@@ -211,3 +211,17 @@
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
+
+/* iOS：输入框字号 <16px 时聚焦/粘贴会自动放大页面；全局禁止自动缩放 */
+html, body {
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+@media (max-width: 1024px), (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
