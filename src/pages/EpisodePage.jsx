@@ -97,7 +97,7 @@ export default function EpisodePage() {
   const { toast } = useToast();
   const videoRef = useRef(null);
   const isBilibili = /bilibili\.com\/video\/(BV|av)|player\.bilibili\.com\/player/i.test(episode?.video_url || "");
-  // 点击台词行：定位到该时间点但暂停在那——不再像过去那样自动播放。
+  // seekAndPause：定位到该时间点并暂停（B 站点台词行、进度条暂停态使用）。
   // B 站跨域 iframe：以 autoplay=0&t=sec 重载（pause API）→ 在该秒停下并暂停。
   // YouTube / 原生视频：api.pause(sec) 现在 seek+pause 一并完成。
   // seekAndPause = 点台词行:把"影子时钟"移到该秒并暂停在其上。
@@ -132,6 +132,13 @@ export default function EpisodePage() {
     if (api?.play) api.play(sec);
     else if (api) { try { api.currentTime = sec; api.play?.(); } catch { /* noop */ } }
   }, []);
+
+  // 点台词行 = 跳到该句并直接播放（YouTube / 原生：在点击手势内同步 seekTo+playVideo，iOS 允许）。
+  // B 站跨域 iframe 仍保持原「定位并暂停」逻辑（移动端重载 iframe 会打断原生播放）。
+  const seekAndPlayLine = useCallback((sec) => {
+    if (isBilibili) seekAndPause(sec);
+    else playFromLine(sec);
+  }, [isBilibili, seekAndPause, playFromLine]);
 
   // 精读专用：暂停但不跳转进度 / 从当前位置恢复播放
   const playOnly = useCallback(() => {
@@ -241,7 +248,7 @@ export default function EpisodePage() {
     loopRangeRef.current = null;
     setLoopRange(null);
   }, []);
-  const study = useEpisodeStudy({ episodeId: episode?.id, movieTitle: movie?.title, currentTime: studyTime, reloadKey: subsReloadKey, onSeek: seekAndPause, onPlayOnly: playOnly, onStudyEnter, onStudyExit });
+  const study = useEpisodeStudy({ episodeId: episode?.id, movieTitle: movie?.title, currentTime: studyTime, reloadKey: subsReloadKey, onSeek: seekAndPlayLine, onPlayOnly: playOnly, onStudyEnter, onStudyExit });
   const onExternalSeek = useCallback((time) => {
     const activeLoop = loopRangeRef.current;
     if (activeLoop && (time < activeLoop.start - 0.05 || time > activeLoop.end + 0.35)) study.exitCloseReading();

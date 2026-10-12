@@ -80,3 +80,34 @@ test("lines that were not split keep their exact raw start", () => {
   assert.equal(lines[0].time_start, "0:01.000");
   assert.equal(lines[0].time_end, "0:04.000");
 });
+
+// Punctuated rolling captions (RiO6yDxDui4): sentence breaks fall inside a chunk
+// whose time_end overlaps the next 1–2 chunks. Every line must start inside the
+// real speaking span [chunk start, next chunk start] of its first word.
+test("punctuated rolling captions: no line starts after its first word's chunk span", () => {
+  const { lines } = JSON.parse(readFileSync(new URL("./fixtures/lines-RiO6yDxDui4.json", import.meta.url), "utf8"));
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9']+/g, " ").trim().split(" ").filter(Boolean);
+  const words = [];
+  lines.forEach((c, i) => {
+    const s = toSec(c.time_start);
+    let e = toSec(c.time_end);
+    const n = lines[i + 1] ? toSec(lines[i + 1].time_start) : e;
+    if (n > s && n < e) e = n;
+    norm(c.text_en).forEach((w) => words.push({ w, s, e }));
+  });
+  const out = mergeFragments(lines);
+  let p = 0;
+  let checked = 0;
+  for (const line of out) {
+    const ws = norm(line.text_en);
+    if (!ws.length) continue;
+    let k = p;
+    while (k < words.length && words[k].w !== ws[0]) k++;
+    assert.ok(k < words.length);
+    const t = toSec(line.time_start);
+    assert.ok(t >= words[k].s - 0.15 && t <= words[k].e + 0.05, `${line.time_start} "${line.text_en.slice(0, 40)}" outside [${words[k].s}, ${words[k].e}]`);
+    p = k + ws.length;
+    checked++;
+  }
+  assert.ok(checked > 800);
+});
