@@ -9,6 +9,8 @@ import { normalizeSourceCue } from "@/lib/vocabularySourceCue";
 // 选区用 window.getSelection 取得,气泡以 fixed 定位贴在选区正上方中心。
 export default function SelectionBubble({ text, translation, movieId, movieTitle, sceneId, subtitleId, timestamp, sourceCue, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, className, title, children }) {
   const wrapRef = useRef(null);
+  const textRef = useRef(null);
+  const selectedTextRef = useRef("");
   const [bubble, setBubble] = useState(null);
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
@@ -17,7 +19,8 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
     setTimeout(() => {
       const sel = window.getSelection && window.getSelection();
       const t = sel ? sel.toString().trim() : "";
-      if (!t || !wrapRef.current || !sel.anchorNode || !wrapRef.current.contains(sel.anchorNode) || sel.rangeCount === 0) {
+      if (selectedTextRef.current) return;
+      if (!t || !textRef.current || !sel.anchorNode || !textRef.current.contains(sel.anchorNode) || !textRef.current.contains(sel.focusNode) || sel.rangeCount === 0) {
         setBubble(null); return;
       }
       const rect = sel.getRangeAt(0).getBoundingClientRect();
@@ -34,7 +37,7 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
   }, [sourceType]);
 
   const save = async () => {
-    const t = (bubble?.text || "").trim();
+    const t = (selectedTextRef.current || bubble?.text || "").trim();
     if (!t) return;
     setSaving(true);
     try {
@@ -77,6 +80,7 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
     } catch (e) {
       toast({ title: "收藏失败", description: e.message, variant: "destructive" });
     } finally {
+      selectedTextRef.current = "";
       setSaving(false);
     }
   };
@@ -98,11 +102,12 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
 
   return (
     <div ref={wrapRef} onMouseUp={onMouseUp} className={className} title={title} style={{ position: "relative" }}>
-      {children != null ? children : text}
+      <span ref={textRef}>{children != null ? children : text}</span>
       {bubble && (
         <div data-bubble style={{ position: "fixed", left: bubble.x, top: bubble.y, transform: "translate(-50%, -100%)", zIndex: 60 }}>
           <button
             type="button"
+            onPointerDown={(event) => { selectedTextRef.current = bubble.text; event.preventDefault(); }}
             onClick={save}
             disabled={saving}
             className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-copper px-3 py-1.5 text-xs font-medium text-copper-foreground shadow-lg shadow-copper/20"

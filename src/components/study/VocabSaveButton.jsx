@@ -51,6 +51,7 @@ export default function VocabSaveButton({ expression, meaning, tag, type = "phra
       };
       await saveVocabularyEntry(payload);
       setSaved(true);
+      if (sourceType === "article") toast({ title: "已加入语料库", description: expression });
       onSaved?.();
     } catch {
       toast({ title: "收藏失败", description: "请稍后重试", variant: "destructive" });

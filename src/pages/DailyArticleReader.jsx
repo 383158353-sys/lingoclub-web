@@ -47,7 +47,10 @@ export default function DailyArticleReader() {
   const source = article ? { sourceType: "article", sourceRecordId: article.id, sourceUrl: article.source_url, movieTitle: article.title } : {};
   const href = articleSourceUrl(article?.source_url);
   return <div className="mx-auto max-w-5xl px-4 pb-20 pt-24 md:px-8 md:pt-28">
-    <Link to="/recommendations?tab=articles" className="inline-flex min-h-10 items-center gap-2 text-sm text-muted-foreground"><ArrowLeft size={16} /> 返回今日推荐</Link>
+    <div className="flex items-center justify-between gap-3">
+      <Link to="/recommendations?tab=articles" className="inline-flex min-h-10 items-center gap-2 text-sm text-muted-foreground"><ArrowLeft size={16} /><span className="md:hidden">返回文章</span><span className="hidden md:inline">返回今日推荐</span></Link>
+      <Link to="/collection" className="inline-flex min-h-10 items-center text-sm text-copper">语料库</Link>
+    </div>
     {!user ? <div className="py-16 text-center"><p>登录后查看每日推荐</p><Link to="/login" className="mt-4 inline-block text-copper">邮箱登录</Link></div>
       : !articlesAvailable() ? <p className="py-16 text-center">云端服务未配置</p>
       : loading ? <div className="flex justify-center py-20"><Loader2 className="animate-spin" /></div>
@@ -55,12 +58,13 @@ export default function DailyArticleReader() {
       : article && <>
         <header className="mt-6 border-b border-border pb-6">
           <h1 className="font-display text-2xl leading-tight md:text-4xl">{article.title}</h1>
-          <p className="mt-3 text-xs text-muted-foreground">{article.outlet || articleDomain(article.source_url)} · {article.author} · {article.rec_date}{article.level && ` · ${article.level}`}{article.read_at && " · 已读"}</p>
+          <p className="mt-3 text-xs text-muted-foreground">{[article.outlet || articleDomain(article.source_url), article.author, article.rec_date, article.level, article.read_at && "已读"].filter(Boolean).join(" · ")}</p>
           <div className="mt-4 flex gap-4">{href && <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-9 items-center gap-2 text-sm text-copper"><ExternalLink size={15} /> 查看出处</a>}
             <button type="button" onClick={favorite} disabled={saving} aria-pressed={article.favorited} className="inline-flex min-h-9 items-center gap-2 text-sm text-copper"><Heart size={16} fill={article.favorited ? "currentColor" : "none"} />{article.favorited ? "已收藏" : "收藏文章"}</button></div>
         </header>
         <section className="mt-8" aria-label="正文">
           <h2 className="mb-5 font-display text-xl">正文</h2>
+          <p className="mb-4 text-xs text-muted-foreground">划选单词或短语，点击弹出的收藏按钮即可加入语料库；手机上可长按选词。</p>
           <div className="space-y-7">{articleParagraphs(article.body_en).map((paragraph, index) => {
             const summary = analysis.paragraph_summaries.find((row) => row.index === index + 1)?.zh;
             return <div key={`${id}-${index}`}>
