@@ -171,7 +171,7 @@ export default function SubtitleWordLookup({ text, translation, movieId, videoId
             </p>
           )}
           {word.err && !word.loading && <div className="space-y-1"><p className="text-xs text-rose-300">{word.err}</p>{word.err === "AI 解析尚未配置" && <AISettingsButton className="text-[11px] text-copper underline">设置 AI →</AISettingsButton>}</div>}
-          {word.err && !word.loading && sourceType === "article" && <button type="button" onClick={() => !saved && save()} className="mt-3 min-h-11 rounded-full border border-copper/40 px-4 text-sm text-copper">{saved ? "已收藏" : "先收藏单词"}</button>}
+          {word.err && !word.loading && ["article", "library_article"].includes(sourceType) && <button type="button" onClick={() => !saved && save()} className="mt-3 min-h-11 rounded-full border border-copper/40 px-4 text-sm text-copper">{saved ? "已收藏" : "先收藏单词"}</button>}
           {word.profile && !word.loading && (
             <div className="flex flex-col gap-0">
               <div className="flex items-center justify-between gap-2">

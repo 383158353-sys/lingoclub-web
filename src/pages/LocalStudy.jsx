@@ -19,6 +19,8 @@ import { useToast } from "@/components/ui/use-toast";
 import MinimalSubtitleBar from "@/components/study/MinimalSubtitleBar";
 import TheaterOverlay from "@/components/study/TheaterOverlay";
 import LocalStudyLibrary from "@/components/study/LocalStudyLibrary";
+import ArticleLinkImporter from "@/components/study/ArticleLinkImporter";
+import LibraryArticleList from "@/components/study/LibraryArticleList";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { RotateCcw, Maximize2, Film, Loader2, EyeOff, Play, Pause, Info, Pencil, Check, X, RotateCw } from "lucide-react";
 import BilibiliScrubber from "@/components/study/BilibiliScrubber";
@@ -134,7 +136,7 @@ export default function LocalStudy() {
   // and the importer components remain unchanged.
   useEffect(() => {
     const requestedMode = searchParams.get("import");
-    if (requestedMode !== "youtube" && requestedMode !== "local") return;
+    if (!["youtube", "local", "article"].includes(requestedMode)) return;
     setImportMode(requestedMode);
     setShowImporter(true);
     const nextParams = new URLSearchParams(searchParams);
@@ -1131,6 +1133,7 @@ export default function LocalStudy() {
   // ===== 库视图 =====
   if (!materials) {
     if (showImporter) {
+      if (importMode === "article") return <ArticleLinkImporter onReady={() => { setShowImporter(false); setImportMode(null); setSearchParams({ tab: "articles" }); }} onCancel={() => { setShowImporter(false); setImportMode(null); }} />;
       if (importMode === "youtube") {
         return <YoutubeLinkImporter onReady={onImported} onCancel={() => { setShowImporter(false); setImportMode(null); }} saving={saving} />;
       }
@@ -1139,7 +1142,14 @@ export default function LocalStudy() {
       }
       return <LocalStudyImporter onReady={onImported} onCancel={() => { setShowImporter(false); setImportMode(null); }} saving={saving} />;
     }
-    return (
+    const articleTab = searchParams.get("tab") === "articles";
+    const importArticle = () => { if (requireAuth()) { setImportMode("article"); setShowImporter(true); } };
+    return (<>
+      <div className="mx-auto max-w-[1400px] px-4 pt-5 md:pt-28 lg:px-10">
+        <div className="flex gap-2" aria-label="学习类型">{[['films','影视'],['articles','文章']].map(([key,label])=><button key={key} type="button" aria-pressed={articleTab === (key==='articles')} onClick={()=>setSearchParams(key==='articles'?{tab:'articles'}:{})} className={`min-h-10 rounded-full border px-5 text-sm ${articleTab===(key==='articles')?'border-copper/60 bg-copper/10 text-foreground':'border-border text-muted-foreground'}`}>{label}</button>)}</div>
+        {articleTab && <LibraryArticleList onImport={importArticle}/>}
+      </div>
+      {!articleTab &&
       <LocalStudyLibrary
         metas={metas}
         folders={folders}
@@ -1167,7 +1177,8 @@ export default function LocalStudy() {
         onImportYoutube={() => { setImportMode("youtube"); setShowImporter(true); }}
         onPublishFolder={null}
         onUnpublishFolder={null}
-      />
+      />}
+      </>
     );
   }
 

@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { BookOpen, Captions, Clapperboard, Plus, Sparkles, Youtube } from "lucide-react";
+import { BookOpen, Captions, Clapperboard, Plus, Sparkles, Youtube, UserRound } from "lucide-react";
 
 const importLinks = [
   { label: "YouTube 视频", icon: Youtube, to: "/local-study?import=youtube" },
   { label: "本地视频", icon: Clapperboard, to: "/local-study?import=local" },
+  { label: "精读文章", icon: BookOpen, to: "/local-study?tab=articles&import=article" },
 ];
 
 export default function MobileBottomNav({ hidden = false }) {
@@ -51,7 +52,7 @@ export default function MobileBottomNav({ hidden = false }) {
           </div>
         )}
 
-        <div className="mx-auto grid h-[3.75rem] max-w-lg grid-cols-4 items-center">
+        <div className="mx-auto grid h-[3.75rem] max-w-lg grid-cols-5 items-center">
           <NavLink
             to="/local-study"
             aria-label="学习"
@@ -72,7 +73,7 @@ export default function MobileBottomNav({ hidden = false }) {
 
           <button
             type="button"
-            aria-label="导入视频"
+            aria-label="导入内容"
             aria-expanded={importOpen}
             onClick={() => setImportOpen((open) => !open)}
             className={`mx-auto flex h-full flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors ${importOpen ? "text-mint" : "text-foreground/85"}`}
@@ -80,7 +81,7 @@ export default function MobileBottomNav({ hidden = false }) {
             <span className="-mt-4 grid h-12 w-12 place-items-center rounded-[1.1rem] border border-mint/45 bg-mint text-background shadow-lg shadow-mint/20 transition-transform active:translate-y-0.5">
               {importOpen ? <Plus size={23} className="rotate-45" /> : <Plus size={24} />}
             </span>
-            <span className="-mt-0.5">导入视频</span>
+            <span className="-mt-0.5">导入</span>
           </button>
 
           <NavLink
@@ -91,6 +92,7 @@ export default function MobileBottomNav({ hidden = false }) {
             <Captions size={19} strokeWidth={1.8} />
             <span>语料库</span>
           </NavLink>
+          <NavLink to="/profile" aria-label="我的" className={({isActive})=>`flex h-full flex-col items-center justify-center gap-1 text-[10px] font-medium ${isActive?'text-mint':'text-muted-foreground'}`}><UserRound size={19}/><span>我的</span></NavLink>
         </div>
       </nav>
     </>

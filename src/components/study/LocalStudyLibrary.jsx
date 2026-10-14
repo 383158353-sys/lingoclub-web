@@ -340,11 +340,10 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
     : "mt-6 grid grid-cols-2 gap-2.5 sm:gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7";
 
   return (
-    <div className="mx-auto w-full max-w-[1400px] px-4 lg:px-10 pt-20 pb-16 md:pt-28 md:pb-20">
-      <div className="mb-3"><PageBackButton onClick={goToParent} /></div>
-      <p className="text-[11px] uppercase tracking-luxe text-copper/80">工具箱 · 我的影片</p>
-      <div className="mt-2 flex items-end justify-between gap-3">
-        <h1 className="font-display text-2xl leading-tight text-foreground md:text-4xl">{landscape ? "我的视频" : activeSeason ? (activeSeason.display_title || activeSeason.name) : "我的影片"}</h1>
+    <div className="mx-auto w-full max-w-[1400px] px-4 lg:px-10 pt-3 pb-16 md:pb-20">
+      {(activeSeason || activeFolder !== "all") && <div className="mb-3"><PageBackButton onClick={goToParent} /></div>}
+      {activeSeason && <h2 className="text-lg">{activeSeason.display_title || activeSeason.name}</h2>}
+      <div className="hidden items-end justify-end gap-3 md:flex">
         <div className="flex items-center gap-2">
           {tab === "films" ? (
             <div className="flex items-center gap-2">
@@ -362,11 +361,6 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
           )}
         </div>
       </div>
-      <p className="mt-1.5 max-w-2xl text-[11px] leading-snug text-muted-foreground md:mt-2 md:text-xs">
-        {landscape
-          ? "点击「导入 YouTube 视频」粘贴链接即可导入，标题/封面/字幕自动获取，存云端任意设备可播放。拖拽视频到文件夹芯片即可分类，右键文件夹可发布为共享小组。"
-          : "本地影片保存在当前设备。整理模式可创建影集、选择删除项目，并拖动调整顺序或将影片归入影集。"}
-      </p>
 
       {/* Tab switcher */}
       <div className="mt-3 flex gap-1.5 md:mt-5">

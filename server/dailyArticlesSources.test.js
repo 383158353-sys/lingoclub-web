@@ -20,6 +20,8 @@ test("article source navigation bypasses local and video paths", async () => {
   const paths = [];
   assert.equal(await openVocabularySource({ source_type: "article", source_record_id: "article-id" }, (url) => paths.push(url)), true);
   assert.deepEqual(paths, ["/articles/article-id"]);
+  await openVocabularySource({ source_type: "library_article", source_record_id: "library-id" }, (url) => paths.push(url));
+  assert.equal(paths.pop(), "/library-articles/library-id");
   await openVocabularySource({ source_episode_id: "episode-id" }, (url) => paths.push(url));
   assert.match(paths[1], /^\/episode\/episode-id\?/);
 });

@@ -18,6 +18,7 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
   const [meaning, setMeaning] = useState({ loading: false, text: "", error: "" });
   const [saved, setSaved] = useState(false);
   const { toast } = useToast();
+  const isArticle = ["article", "library_article"].includes(sourceType);
 
   const onMouseUp = () => {
     setTimeout(() => {
@@ -35,13 +36,13 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
 
   // 手机长按与拖动选择不一定触发 mouseup，文章阅读也监听原生选区变化。
   useEffect(() => {
-    if (sourceType !== "article") return;
+    if (!isArticle) return;
     document.addEventListener("selectionchange", onMouseUp);
     return () => document.removeEventListener("selectionchange", onMouseUp);
   }, [sourceType]);
 
   useEffect(() => {
-    if (sourceType !== "article" || !bubble?.text) return;
+    if (!isArticle || !bubble?.text) return;
     let active = true;
     setSaved(false);
     const selected = bubble.text;
@@ -65,9 +66,9 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
       const cue = normalizeSourceCue(sourceCue || { id: subtitleId, start: timestamp, textEn: text, textZh: translation });
       await saveVocabularyEntry({
         text_en: t,
-        text_zh: sourceType === "article" ? meaning.text : "",
+        text_zh: isArticle ? meaning.text : "",
         expression_en: t,
-        meaning_zh: sourceType === "article" ? meaning.text : "",
+        meaning_zh: isArticle ? meaning.text : "",
         type: t.indexOf(" ") >= 0 ? (t.split(/\s+/).length > 4 ? "sentence" : "phrase") : "word",
         tag: "划词",
         tags: ["划词"],
@@ -97,7 +98,7 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
       });
       toast({ title: "已加入我的单词库", description: t });
       try { window.getSelection().removeAllRanges(); } catch { /* noop */ }
-      if (sourceType === "article") setSaved(true);
+      if (isArticle) setSaved(true);
       else setBubble(null);
     } catch (e) {
       toast({ title: "收藏失败", description: e.message, variant: "destructive" });
@@ -127,7 +128,7 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
       <div ref={textRef}>{children != null ? children : text}</div>
       {bubble && (
         <div data-bubble style={{ position: "fixed", left: bubble.x, top: bubble.y, transform: bubble.below ? "translate(-50%, 0)" : "translate(-50%, -100%)", zIndex: 70 }}>
-          {sourceType === "article" ? <div className="w-72 max-w-[calc(100vw-24px)] rounded-xl border border-border bg-card px-4 py-3 text-left shadow-xl" onPointerDown={(event) => { selectedTextRef.current = bubble.text; event.preventDefault(); }}>
+          {isArticle ? <div className="w-72 max-w-[calc(100vw-24px)] rounded-xl border border-border bg-card px-4 py-3 text-left shadow-xl" onPointerDown={(event) => { selectedTextRef.current = bubble.text; event.preventDefault(); }}>
             <div className="flex items-start justify-between gap-3">
               <p className="min-w-0 flex-1 break-words text-sm font-semibold leading-relaxed text-foreground">{bubble.text}</p>
               <button type="button" onClick={save} disabled={saving || saved} className={`inline-flex min-h-10 shrink-0 items-center gap-1 rounded-full border px-3 text-xs ${saved ? "border-mint/40 text-mint" : "border-border text-copper"}`}>

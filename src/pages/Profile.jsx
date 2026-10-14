@@ -33,8 +33,8 @@ export default function Profile() {
 
   const initial = (user.full_name || user.email || "U").trim().slice(0, 1).toUpperCase();
   const lastSyncedAt = cloudSyncStatus?.lastSyncedAt ? new Date(cloudSyncStatus.lastSyncedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "尚无记录";
-  return <main className="mx-auto max-w-3xl px-4 pt-24 pb-24 sm:px-6 md:pt-28">
-    <h1 className="font-display text-2xl text-foreground sm:text-3xl">账户设置</h1>
+  return <main className="mx-auto max-w-3xl px-4 pt-6 pb-24 sm:px-6 md:pt-28">
+    <h1 className="font-display text-2xl text-foreground sm:text-3xl">个人主页</h1>
     <section className="mt-6 flex items-center gap-4 rounded-xl border border-border/70 bg-card p-4">
       {user.picture ? <img src={user.picture} alt="" className="h-14 w-14 rounded-full object-cover" /> : <span className="grid h-14 w-14 place-items-center rounded-full bg-mint/10 text-lg text-mint">{initial}</span>}
       <div className="min-w-0"><p className="truncate font-medium">{user.full_name || user.email}</p><p className="truncate text-sm text-muted-foreground">{user.email}</p></div>

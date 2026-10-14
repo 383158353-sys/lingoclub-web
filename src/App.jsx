@@ -113,6 +113,7 @@ const AuthenticatedApp = () => {
         <Route path="/quick-study" element={<QuickStudy />} />
         <Route path="/recommendations" element={<DailyRecommendations />} />
         <Route path="/articles/:id" element={<DailyArticleReader />} />
+        <Route path="/library-articles/:id" element={<DailyArticleReader library />} />
         <Route path="/extension" element={<ExtensionGuide />} />
         <Route path="/publish-folder/:folderId" element={<PublishFolder />} />
         <Route path="/subtitle-segmentation" element={<SubtitleSegmentation />} />
