@@ -25,7 +25,7 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
       }
       const rect = sel.getRangeAt(0).getBoundingClientRect();
       if (!rect || (rect.width === 0 && rect.height === 0)) { setBubble(null); return; }
-      setBubble({ x: rect.left + rect.width / 2, y: rect.top, text: t });
+      setBubble({ x: Math.max(150, Math.min(window.innerWidth - 150, rect.left + rect.width / 2)), y: rect.top < 90 ? rect.bottom + 10 : rect.top - 10, below: rect.top < 90, text: t });
     }, 0);
   };
 
@@ -102,15 +102,15 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
 
   return (
     <div ref={wrapRef} onMouseUp={onMouseUp} className={className} title={title} style={{ position: "relative" }}>
-      <span ref={textRef}>{children != null ? children : text}</span>
+      <div ref={textRef}>{children != null ? children : text}</div>
       {bubble && (
-        <div data-bubble style={{ position: "fixed", left: bubble.x, top: bubble.y, transform: "translate(-50%, -100%)", zIndex: 60 }}>
+        <div data-bubble style={{ position: "fixed", left: bubble.x, top: bubble.y, transform: bubble.below ? "translate(-50%, 0)" : "translate(-50%, -100%)", zIndex: 70 }}>
           <button
             type="button"
             onPointerDown={(event) => { selectedTextRef.current = bubble.text; event.preventDefault(); }}
             onClick={save}
             disabled={saving}
-            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-copper px-3 py-1.5 text-xs font-medium text-copper-foreground shadow-lg shadow-copper/20"
+            className="inline-flex min-h-12 max-w-[calc(100vw-24px)] items-center gap-2 whitespace-nowrap rounded-xl border border-white/15 bg-copper px-5 py-3 text-sm font-medium text-copper-foreground shadow-xl shadow-black/40"
           >
             {saving ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
             加入“{bubble.text.length > 14 ? bubble.text.slice(0, 14) + "…" : bubble.text}”

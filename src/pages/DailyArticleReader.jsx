@@ -4,6 +4,7 @@ import { ArrowLeft, ExternalLink, Heart, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 import { useToast } from "@/components/ui/use-toast";
 import SelectionBubble from "@/components/study/SelectionBubble";
+import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
 import VocabSaveButton from "@/components/study/VocabSaveButton";
 import { articlesAvailable, getDailyArticle, markArticleRead, setArticleFavorite } from "@/lib/dailyArticles";
 import { articleDomain, articleParagraphs, articleSourceUrl, normalizeAnalysis } from "@/lib/dailyArticlesFormat";
@@ -64,11 +65,13 @@ export default function DailyArticleReader() {
         </header>
         <section className="mt-8" aria-label="正文">
           <h2 className="mb-5 font-display text-xl">正文</h2>
-          <p className="mb-4 text-xs text-muted-foreground">划选单词或短语，点击弹出的收藏按钮即可加入语料库；手机上可长按选词。</p>
+          <p className="mb-4 text-xs text-muted-foreground">点击单词查看释义并收藏；短语、整句可划选后收藏，手机上可长按拖选。</p>
           <div className="space-y-7">{articleParagraphs(article.body_en).map((paragraph, index) => {
             const summary = analysis.paragraph_summaries.find((row) => row.index === index + 1)?.zh;
             return <div key={`${id}-${index}`}>
-              <SelectionBubble {...source} text={paragraph} translation={summary} className="whitespace-pre-line text-base leading-8 md:text-lg md:leading-9" />
+              <SelectionBubble {...source} text={paragraph} translation={summary} className="whitespace-pre-line text-base leading-8 md:text-lg md:leading-9">
+                <SubtitleWordLookup {...source} text={paragraph} translation={summary} contextText={paragraph} wordMeanings={Object.fromEntries(analysis.key_vocab.filter((row) => row.zh).map((row) => [row.en.toLowerCase(), row.zh]))} />
+              </SelectionBubble>
               {summary && <p className="mt-3 border-l-2 border-copper/30 pl-4 text-sm leading-relaxed text-muted-foreground"><span className="mr-2 text-foreground/70">段落大意</span>{summary}</p>}
             </div>;
           })}</div>

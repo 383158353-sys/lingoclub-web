@@ -15,15 +15,21 @@ import { getStudyWordCacheResult, quickWordLookupPayload, resolveStudyWordLookup
 // 将一句英文字幕渲染为可点击的单词 span。
 // 点击任意单词 → 先查内存缓存 → 再调 vocab-profile 后端（后端自带 DB 缓存）→ 弹出释义 + 收藏。
 // 收藏写入当前浏览器的本地词库。
-export default function SubtitleWordLookup({ text, translation, movieId, videoId = movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, subtitleId, timestamp, timestampSeconds, timestampEnd, sourceCue, className, aiProcessing, subtitleHash, contextText }) {
+export default function SubtitleWordLookup({ text, translation, movieId, videoId = movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, subtitleId, timestamp, timestampSeconds, timestampEnd, sourceCue, className, aiProcessing, subtitleHash, contextText, wordMeanings }) {
   const { toast } = useToast();
   const [word, setWord] = useState(null); // { text, loading, profile, err, x, top, h, showBelow }
   const [saved, setSaved] = useState(false);
   const [detail, setDetail] = useState(null);
+  const cue = normalizeSourceCue(sourceCue || { id: subtitleId, start: timestampSeconds ?? timestamp, end: timestampEnd, textEn: text, textZh: translation });
 
   const lookup = async (w, rect) => {
     const showBelow = rect.top < 220;
     setSaved(false);
+    const suppliedMeaning = wordMeanings?.[w.toLowerCase()];
+    if (suppliedMeaning) {
+      setWord({ text: w, loading: false, profile: { meaning: suppliedMeaning, type: "word" }, err: "", x: rect.left + rect.width / 2, top: rect.top, h: rect.height, showBelow });
+      return;
+    }
     const cacheResult = getStudyWordCacheResult({
       getSubtitleTerm: () => getCachedTerm(videoId, subtitleHash, w, subtitleId, text) || findCueLearningTerm(aiProcessing, w, text),
       getWordProfile: () => getCachedProfile(w),
@@ -134,7 +140,11 @@ export default function SubtitleWordLookup({ text, translation, movieId, videoId
           return (
             <span
               key={i}
-              onClick={(e) => { e.stopPropagation(); lookup(w, e.currentTarget.getBoundingClientRect()); }}
+              role="button"
+              tabIndex={0}
+              aria-label={`查看单词 ${w}`}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); lookup(w, e.currentTarget.getBoundingClientRect()); } }}
+              onClick={(e) => { e.stopPropagation(); if (window.getSelection()?.toString().trim()) return; lookup(w, e.currentTarget.getBoundingClientRect()); }}
               className="cursor-pointer underline decoration-transparent underline-offset-2 transition-colors hover:text-mint hover:decoration-mint/60"
             >
               {seg}
@@ -148,12 +158,12 @@ export default function SubtitleWordLookup({ text, translation, movieId, videoId
           onClick={(e) => e.stopPropagation()}
           style={{
             position: "fixed",
-            left: `${word.x}px`,
+            left: `${Math.max(150, Math.min(window.innerWidth - 150, word.x))}px`,
             top: word.showBelow ? `${word.top + word.h + 8}px` : `${word.top - 8}px`,
             transform: word.showBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)",
             zIndex: 60,
           }}
-          className="max-w-[90vw] w-fit rounded-xl border border-border bg-card px-3 py-2 text-left shadow-xl"
+          className="max-w-[calc(100vw-24px)] w-72 rounded-xl border border-border bg-card px-4 py-3 text-left shadow-xl"
         >
           {word.loading && (
             <p className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -161,6 +171,7 @@ export default function SubtitleWordLookup({ text, translation, movieId, videoId
             </p>
           )}
           {word.err && !word.loading && <div className="space-y-1"><p className="text-xs text-rose-300">{word.err}</p>{word.err === "AI 解析尚未配置" && <AISettingsButton className="text-[11px] text-copper underline">设置 AI →</AISettingsButton>}</div>}
+          {word.err && !word.loading && sourceType === "article" && <button type="button" onClick={() => !saved && save()} className="mt-3 min-h-11 rounded-full border border-copper/40 px-4 text-sm text-copper">{saved ? "已收藏" : "先收藏单词"}</button>}
           {word.profile && !word.loading && (
             <div className="flex flex-col gap-0">
               <div className="flex items-center justify-between gap-2">
@@ -168,7 +179,7 @@ export default function SubtitleWordLookup({ text, translation, movieId, videoId
                 <button
                   type="button"
                   onClick={() => !saved && save()}
-                  className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-colors ${saved ? "border-mint/40 bg-mint/10 text-mint" : "border-border text-muted-foreground hover:border-mint/50 hover:text-mint"}`}
+                  className={`inline-flex min-h-10 shrink-0 items-center gap-1 rounded-full border px-3 text-xs transition-colors ${saved ? "border-mint/40 bg-mint/10 text-mint" : "border-border text-muted-foreground hover:border-mint/50 hover:text-mint"}`}
                 >
                   {saved ? <BookmarkCheck size={10} /> : <Bookmark size={10} />} {saved ? "已收藏" : "收藏"}
                 </button>
