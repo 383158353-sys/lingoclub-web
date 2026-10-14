@@ -14,6 +14,10 @@ function youtubeId(value) {
 }
 
 export async function openVocabularySource(source, navigate, onUnavailable = () => {}, { returnContext = "collection" } = {}) {
+  if (source?.source_type === "library_article" && source?.source_record_id) {
+    navigate(`/library-articles/${encodeURIComponent(source.source_record_id)}`);
+    return true;
+  }
   if (source?.source_type === "article" && source?.source_record_id) {
     navigate(`/articles/${encodeURIComponent(source.source_record_id)}`);
     return true;

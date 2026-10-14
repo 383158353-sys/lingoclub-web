@@ -261,7 +261,7 @@ export function WordDetailBody({ vocabulary, onReturnToSource }) {
         <p className="text-xs text-muted-foreground">{primarySource.source_movie_title || "来源影片"}{primarySource.source_episode_title ? ` · ${primarySource.source_episode_title}` : ""}{primarySource.source_timestamp_text ? ` · ${primarySource.source_timestamp_text}` : ""}</p>
         <p className="mt-2 text-sm leading-relaxed text-foreground">{primarySource.source_sentence_en || expression}</p>
         {primarySource.source_sentence_zh && <p className="mt-0.5 text-sm text-muted-foreground">{primarySource.source_sentence_zh}</p>}
-        {primarySource.source_type === "article" ? (
+        {["article", "library_article"].includes(primarySource.source_type) ? (
           <button type="button" onClick={() => onReturnToSource?.(primarySource)} className="mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><BookOpen size={13} /> 返回文章</button>
         ) : <>
           <button type="button" onClick={() => setPreviewOpen((value) => !value)} className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><Volume2 size={13} />{previewOpen ? "关闭预览" : "播放原句"}</button>

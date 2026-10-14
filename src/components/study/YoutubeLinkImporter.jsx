@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { Play, Loader2, CheckCircle2, AlertCircle, Link2, Smartphone, Monitor, RotateCw } from "lucide-react";
+import { Play, Loader2, CheckCircle2, AlertCircle, Link2, RotateCw } from "lucide-react";
 import PageBackButton from "@/components/common/PageBackButton";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchYouTubeMeta, isPlaceholderVideoTitle } from "@/lib/localApi";
@@ -23,12 +23,6 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
   const lastFetchedRef = useRef("");
   const activeRequestRef = useRef(null);
   const { toast } = useToast();
-  const [tab, setTab] = useState(() => {
-    if (typeof window === "undefined") return "mobile";
-    const ua = navigator.userAgent || "";
-    if (/iPhone|iPad|iPod|Android|Mobile/i.test(ua)) return "mobile";
-    return "desktop";
-  });
 
   // 获取标题/封面 + CC 字幕。force=true 时绕过去重，用于"重试"按钮——
   // YouTube 风控与公共代理都偶发失败，首次没读到时用户应能一键重试，而不
@@ -149,39 +143,14 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
   };
 
   return (
-    <div className="mx-auto w-full max-w-2xl px-5 pt-28 pb-20">
+    <div className="mx-auto w-full max-w-2xl px-5 pt-6 pb-20 md:pt-28">
       {onCancel && <PageBackButton onClick={onCancel} disabled={saving} className="mb-3" />}
       <p className="text-[11px] uppercase tracking-luxe text-copper/80">工具箱 · 我的视频</p>
       <h1 className="mt-2 font-display text-3xl leading-tight text-foreground md:text-4xl">导入 YouTube 视频</h1>
-      <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
-        选择你的设备类型，查看对应的导入方式。移动端粘贴链接即可自动获取字幕，电脑端用书签一键提取。
-      </p>
+      <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground md:hidden">粘贴 YouTube 链接，自动获取视频信息和字幕。</p>
+      <p className="mt-3 hidden max-w-xl text-sm leading-relaxed text-muted-foreground md:block">先粘贴链接导入；也可以使用下方的浏览器书签一键导入。</p>
 
-      {/* Tab 切换 */}
-      <div className="mt-8 flex gap-2 rounded-full border border-border bg-background-elev/40 p-1">
-        <button
-          type="button"
-          onClick={() => setTab("mobile")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium transition-colors ${
-            tab === "mobile" ? "bg-mint text-background" : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Smartphone size={15} /> 移动端（手机 / 平板）
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("desktop")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium transition-colors ${
-            tab === "desktop" ? "bg-mint text-background" : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Monitor size={15} /> 电脑端
-        </button>
-      </div>
-
-      {/* ===== 移动端：粘贴链接 + 导入按钮 + 教程 ===== */}
-      {tab === "mobile" && (
-        <div className="mt-8 space-y-8">
+      <div className="mt-8 space-y-8">
           {/* 粘贴链接 + 导入按钮 */}
           <section className="rounded-2xl border border-copper/25 bg-gradient-to-br from-card to-background-elev/50 p-5 md:p-6">
             <div className="flex items-center gap-2">
@@ -262,18 +231,9 @@ export default function YoutubeLinkImporter({ onReady, onCancel, saving }) {
             )}
           </section>
 
-          {/* 下方教程 */}
-          <MobileTutorial />
-
-        </div>
-      )}
-
-      {/* ===== 电脑端：书签导入教程 ===== */}
-      {tab === "desktop" && (
-        <div className="mt-8 space-y-8">
-          <DesktopTutorial />
-        </div>
-      )}
+        <div className="md:hidden"><MobileTutorial /></div>
+        <div className="hidden md:block"><DesktopTutorial /></div>
+      </div>
     </div>
   );
 }

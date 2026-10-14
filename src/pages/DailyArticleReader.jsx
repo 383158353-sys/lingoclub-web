@@ -8,8 +8,12 @@ import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
 import VocabSaveButton from "@/components/study/VocabSaveButton";
 import { articlesAvailable, getDailyArticle, markArticleRead, setArticleFavorite } from "@/lib/dailyArticles";
 import { articleDomain, articleParagraphs, articleSourceUrl, normalizeAnalysis } from "@/lib/dailyArticlesFormat";
+import { getLibraryArticle, markLibraryArticleRead, setLibraryArticleFavorite } from "@/lib/libraryArticles";
 
-export default function DailyArticleReader() {
+export default function DailyArticleReader({ library = false }) {
+  const getArticle = library ? getLibraryArticle : getDailyArticle;
+  const markRead = library ? markLibraryArticleRead : markArticleRead;
+  const setFavorite = library ? setLibraryArticleFavorite : setArticleFavorite;
   const { id } = useParams();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -22,13 +26,13 @@ export default function DailyArticleReader() {
     let active = true;
     setArticle(null); setError(""); setLoading(true);
     if (!user || !articlesAvailable()) { setLoading(false); return; }
-    getDailyArticle(id).then(async (row) => {
+    getArticle(id).then(async (row) => {
       if (!active) return;
       if (!row) { setError("文章不存在或无权查看"); return; }
       const readAt = row.read_at || new Date().toISOString();
       setArticle({ ...row, read_at: readAt });
       if (!row.read_at) {
-        try { await markArticleRead(id, readAt); }
+        try { await markRead(id, readAt); }
         catch {
           if (active) { setArticle((current) => current ? { ...current, read_at: null } : current); toast({ title: "阅读状态保存失败", description: "请稍后重新打开文章", variant: "destructive" }); }
         }
@@ -36,20 +40,20 @@ export default function DailyArticleReader() {
     }).catch(() => { if (active) setError("文章加载失败，请稍后重试"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [id, user?.id, refresh, toast]);
+  }, [id, user?.id, refresh, toast, getArticle, markRead]);
   const favorite = async () => {
     const next = !article.favorited;
     setSaving(true); setArticle((row) => ({ ...row, favorited: next }));
-    try { await setArticleFavorite(id, next); }
+    try { await setFavorite(id, next); }
     catch { setArticle((row) => ({ ...row, favorited: !next })); toast({ title: "收藏失败", description: "请稍后重试", variant: "destructive" }); }
     finally { setSaving(false); }
   };
   const analysis = normalizeAnalysis(article?.analysis);
-  const source = article ? { sourceType: "article", sourceRecordId: article.id, sourceUrl: article.source_url, movieTitle: article.title } : {};
+  const source = article ? { sourceType: library ? "library_article" : "article", sourceRecordId: article.id, sourceUrl: article.source_url, movieTitle: article.title } : {};
   const href = articleSourceUrl(article?.source_url);
   return <div className="mx-auto max-w-5xl px-4 pb-20 pt-24 md:px-8 md:pt-28">
     <div className="flex items-center justify-between gap-3">
-      <Link to="/recommendations?tab=articles" className="inline-flex min-h-10 items-center gap-2 text-sm text-muted-foreground"><ArrowLeft size={16} /><span className="md:hidden">返回文章</span><span className="hidden md:inline">返回今日推荐</span></Link>
+      <Link to={library ? "/local-study?tab=articles" : "/recommendations?tab=articles"} className="inline-flex min-h-10 items-center gap-2 text-sm text-muted-foreground"><ArrowLeft size={16} />{library ? "返回学习文章" : "返回文章"}</Link>
       <Link to="/collection" className="inline-flex min-h-10 items-center text-sm text-copper">语料库</Link>
     </div>
     {!user ? <div className="py-16 text-center"><p>登录后查看每日推荐</p><Link to="/login" className="mt-4 inline-block text-copper">邮箱登录</Link></div>

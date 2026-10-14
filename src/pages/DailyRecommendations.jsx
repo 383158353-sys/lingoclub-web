@@ -89,7 +89,7 @@ export default function DailyRecommendations() {
   const todayCount = items.filter((item) => item.rec_date === today).length;
 
   return (
-    <div className="mx-auto max-w-5xl px-3 pb-16 pt-20 md:px-8 md:pt-28 md:pb-20">
+    <div className="mx-auto max-w-5xl px-3 pb-16 pt-6 md:px-8 md:pt-28 md:pb-20">
       <header className="hidden max-w-2xl md:block">
         <p className="mb-2 text-[10px] uppercase tracking-luxe text-copper/80 md:mb-3 md:text-[11px]">Daily Picks</p>
         <h1 className="font-display text-2xl leading-tight text-foreground md:text-5xl">今日推荐</h1>
