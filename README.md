@@ -174,7 +174,7 @@ curl -X POST http://127.0.0.1:5173/api/articles/import \
 
 学习页 `/local-study?tab=articles` 使用独立 `library_articles` 表，不与每日推荐混排。
 发布前应用 `supabase/migrations/20261015000000_library_articles.sql`；authenticated 只能 CRUD 自己的文章，匿名无权限。
-底栏「导入 → 精读文章」填写出处 URL、标题和英文正文，解析 JSON 可选。不抓取网页、不使用自动化导入口令。
+底栏「导入 → 精读文章」可粘贴公开出处 URL 后点击「提取正文」：登录态 `/api/articles/extract` 在服务端读取网页并回填标题、英文正文、作者和出处。付费墙、反爬及纯客户端渲染页面可能提取失败，此时手动填写标题和正文仍可导入。精读解析 JSON 保持选填，不会自动生成；不使用每日推荐自动化导入口令。
 阅读路由 `/library-articles/:id` 复用精读阅读页，收藏来源类型 `library_article` 回跳该路由。
 
 手机验收：学习页切换影视/文章；导入两段正文；打开阅读点词或划句收藏；语料库返回文章；底栏「我的」管理显示名。

@@ -5,6 +5,7 @@ import { sendAIError } from "./aiErrorResponse.js";
 import { handleYouTubeTranscript } from "./youtubeTranscript.js";
 import { fetchDoubanPoster, searchLocalPosters } from "./posterSearch.js";
 import { articlesImportApi } from "./articlesImport.js";
+import { handleArticleExtract } from "./articleExtract.js";
 
 async function readBody(req) {
   const raw = await readRawBody(req);
@@ -144,6 +145,13 @@ function middleware(env, productionAiApiTarget = "", fetchImpl = fetch) {
       try { req.body = await readBody(req); }
       catch { req.body = "invalid JSON"; }
       await articlesImportApi(undefined, env)(req, res);
+      return;
+    }
+    if (path === "/api/articles/extract") {
+      let body;
+      try { body = await readBody(req); }
+      catch { body = null; }
+      await handleArticleExtract(req, res, body, env);
       return;
     }
     if (req.method !== "POST" || !["/api/ai", "/api/youtube-transcript"].includes(path)) return next();
