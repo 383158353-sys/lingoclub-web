@@ -39,7 +39,7 @@ export default function SiteLayout() {
 
   return (
     <div className="flex min-h-[100dvh] w-full min-w-0 flex-col overflow-x-clip md:overflow-x-visible">
-      <div className={immersive || ["/local-study", "/profile", "/recommendations", "/collection"].includes(pathname) ? "hidden md:block" : ""}>
+      <div className={immersive || ["/local-study", "/profile", "/recommendations", "/collection"].includes(pathname) || /^\/(articles|library-articles)\//.test(pathname) ? "hidden md:block" : ""}>
         <SiteNav />
       </div>
       <main data-app-main className={`w-full min-w-0 max-w-full flex-1 ${immersive ? "pb-0" : "pb-[calc(5.75rem+env(safe-area-inset-bottom))] md:pb-0"}`}>

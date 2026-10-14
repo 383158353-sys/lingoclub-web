@@ -51,7 +51,7 @@ export default function DailyArticleReader({ library = false }) {
   const analysis = normalizeAnalysis(article?.analysis);
   const source = article ? { sourceType: library ? "library_article" : "article", sourceRecordId: article.id, sourceUrl: article.source_url, movieTitle: article.title } : {};
   const href = articleSourceUrl(article?.source_url);
-  return <div className="mx-auto max-w-5xl px-4 pb-20 pt-24 md:px-8 md:pt-28">
+  return <div className="mx-auto max-w-5xl px-4 pb-20 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-8 md:pt-28">
     <div className="flex items-center justify-between gap-3">
       <Link to={library ? "/local-study?tab=articles" : "/recommendations?tab=articles"} className="inline-flex min-h-10 items-center gap-2 text-sm text-muted-foreground"><ArrowLeft size={16} />{library ? "返回学习文章" : "返回文章"}</Link>
       <Link to="/collection" className="inline-flex min-h-10 items-center text-sm text-copper">语料库</Link>

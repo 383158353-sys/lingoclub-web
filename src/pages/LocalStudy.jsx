@@ -1145,7 +1145,7 @@ export default function LocalStudy() {
     const articleTab = searchParams.get("tab") === "articles";
     const importArticle = () => { if (requireAuth()) { setImportMode("article"); setShowImporter(true); } };
     return (<>
-      <div className="mx-auto max-w-[1400px] px-4 pt-5 md:pt-28 lg:px-10">
+      <div className="mx-auto max-w-[1400px] px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] md:pt-28 lg:px-10">
         <div className="flex gap-2" aria-label="学习类型">{[['films','影视'],['articles','文章']].map(([key,label])=><button key={key} type="button" aria-pressed={articleTab === (key==='articles')} onClick={()=>setSearchParams(key==='articles'?{tab:'articles'}:{})} className={`min-h-10 rounded-full border px-5 text-sm ${articleTab===(key==='articles')?'border-copper/60 bg-copper/10 text-foreground':'border-border text-muted-foreground'}`}>{label}</button>)}</div>
         {articleTab && <LibraryArticleList onImport={importArticle}/>}
       </div>
