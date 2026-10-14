@@ -69,7 +69,7 @@ export default function DailyArticleReader() {
           <div className="space-y-7">{articleParagraphs(article.body_en).map((paragraph, index) => {
             const summary = analysis.paragraph_summaries.find((row) => row.index === index + 1)?.zh;
             return <div key={`${id}-${index}`}>
-              <SelectionBubble {...source} text={paragraph} translation={summary} className="whitespace-pre-line text-base leading-8 md:text-lg md:leading-9">
+              <SelectionBubble {...source} text={paragraph} translation={summary} selectionMeanings={Object.fromEntries([...analysis.key_vocab, ...analysis.long_sentences, ...analysis.ielts_expressions].map((row) => [row.en.toLowerCase(), row.zh || row.usage || ""]))} className="whitespace-pre-line text-base leading-8 md:text-lg md:leading-9">
                 <SubtitleWordLookup {...source} text={paragraph} translation={summary} contextText={paragraph} wordMeanings={Object.fromEntries(analysis.key_vocab.filter((row) => row.zh).map((row) => [row.en.toLowerCase(), row.zh]))} />
               </SelectionBubble>
               {summary && <p className="mt-3 border-l-2 border-copper/30 pl-4 text-sm leading-relaxed text-muted-foreground"><span className="mr-2 text-foreground/70">段落大意</span>{summary}</p>}

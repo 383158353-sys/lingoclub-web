@@ -1,18 +1,22 @@
 import React, { useState, useRef, useEffect } from "react";
 import { saveVocabularyEntry } from "@/lib/vocabularySources";
-import { Plus, Loader2 } from "lucide-react";
+import { Plus, Loader2, Bookmark, BookmarkCheck } from "lucide-react";
+import { invokeAI } from "@/lib/localApi";
+import { safeAIErrorMessage } from "@/lib/aiSettings";
 import { useToast } from "@/components/ui/use-toast";
 import { normalizeSourceCue } from "@/lib/vocabularySourceCue";
 
 // 包装一段可选中文本;鼠标选中其中的单词/短语时,在选区上方弹出小气泡,
 // 点击即可把选中文本加入"我的单词库"(Vocabulary),供后续复习。
 // 选区用 window.getSelection 取得,气泡以 fixed 定位贴在选区正上方中心。
-export default function SelectionBubble({ text, translation, movieId, movieTitle, sceneId, subtitleId, timestamp, sourceCue, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, className, title, children }) {
+export default function SelectionBubble({ text, translation, movieId, movieTitle, sceneId, subtitleId, timestamp, sourceCue, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, className, title, children, selectionMeanings }) {
   const wrapRef = useRef(null);
   const textRef = useRef(null);
   const selectedTextRef = useRef("");
   const [bubble, setBubble] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [meaning, setMeaning] = useState({ loading: false, text: "", error: "" });
+  const [saved, setSaved] = useState(false);
   const { toast } = useToast();
 
   const onMouseUp = () => {
@@ -20,7 +24,7 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
       const sel = window.getSelection && window.getSelection();
       const t = sel ? sel.toString().trim() : "";
       if (selectedTextRef.current) return;
-      if (!t || !textRef.current || !sel.anchorNode || !textRef.current.contains(sel.anchorNode) || !textRef.current.contains(sel.focusNode) || sel.rangeCount === 0) {
+      if (!t || !textRef.current || !sel.anchorNode || !textRef.current.contains(sel.anchorNode) || (!textRef.current.contains(sel.focusNode) && !text?.includes(t)) || sel.rangeCount === 0) {
         setBubble(null); return;
       }
       const rect = sel.getRangeAt(0).getBoundingClientRect();
@@ -36,6 +40,23 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
     return () => document.removeEventListener("selectionchange", onMouseUp);
   }, [sourceType]);
 
+  useEffect(() => {
+    if (sourceType !== "article" || !bubble?.text) return;
+    let active = true;
+    setSaved(false);
+    const selected = bubble.text;
+    const supplied = selectionMeanings?.[selected.toLowerCase()] || (selected === text ? translation : "");
+    if (supplied) { setMeaning({ loading: false, text: supplied, error: "" }); return; }
+    setMeaning({ loading: true, text: "", error: "" });
+    // 等拖选稳定后才查询，复用现有精读接口与响应缓存。
+    const timer = setTimeout(() => {
+      invokeAI("translate_sentence", { text_en: selected, subtitle_text: selected, context_text: text, movie_title: movieTitle })
+        .then((result) => { if (active) setMeaning({ loading: false, text: result?.analysis?.translation || "", error: result?.analysis?.translation ? "" : "未返回译文" }); })
+        .catch((error) => { if (active) setMeaning({ loading: false, text: "", error: safeAIErrorMessage(error) }); });
+    }, 500);
+    return () => { active = false; clearTimeout(timer); };
+  }, [bubble?.text, sourceType, text, translation, movieTitle, selectionMeanings]);
+
   const save = async () => {
     const t = (selectedTextRef.current || bubble?.text || "").trim();
     if (!t) return;
@@ -44,9 +65,9 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
       const cue = normalizeSourceCue(sourceCue || { id: subtitleId, start: timestamp, textEn: text, textZh: translation });
       await saveVocabularyEntry({
         text_en: t,
-        text_zh: "",
+        text_zh: sourceType === "article" ? meaning.text : "",
         expression_en: t,
-        meaning_zh: "",
+        meaning_zh: sourceType === "article" ? meaning.text : "",
         type: t.indexOf(" ") >= 0 ? (t.split(/\s+/).length > 4 ? "sentence" : "phrase") : "word",
         tag: "划词",
         tags: ["划词"],
@@ -76,7 +97,8 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
       });
       toast({ title: "已加入我的单词库", description: t });
       try { window.getSelection().removeAllRanges(); } catch { /* noop */ }
-      setBubble(null);
+      if (sourceType === "article") setSaved(true);
+      else setBubble(null);
     } catch (e) {
       toast({ title: "收藏失败", description: e.message, variant: "destructive" });
     } finally {
@@ -105,6 +127,15 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
       <div ref={textRef}>{children != null ? children : text}</div>
       {bubble && (
         <div data-bubble style={{ position: "fixed", left: bubble.x, top: bubble.y, transform: bubble.below ? "translate(-50%, 0)" : "translate(-50%, -100%)", zIndex: 70 }}>
+          {sourceType === "article" ? <div className="w-72 max-w-[calc(100vw-24px)] rounded-xl border border-border bg-card px-4 py-3 text-left shadow-xl" onPointerDown={(event) => { selectedTextRef.current = bubble.text; event.preventDefault(); }}>
+            <div className="flex items-start justify-between gap-3">
+              <p className="min-w-0 flex-1 break-words text-sm font-semibold leading-relaxed text-foreground">{bubble.text}</p>
+              <button type="button" onClick={save} disabled={saving || saved} className={`inline-flex min-h-10 shrink-0 items-center gap-1 rounded-full border px-3 text-xs ${saved ? "border-mint/40 text-mint" : "border-border text-copper"}`}>
+                {saving ? <Loader2 size={12} className="animate-spin" /> : saved ? <BookmarkCheck size={12} /> : <Bookmark size={12} />}{saved ? "已收藏" : "收藏"}
+              </button>
+            </div>
+            {meaning.loading ? <p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"><Loader2 size={12} className="animate-spin" />翻译中…</p> : <p className={`mt-2 text-sm leading-relaxed ${meaning.error ? "text-rose-300" : "text-foreground/90"}`}>{meaning.text || meaning.error}</p>}
+          </div> :
           <button
             type="button"
             onPointerDown={(event) => { selectedTextRef.current = bubble.text; event.preventDefault(); }}
@@ -115,6 +146,7 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
             {saving ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
             加入“{bubble.text.length > 14 ? bubble.text.slice(0, 14) + "…" : bubble.text}”
           </button>
+          }
         </div>
       )}
     </div>
