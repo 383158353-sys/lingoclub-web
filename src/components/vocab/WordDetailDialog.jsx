@@ -261,8 +261,12 @@ export function WordDetailBody({ vocabulary, onReturnToSource }) {
         <p className="text-xs text-muted-foreground">{primarySource.source_movie_title || "来源影片"}{primarySource.source_episode_title ? ` · ${primarySource.source_episode_title}` : ""}{primarySource.source_timestamp_text ? ` · ${primarySource.source_timestamp_text}` : ""}</p>
         <p className="mt-2 text-sm leading-relaxed text-foreground">{primarySource.source_sentence_en || expression}</p>
         {primarySource.source_sentence_zh && <p className="mt-0.5 text-sm text-muted-foreground">{primarySource.source_sentence_zh}</p>}
-        <button type="button" onClick={() => setPreviewOpen((value) => !value)} className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><Volume2 size={13} />{previewOpen ? "关闭预览" : "播放原句"}</button>
-        {previewOpen && <SourcePreview source={primarySource} onClose={() => setPreviewOpen(false)} onOpenOriginal={onReturnToSource} />}
+        {primarySource.source_type === "article" ? (
+          <button type="button" onClick={() => onReturnToSource?.(primarySource)} className="mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><BookOpen size={13} /> 返回文章</button>
+        ) : <>
+          <button type="button" onClick={() => setPreviewOpen((value) => !value)} className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><Volume2 size={13} />{previewOpen ? "关闭预览" : "播放原句"}</button>
+          {previewOpen && <SourcePreview source={primarySource} onClose={() => setPreviewOpen(false)} onOpenOriginal={onReturnToSource} />}
+        </>}
         {sources.length > 1 && <div className="mt-3">
           <button type="button" aria-expanded={otherSourcesOpen} onClick={() => setOtherSourcesOpen((value) => !value)} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">其他语境 {sources.length - 1} <ChevronDown size={13} className={otherSourcesOpen ? "rotate-180" : ""} /></button>
           {otherSourcesOpen && <ul className="mt-2 space-y-1.5">{sources.map((source, index) => <li key={source.source_key || source.id || index}><button type="button" onClick={() => { setActiveSourceIndex(index); setPreviewOpen(false); }} className={`w-full rounded-lg border px-2.5 py-2 text-left ${effectiveSourceIndex === index ? "border-copper/40 bg-copper/5" : "border-border/60"}`}><span className="block truncate text-xs text-foreground">{source.source_movie_title || "来源影片"}{source.source_episode_title ? ` · ${source.source_episode_title}` : ""}</span><span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{source.source_sentence_en || expression} {source.source_timestamp_text ? ` · ${source.source_timestamp_text}` : ""}</span></button></li>)}</ul>}

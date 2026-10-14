@@ -43,6 +43,7 @@ const ThankYou = lazyRetry(() => import('./pages/ThankYou'));
 const AdminUsers = lazyRetry(() => import('./pages/AdminUsers'));
 const QuickStudy = lazyRetry(() => import('./pages/QuickStudy'));
 const DailyRecommendations = lazyRetry(() => import('./pages/DailyRecommendations'));
+const DailyArticleReader = lazyRetry(() => import('./pages/DailyArticleReader'));
 const BilibiliStudy = lazyRetry(() => import('./pages/BilibiliStudy'));
 const PublishFolder = lazyRetry(() => import('./pages/PublishFolder'));
 const SubtitleSegmentation = lazyRetry(() => import('./pages/SubtitleSegmentation'));
@@ -111,6 +112,7 @@ const AuthenticatedApp = () => {
         <Route path="/local-study" element={<LocalStudy />} />
         <Route path="/quick-study" element={<QuickStudy />} />
         <Route path="/recommendations" element={<DailyRecommendations />} />
+        <Route path="/articles/:id" element={<DailyArticleReader />} />
         <Route path="/extension" element={<ExtensionGuide />} />
         <Route path="/publish-folder/:folderId" element={<PublishFolder />} />
         <Route path="/subtitle-segmentation" element={<SubtitleSegmentation />} />

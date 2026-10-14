@@ -4,6 +4,7 @@ import { sendCredentialFailure } from "./aiCredentialErrors.js";
 import { sendAIError } from "./aiErrorResponse.js";
 import { handleYouTubeTranscript } from "./youtubeTranscript.js";
 import { fetchDoubanPoster, searchLocalPosters } from "./posterSearch.js";
+import { articlesImportApi } from "./articlesImport.js";
 
 async function readBody(req) {
   const raw = await readRawBody(req);
@@ -137,6 +138,12 @@ function middleware(env, productionAiApiTarget = "", fetchImpl = fetch) {
       } catch (error) {
         sendCredentialFailure(res, error, "credential_endpoint");
       }
+      return;
+    }
+    if (path === "/api/articles/import") {
+      try { req.body = await readBody(req); }
+      catch { req.body = "invalid JSON"; }
+      await articlesImportApi(undefined, env)(req, res);
       return;
     }
     if (req.method !== "POST" || !["/api/ai", "/api/youtube-transcript"].includes(path)) return next();

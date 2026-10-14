@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import DailyArticleList from "@/components/study/DailyArticleList";
 import { CheckCircle2, Clock, Heart, Loader2, PlayCircle, RotateCw, Sparkles } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 import { useToast } from "@/components/ui/use-toast";
@@ -35,6 +36,8 @@ export default function DailyRecommendations() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get("tab") === "articles" ? "articles" : "videos";
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -87,13 +90,16 @@ export default function DailyRecommendations() {
 
   return (
     <div className="mx-auto max-w-5xl px-3 pb-16 pt-20 md:px-8 md:pt-28 md:pb-20">
-      <header className="max-w-2xl">
+      <header className="hidden max-w-2xl md:block">
         <p className="mb-2 text-[10px] uppercase tracking-luxe text-copper/80 md:mb-3 md:text-[11px]">Daily Picks</p>
         <h1 className="font-display text-2xl leading-tight text-foreground md:text-5xl">今日推荐</h1>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground md:mt-3 md:text-sm">
-          每天推送的学习视频会自动出现在这里，点开即可进入精读。{todayCount > 0 && <span className="text-foreground/80">今天有 {todayCount} 个新推荐。</span>}
+          {tab === "articles" ? "早间精读短文会出现在这里，阅读文章并收藏重点表达。" : <>每天推送的学习视频会自动出现在这里，点开即可进入精读。{todayCount > 0 && <span className="text-foreground/80">今天有 {todayCount} 个新推荐。</span>}</>}
         </p>
       </header>
+      <div className="flex gap-2 md:mt-5" aria-label="推荐类型">
+        {[['videos', '视频'], ['articles', '文章']].map(([key, label]) => <button key={key} type="button" aria-pressed={tab === key} onClick={() => setSearchParams(key === 'articles' ? { tab: 'articles' } : {})} className={`min-h-10 rounded-full border px-5 text-sm ${tab === key ? 'border-copper/60 bg-copper/10 text-foreground' : 'border-border text-muted-foreground'}`}>{label}</button>)}
+      </div>
 
       {!user ? (
         <EmptyState icon={Sparkles} title="登录后查看每日推荐">
@@ -101,7 +107,7 @@ export default function DailyRecommendations() {
         </EmptyState>
       ) : !recommendationsAvailable() ? (
         <EmptyState icon={Sparkles} title="云端服务未配置" description="需要配置 Supabase 后才能接收每日推荐。" />
-      ) : (
+      ) : tab === "articles" ? <DailyArticleList /> : (
         <>
           <div className="mt-5 flex flex-wrap items-center gap-2 md:mt-8">
             {FILTERS.map(({ key, label }) => (

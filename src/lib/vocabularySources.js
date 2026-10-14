@@ -20,7 +20,7 @@ export function buildVocabularySource(payload = {}) {
   const sentenceEn = String(cue.textEn || payload.source_sentence_en || (payload.type === "sentence" ? payload.expression_en || payload.text_en : "") || "").trim();
   const sentenceZh = String(cue.textZh || payload.source_sentence_zh || (payload.type === "sentence" ? payload.meaning_zh || payload.text_zh : "") || "").trim();
   const subtitleId = payload.source_subtitle_id || cue.id || null;
-  const hasSource = sentenceEn || payload.source_movie_id || payload.source_episode_id || subtitleId;
+  const hasSource = sentenceEn || payload.source_record_id || payload.source_movie_id || payload.source_episode_id || subtitleId;
   if (!hasSource) return null;
   const timestampText = Number.isFinite(cue.start)
     ? fromSecPrecise(cue.start)
