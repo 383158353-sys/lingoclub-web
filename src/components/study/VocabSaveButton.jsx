@@ -2,12 +2,14 @@ import React, { useState } from "react";
 import { saveVocabularyEntry } from "@/lib/vocabularySources";
 import { normalizeSourceCue } from "@/lib/vocabularySourceCue";
 import { Bookmark, BookmarkCheck, Loader2 } from "lucide-react";
+import { useToast } from "@/components/ui/use-toast";
 
 // 收藏一个表达（单词 / 短语 / 整句）。
 // 单用户本地模式：收藏写入浏览器 localStorage。
 export default function VocabSaveButton({ expression, meaning, tag, type = "phrase", movieId, movieTitle, sceneId, subtitleId, timestamp, timestampSeconds, timestampEnd, sourceSentenceEn, sourceSentenceZh, sourceCue, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, className = "", onSaved }) {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const { toast } = useToast();
 
   const save = async () => {
     setSaving(true);
@@ -50,6 +52,8 @@ export default function VocabSaveButton({ expression, meaning, tag, type = "phra
       await saveVocabularyEntry(payload);
       setSaved(true);
       onSaved?.();
+    } catch {
+      toast({ title: "收藏失败", description: "请稍后重试", variant: "destructive" });
     } finally {
       setSaving(false);
     }

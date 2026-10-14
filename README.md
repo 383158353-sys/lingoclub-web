@@ -126,6 +126,50 @@ curl -X POST https://<your-app>/api/recommendations/import \
 
 响应：`{"ok":true,"date":"2026-10-12","received":1,"inserted":1,"updated":0,"rejected":[],"items":[{"youtube_id":"UF8uR6Z6KLc","embeddable":true}]}`。无效条目会出现在 `rejected`（含 `index` 和原因），其余有效条目照常写入；口令错误返回 401，未配置返回 503。
 
+## 每日精读短文导入接口
+
+`POST /api/articles/import` 将调用方提供的英文摘录和精读解析写入独立的 `daily_articles` 表。
+复用 `RECOMMENDATIONS_IMPORT_TOKEN`、`RECOMMENDATIONS_IMPORT_USER_ID`、`SUPABASE_SERVICE_ROLE_KEY` 和 Supabase URL；不增加口令，不抓取出处网页，不调用 AI。
+
+上线前按顺序应用：
+
+- `supabase/migrations/20261014000000_daily_articles.sql`
+- `supabase/migrations/20261014010000_daily_articles_service_role_grant.sql`
+
+浏览器只能读自己的文章，修改 `read_at`、`favorited`、`updated_at`。同一用户、日期、出处 URL 重导只更新内容，保留已读和收藏状态。
+每次 1–10 篇；`title` / `body_en` / http(s) `source_url` 必填。长度上限：标题 300、作者/出处 120、难度 32、简介 4000、正文 50000、链接 2048；标签最多 20 个（每个 40 字），解析 JSON 最多 200000 字符。
+
+```bash
+curl -X POST http://127.0.0.1:5173/api/articles/import \
+  -H "Authorization: Bearer $RECOMMENDATIONS_IMPORT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "date": "2026-10-14",
+    "source": "morning_read",
+    "items": [{
+      "source_url": "https://example.com/morning-read",
+      "title": "Learning through discomfort",
+      "author": "Example author",
+      "outlet": "Example",
+      "level": "B2",
+      "tags": ["学习", "职场"],
+      "summary_zh": "一篇用于验收的晨读示例。",
+      "body_en": "Learning something new can feel uncomfortable.\n\nWe can push through the discomfort and keep practising.",
+      "analysis": {
+        "paragraph_summaries": [{"index": 1, "zh": "学习新事物可能让人不适。"}, {"index": 2, "zh": "克服不适并继续练习。"}],
+        "key_vocab": [{"en": "uncomfortable", "zh": "不舒服的", "note": "形容词"}],
+        "long_sentences": [{"en": "We can push through the discomfort and keep practising.", "structure": "can 后接并列谓语", "zh": "我们可以克服不适并继续练习。"}],
+        "ielts_expressions": [{"en": "push through the discomfort", "usage": "克服不适（口语/写作）"}]
+      }
+    }]
+  }'
+```
+
+解析中的段落序号 `index` 从 1 开始；词汇用 `en/zh/note`，长难句用 `en/structure/zh`，雅思表达用 `en/usage`。缺省解析存 `{}`，前端缺字段显示空区块，多余字段不影响阅读。
+响应：`{ok,date,received,inserted,updated,rejected:[{index,error}]}`；部分无效条目跳过，全部无效返回 400，鉴权失败 401，配置缺失 503。
+
+手动验收：在隔离测试 Supabase 应用迁移并配置本地环境，运行 `npm run dev:test`，导入示例后打开「今日推荐 → 文章」，阅读、划词收藏、收藏长难句和雅思表达；在语料库点击来源应回到 `/articles/:id`。重导后已读/收藏不应重置。不要为验收修改 Production 数据。
+
 ## YouTube 字幕提取
 
 `/api/youtube-transcript` 依次尝试：

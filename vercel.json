@@ -5,7 +5,8 @@
   "outputDirectory": "dist",
   "functions": {
     "api/*.js": { "maxDuration": 60 },
-    "api/recommendations/*.js": { "maxDuration": 30 }
+    "api/recommendations/*.js": { "maxDuration": 30 },
+    "api/articles/*.js": { "maxDuration": 30 }
   },
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }

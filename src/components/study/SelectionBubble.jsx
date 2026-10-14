@@ -26,6 +26,13 @@ export default function SelectionBubble({ text, translation, movieId, movieTitle
     }, 0);
   };
 
+  // 手机长按与拖动选择不一定触发 mouseup，文章阅读也监听原生选区变化。
+  useEffect(() => {
+    if (sourceType !== "article") return;
+    document.addEventListener("selectionchange", onMouseUp);
+    return () => document.removeEventListener("selectionchange", onMouseUp);
+  }, [sourceType]);
+
   const save = async () => {
     const t = (bubble?.text || "").trim();
     if (!t) return;
