@@ -36,12 +36,12 @@ function isVideoPage(url) {
 
 // ===== 时间码 / 文本清洗（与站内 youtubeTranscriptClient 同逻辑）=====
 function msToTimecode(ms) {
-  const totalSec = Math.floor(ms / 1000);
+  const totalSec = ms / 1000;
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
+  const s = totalSec - h * 3600 - m * 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${s.toFixed(3).padStart(6, "0")}`;
+  return `${m}:${s.toFixed(3).padStart(6, "0")}`;
 }
 
 function cleanText(t) {
@@ -88,38 +88,44 @@ function extractCaptionTracks(html) {
 }
 
 // ===== YouTube json3 events → 台词行 =====
+// Same window rules as src/lib/captionDisplayCues.js: one replacing event is
+// one on-screen caption. aAppend stays on that row. Do not split into words.
 function eventsToLines(events) {
   if (!Array.isArray(events)) return [];
   const out = [];
-  let prevStart = -1, prevText = "";
+  let current = null;
   for (const ev of events) {
-    const segText = Array.isArray(ev?.segs)
-      ? ev.segs.map((seg) => (seg && typeof seg.utf8 === "string" ? seg.utf8 : "")).join("")
-      : "";
-    const t = cleanText(segText);
-    if (!t) continue;
     const start = Number.isFinite(Number(ev?.tStartMs)) ? Number(ev.tStartMs) : Number(ev?.dStartMs);
     if (!Number.isFinite(start) || start < 0) continue;
-    if (start === prevStart && t === prevText) continue;
-    prevStart = start; prevText = t;
+    const raw = Array.isArray(ev?.segs)
+      ? ev.segs.map((seg) => (seg && typeof seg.utf8 === "string" ? seg.utf8 : "")).join("")
+      : "";
+    const t = cleanText(raw);
+    if (!t) {
+      if (current && start > current.startMs && start < current.endMs) current.endMs = start;
+      current = null;
+      continue;
+    }
     const dur = Number.isFinite(Number(ev?.dDurationMs)) && Number(ev.dDurationMs) > 0
       ? Number(ev.dDurationMs) : Math.max(1500, Math.min(8000, t.length * 80));
-    // Split into individual words with proportional timestamps
-    const words = t.split(/\s+/).filter(Boolean);
-    if (words.length === 0) continue;
-    const totalChars = words.reduce((sum, w) => sum + w.length, 0) || 1;
-    let accMs = start;
-    for (const word of words) {
-      const wordDur = Math.max(100, (word.length / totalChars) * dur);
-      out.push({ text_en: word, time_start: msToTimecode(accMs), time_end: msToTimecode(accMs + wordDur) });
-      accMs += wordDur;
+    const end = start + dur;
+    const winId = Number.isFinite(Number(ev?.wWinId)) ? Number(ev.wWinId) : null;
+    const append = ev?.aAppend === 1 || ev?.aAppend === true;
+    if (append && current && (winId == null || current.winId == null || current.winId === winId)) {
+      current.text = cleanText(`${current.text} ${t}`);
+      if (end > current.endMs) current.endMs = end;
+      continue;
     }
+    current = { text: t, startMs: start, endMs: end, winId };
+    out.push(current);
   }
   const dedup = [];
-  for (const l of out) {
+  for (const cue of out) {
+    if (!cue.text) continue;
+    const line = { text_en: cue.text, time_start: msToTimecode(cue.startMs), time_end: msToTimecode(cue.endMs) };
     const last = dedup[dedup.length - 1];
-    if (last && last.text_en === l.text_en && last.time_start === l.time_start) continue;
-    dedup.push(l);
+    if (last && last.text_en === line.text_en && last.time_start === line.time_start) continue;
+    dedup.push(line);
   }
   return dedup;
 }

@@ -194,28 +194,50 @@ return r.text();
 if(!txt||!txt.trim()||txt.trim().charAt(0)!=='{')return [];
 try{
 var data=JSON.parse(txt);
-return (data.events||[]).filter(function(e){return e.segs;}).map(function(e){
-var tx=cleanLine((e.segs||[]).map(function(sg){return sg.utf8||'';}).join('').replace(/\\n/g,' ').trim());
-var st=e.tStartMs/1000;var du=(e.dDurationMs||0)/1000;
-return{start:st,duration:du,text:tx};
-}).filter(function(l){return l.text;});
+var events=data.events||[];
+var rows=[];
+var cur=null;
+for(var i=0;i<events.length;i++){
+var e=events[i];
+var startMs=Number(e.tStartMs!=null?e.tStartMs:e.dStartMs);
+if(!isFinite(startMs)||startMs<0)continue;
+var tx=cleanLine(((e.segs||[]).map(function(sg){return sg.utf8||'';}).join('')).replace(/\\n/g,' '));
+if(!tx){if(cur&&startMs>cur.startMs&&startMs<cur.endMs)cur.endMs=startMs;cur=null;continue;}
+var durMs=Number(e.dDurationMs);
+if(!isFinite(durMs)||durMs<=0)durMs=Math.max(1500,Math.min(8000,tx.length*80));
+var endMs=startMs+durMs;
+var win=e.wWinId;
+var append=e.aAppend===1||e.aAppend===true;
+if(append&&cur&&(win==null||cur.win==null||cur.win===win)){
+cur.text=cleanLine(cur.text+' '+tx);
+if(endMs>cur.endMs)cur.endMs=endMs;
+continue;
+}
+cur={text:tx,startMs:startMs,endMs:endMs,win:win==null?null:win};
+rows.push(cur);
+}
+return rows.filter(function(l){return l.text;}).map(function(l){return{start:l.startMs/1000,duration:Math.max(0.01,(l.endMs-l.startMs)/1000),text:l.text};});
 }catch(e){return [];}
 }).catch(function(){return [];});
 }
 if(isYoutube){
-var polyLines=extractFromPolymer();
-if(polyLines){openStudy(encode(polyLines),'polymer');return;}
-var domLines=extractFromDOM();
-if(domLines){openStudy(encode(domLines),'dom');return;}
 var settled=false;
 var note=showNote('正在提取字幕，请稍候…');
-var apiP=fetchFromAPI();
-if(apiP){
-apiP.then(function(lines){
-if(settled)return;
-if(lines&&lines.length){settled=true;note.remove();openStudy(encode(lines),'player-response');}
-});
+function finish(lines,extractor){
+if(settled||!lines||!lines.length)return;
+settled=true;
+if(note)note.remove();
+openStudy(encode(lines),extractor);
 }
+var apiP=fetchFromAPI();
+var playerDone=!apiP;
+if(apiP&&apiP.then){
+apiP.then(function(lines){
+playerDone=true;
+if(lines&&lines.length){finish(lines,'player-response');return;}
+finish(extractFromPolymer()||extractFromDOM(),'polymer');
+});
+}else{finish(extractFromPolymer()||extractFromDOM(),'polymer');}
 openTranscriptPanel();
 var attempts=0;
 var maxAttempts=24;
@@ -224,11 +246,9 @@ if(settled){clearInterval(pollId);return;}
 attempts++;
 if(attempts%4===0){openTranscriptPanel();}
 var l2=extractFromPolymer()||extractFromDOM();
-if(l2){
-settled=true;
+if(l2&&(playerDone||attempts>=8)){
 clearInterval(pollId);
-note.remove();
-openStudy(encode(l2),'polymer/dom-poll');
+finish(l2,'polymer/dom-poll');
 }else if(attempts>=maxAttempts){
 clearInterval(pollId);
 if(!settled){settled=true;handleNoSubs(note);}
@@ -396,7 +416,7 @@ export function DesktopTutorial() {
           <ol className="mt-3 space-y-2.5 text-sm leading-relaxed text-muted-foreground">
             <li className="flex gap-2"><span className="text-copper/70">①</span> 打开任意 YouTube 视频页面</li>
             <li className="flex gap-2"><span className="text-copper/70">②</span> 点击视频下方「···」→「显示转录」打开转录面板（可选，书签也会自动尝试打开）</li>
-            <li className="flex gap-2"><span className="text-copper/70">③</span> 点击书签栏中的「导入到 LingoClub」，字幕从 Polymer 数据模型直接提取</li>
+            <li className="flex gap-2"><span className="text-copper/70">③</span> 点击书签栏中的「导入到 LingoClub」，按播放器上的每一块字幕导入</li>
             <li className="flex gap-2"><span className="text-copper/70">④</span> 学习页在新标签页中打开，当前 YouTube 页面不受影响 <Check size={14} className="text-copper" /></li>
           </ol>
         </div>
@@ -408,7 +428,7 @@ export function DesktopTutorial() {
           <Lightbulb size={15} className="text-copper" /> 使用说明
         </h3>
         <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
-          <li>• YouTube 字幕优先从转录面板的 Polymer 数据模型直接提取（最可靠，不依赖 DOM 类名）</li>
+          <li>• YouTube 字幕优先按播放器 CC 的每一块画面导入；转录面板只在播放器字幕拿不到时再用</li>
           <li>• 兼容新旧 YouTube UI：自动适配 transcript-segment-view-model / ytd-transcript-segment-renderer 两种结构</li>
           <li>• 如果面板未打开，书签会自动点击「显示转录」按钮并等待重试</li>
           <li>• 学习页在新标签页打开，YouTube 页面保持不变，可继续观看</li>

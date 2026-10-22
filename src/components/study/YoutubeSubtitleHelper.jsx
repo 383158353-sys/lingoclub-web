@@ -136,24 +136,30 @@ if(!txt||!txt.trim()||txt.trim().charAt(0)!=='{')return[];
 try{
 var data=JSON.parse(txt);
 function fmtT(s){s=s||0;var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s-h*3600-m*60;var ss=Math.floor(x),ms=Math.floor((x-ss)*1000);function p(n,w){return String(n).padStart(w,'0')}if(h>0)return p(h,2)+':'+p(m,2)+':'+p(ss,2)+','+p(ms,3);return p(m,2)+':'+p(ss,2)+','+p(ms,3);}
-var allL=[];
-(data.events||[]).filter(function(e){return e.segs;}).forEach(function(e){
+var rows=[];
+var cur=null;
+var events=data.events||[];
+for(var i=0;i<events.length;i++){
+var e=events[i];
+var startMs=Number(e.tStartMs!=null?e.tStartMs:e.dStartMs);
+if(!isFinite(startMs)||startMs<0)continue;
 var tx=(e.segs||[]).map(function(sg){return sg.utf8||'';}).join('').replace(/\\n/g,' ');
-tx=tx.replace(/<s\b[^>]*>/gi,'s').replace(/<\\/s\b[^>]*>/gi,'').replace(/<\\/?[a-z][^>]*>/gi,'').replace(/\\s+/g,' ').trim();
-if(!tx)return;
-var st=e.tStartMs/1000;var du=(e.dDurationMs||0)/1000;
-if(!du)du=Math.max(1.5,Math.min(8,tx.length*0.08));
-var ws=tx.split(/\\s+/);
-var tl=0;for(var i=0;i<ws.length;i++)tl+=ws[i].length;
-if(!tl)tl=1;
-var ac=st;
-for(var i=0;i<ws.length;i++){
-var wd=Math.max(0.1,(ws[i].length/tl)*du);
-allL.push({text_en:ws[i],time_start:fmtT(ac),time_end:fmtT(ac+wd)});
-ac+=wd;
+tx=tx.replace(/<s\\b[^>]*>/gi,'s').replace(/<\\/s\\b[^>]*>/gi,'').replace(/<\\/?[a-z][^>]*>/gi,'').replace(/\\s+/g,' ').trim();
+if(!tx){if(cur&&startMs>cur.startMs&&startMs<cur.endMs)cur.endMs=startMs;cur=null;continue;}
+var durMs=Number(e.dDurationMs);
+if(!isFinite(durMs)||durMs<=0)durMs=Math.max(1500,Math.min(8000,tx.length*80));
+var endMs=startMs+durMs;
+var win=e.wWinId;
+var append=e.aAppend===1||e.aAppend===true;
+if(append&&cur&&(win==null||cur.win==null||cur.win===win)){
+cur.text=(cur.text+' '+tx).replace(/\\s+/g,' ').trim();
+if(endMs>cur.endMs)cur.endMs=endMs;
+continue;
 }
-});
-return allL;
+cur={text:tx,startMs:startMs,endMs:endMs,win:win==null?null:win};
+rows.push(cur);
+}
+return rows.filter(function(l){return l.text;}).map(function(l){return{text_en:l.text,time_start:fmtT(l.startMs/1000),time_end:fmtT(l.endMs/1000)};});
 }catch(e){return[];}
 }
 function fetchTrack(bu){
@@ -231,7 +237,7 @@ export default function YoutubeSubtitleHelper({ forceMode }) {
       ) : (
         <>
           <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            自动提取失败时用此书签：在 YouTube 视频页面点击，会从转录面板的 Polymer 数据模型直接提取 CC 字幕并复制为 SRT 到剪贴板，回来粘贴即可。兼容新旧 YouTube UI，面板未打开时会自动尝试打开。
+            自动提取失败时用此书签：在 YouTube 视频页面点击，优先把播放器上的每一块字幕复制成 SRT；拿不到时再从转录面板提取。回来粘贴即可。
           </p>
           <a
             href={bookmarkletHref}

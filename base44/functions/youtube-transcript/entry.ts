@@ -65,42 +65,45 @@ function cleanUtf8(t) {
 
 const BLOCKED_RX = /blocking us from fetching subtitles|currently blocking|Sign in to confirm you(\u2019|'|')?re not a bot|Our systems have detected/i;
 
-function eventsToLines(events) {
+// One replacing json3 event = one on-screen caption. aAppend stays on that row.
+// Same rules as src/lib/captionDisplayCues.js. Do not split the event into words.
+function eventsToLines(events: any[] | null | undefined) {
   if (!Array.isArray(events)) return null;
-  const out = [];
-  let prevStart = -1;
-  let prevText = '';
+  const windows: Array<{ text: string; startMs: number; endMs: number; winId: number | null }> = [];
+  let current: { text: string; startMs: number; endMs: number; winId: number | null } | null = null;
   for (const ev of events) {
-    const segText = Array.isArray(ev?.segs)
-      ? ev.segs.map((seg) => (seg && typeof seg.utf8 === 'string' ? seg.utf8 : '')).join('')
-      : '';
-    const t = cleanUtf8(segText);
-    if (!t || BLOCKED_RX.test(t)) continue;
     const start = Number.isFinite(Number(ev?.tStartMs)) ? Number(ev.tStartMs) : Number(ev?.dStartMs);
     if (!Number.isFinite(start) || start < 0) continue;
-    if (start === prevStart && t === prevText) continue;
-    prevStart = start;
-    prevText = t;
+    const segText = Array.isArray(ev?.segs)
+      ? ev.segs.map((seg: any) => (seg && typeof seg.utf8 === 'string' ? seg.utf8 : '')).join('')
+      : '';
+    const t = cleanUtf8(segText);
+    if (!t || BLOCKED_RX.test(t)) {
+      if (current && start > current.startMs && start < current.endMs) current.endMs = start;
+      current = null;
+      continue;
+    }
     const dur = Number.isFinite(Number(ev?.dDurationMs)) && Number(ev.dDurationMs) > 0
       ? Number(ev.dDurationMs)
       : Math.max(1500, Math.min(8000, t.length * 80));
-    // Split into individual words with proportional timestamps so mergeFragments
-    // can build accurately-timed sentences after splitting/merging
-    const words = t.split(/\s+/).filter(Boolean);
-    if (words.length === 0) continue;
-    const totalChars = words.reduce((sum, w) => sum + w.length, 0) || 1;
-    let accMs = start;
-    for (const word of words) {
-      const wordDur = Math.max(100, (word.length / totalChars) * dur);
-      out.push({ text_en: word, time_start: msToTimecode(accMs), time_end: msToTimecode(accMs + wordDur) });
-      accMs += wordDur;
+    const end = start + dur;
+    const winId = Number.isFinite(Number(ev?.wWinId)) ? Number(ev.wWinId) : null;
+    const append = ev?.aAppend === 1 || ev?.aAppend === true;
+    if (append && current && (winId == null || current.winId == null || current.winId === winId)) {
+      current.text = cleanUtf8(`${current.text} ${t}`);
+      if (end > current.endMs) current.endMs = end;
+      continue;
     }
+    current = { text: t, startMs: start, endMs: end, winId };
+    windows.push(current);
   }
-  const dedup = [];
-  for (const l of out) {
+  const dedup: Array<{ text_en: string; time_start: string; time_end: string }> = [];
+  for (const cue of windows) {
+    if (!cue.text) continue;
+    const line = { text_en: cue.text, time_start: msToTimecode(cue.startMs), time_end: msToTimecode(cue.endMs) };
     const last = dedup[dedup.length - 1];
-    if (last && last.text_en === l.text_en && last.time_start === l.time_start) continue;
-    dedup.push(l);
+    if (last && last.text_en === line.text_en && last.time_start === line.time_start) continue;
+    dedup.push(line);
   }
   return dedup.length ? dedup : null;
 }

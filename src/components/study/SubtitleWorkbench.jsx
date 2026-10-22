@@ -1,13 +1,12 @@
 import React, { useState, useRef, useCallback } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import { parseTranscript } from "@/lib/transcriptParser";
-import { mergeFragments } from "@/lib/subtitleCleaner";
 import { toSec } from "@/lib/timecode";
 import { formatEpisodeCode } from "@/lib/localSeason";
 import { applySubtitleImport, subtitleEpisodeMismatch } from "@/lib/localSubtitleWorkflow";
 import {
   Loader2, UploadCloud, ListPlus, Check,
-  Sparkles, Plus, Trash2, Pencil, X, Wand2,
+  Sparkles, Plus, Trash2, Pencil, X,
 } from "lucide-react";
 
 function genSubId() {
@@ -39,7 +38,7 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
   const [selectedIds, setSelectedIds] = useState(() => new Set());
 
   // ===== 粘贴 / 文件导入 =====
-  const parsedFromText = pastedText.trim() ? mergeFragments(parseTranscript(pastedText, totalSec)).slice(0, 300) : [];
+  const parsedFromText = pastedText.trim() ? parseTranscript(pastedText, totalSec).slice(0, 300) : [];
   const pasteTimed = parsedFromText.filter((l) => l.time_start).length;
 
   const applyImport = (mapped, mode, sourceName = "") => {
@@ -86,7 +85,7 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
     setParsing(true);
     setTimeout(() => {
       try {
-        const parsed = mergeFragments(parseTranscript(text, 1800));
+        const parsed = parseTranscript(text, 1800);
         if (!parsed?.length) {
           toast({ title: "未解析出台词", description: "请确认文件是 SRT / WebVTT 或带时间码文本。", variant: "destructive" });
           setParsing(false);
@@ -151,40 +150,8 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
 
   const del = (id) => onChanged(subs.filter((s) => s.id !== id));
 
-  // 本地智能分句：按语言学规则重新切分，并保留时间戳对齐。
-  // timingSource 是用于「分句 + 对齐」的带时间戳行——传入越细粒度（原始 cue 级
-  // 而非合并后的整句），词级时间轴越精准，分句边界落点越准确。
-  const [aiSegmenting, setAiSegmenting] = useState(false);
-  const runAiSegment = async (timingSource) => {
-    const segmented = mergeFragments(timingSource);
-    if (!segmented.length) throw new Error("未生成分句结果");
-    return segmented.map((line, i) => ({ ...line, id: line.id || genSubId(), order: i + 1, timestamp: line.time_start || "" }));
-  };
-
-  // 对已导入字幕重新 AI 分句（按钮）
-  const aiSegment = async (sourceSubs) => {
-    const targets = Array.isArray(sourceSubs) && sourceSubs.length ? sourceSubs : subs;
-    if (!targets.length) return;
-    if (!targets.some((s) => s.time_start)) {
-      toast({ title: "当前字幕无时间戳", description: "AI 智能分句需要带时间戳的字幕以保持播放同步。", variant: "destructive" });
-      return;
-    }
-    setAiSegmenting(true);
-    try {
-      const mapped = await runAiSegment(targets);
-      onChanged(mapped);
-      toast({ title: "智能分句完成", description: `${mapped.length} 个字幕块 · 已保留时间戳对齐` });
-    } catch (e) {
-      const msg = e?.response?.data?.error || e?.data?.error || e?.message || "请稍后重试";
-      toast({ title: "智能分句失败", description: msg, variant: "destructive" });
-    } finally {
-      setAiSegmenting(false);
-    }
-  };
-
-  // 导入即分句：用 pre-merge（原始 cue 级）时间戳作为对齐源；生成后按统一
-  // 的导入确认流程替换当前字幕，或在用户选择时追加。
-  const importAndSegment = async () => {
+  // 导入保持字幕文件里的 cue：一条字幕块一行，不按句子再合并或拆开。
+  const importParsedCues = async () => {
     if (!pastedText.trim()) return;
     setParsing(true);
     try {
@@ -193,22 +160,16 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
         toast({ title: "未解析出台词", description: "请确认是 SRT / WebVTT 或带时间码文本。", variant: "destructive" });
         return;
       }
-      const timed = parsed.filter((p) => p.time_start);
-      let mapped;
-      if (timed.length) {
-        mapped = (await runAiSegment(parsed)).map((c, i) => ({ ...c, order: subs.length + i + 1 }));
-      } else {
-        mapped = mergeFragments(parsed).map((p, i) => ({
-          id: genSubId(),
-          text_en: p.text_en || "",
-          text_zh: p.text_zh || "",
-          speaker: p.speaker || "",
-          time_start: p.time_start || "",
-          time_end: p.time_end || "",
-          order: p.order ?? subs.length + i + 1,
-          timestamp: p.time_start || "",
-        }));
-      }
+      const mapped = parsed.map((p, i) => ({
+        id: genSubId(),
+        text_en: p.text_en || "",
+        text_zh: p.text_zh || "",
+        speaker: p.speaker || "",
+        time_start: p.time_start || "",
+        time_end: p.time_end || "",
+        order: p.order ?? subs.length + i + 1,
+        timestamp: p.time_start || "",
+      }));
       requestImport(mapped, fileName);
     } catch (e) {
       const msg = e?.response?.data?.error || e?.data?.error || e?.message || "请稍后重试";
@@ -348,11 +309,11 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
               </span>
               <button
                 type="button"
-                onClick={importAndSegment}
+                onClick={importParsedCues}
                 disabled={parsing}
                 className="inline-flex items-center gap-2 rounded-full bg-mint px-4 py-1.5 text-xs font-medium text-background transition-transform hover:scale-[1.02] disabled:opacity-50"
               >
-                {parsing ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} 智能分句并导入
+                {parsing ? <Loader2 size={13} className="animate-spin" /> : <ListPlus size={13} />} 导入台词
               </button>
             </div>
           )}
@@ -429,15 +390,6 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
             <div className="flex items-center gap-2">
               {!selectMode ? (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => aiSegment()}
-                    disabled={aiSegmenting}
-                    title="AI 按语言学规范重新分句，保留词级时间戳确保播放同步"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-copper/40 bg-copper/10 px-3 py-1.5 text-[11px] font-medium text-copper transition-colors hover:bg-copper/20 disabled:opacity-50"
-                  >
-                    {aiSegmenting ? <Loader2 size={11} className="animate-spin" /> : <Wand2 size={11} />} 智能分句
-                  </button>
                   <button
                     type="button"
                     onClick={() => setSelectMode(true)}

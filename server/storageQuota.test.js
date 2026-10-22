@@ -21,10 +21,12 @@ const q = await import("../src/lib/storageQuota.js");
 test("startup cleanup removes only obsolete cache keys", () => {
   globalThis.localStorage = new MemStorage();
   localStorage.setItem("lingoclub:youtube-transcript:v1:abc", "x");
-  localStorage.setItem("lingoclub:youtube-transcript:v2:abc", "y");
+  localStorage.setItem("lingoclub:youtube-transcript:v2:abc", "merged");
+  localStorage.setItem("lingoclub:youtube-transcript:v3:abc", "y");
   localStorage.setItem("lingoclub_local_movies_v1", "[1]");
-  assert.equal(q.cleanupObsoleteStorage(), 1);
-  assert.equal(localStorage.getItem("lingoclub:youtube-transcript:v2:abc"), "y");
+  assert.equal(q.cleanupObsoleteStorage(), 2);
+  assert.equal(localStorage.getItem("lingoclub:youtube-transcript:v2:abc"), null);
+  assert.equal(localStorage.getItem("lingoclub:youtube-transcript:v3:abc"), "y");
   assert.equal(localStorage.getItem("lingoclub_local_movies_v1"), "[1]");
 });
 

@@ -2,7 +2,6 @@ import React, { Component, useLayoutEffect, useMemo, useRef, useState } from "re
 import { FileVideo, FileText, Loader2 } from "lucide-react";
 import PageBackButton from "@/components/common/PageBackButton";
 import { parseTranscript } from "@/lib/transcriptParser";
-import { mergeFragments } from "@/lib/subtitleCleaner";
 import { buildSeasonEpisodeRows, formatEpisodeCode, normalizeSeasonFiles, parseEpisodeNumber, resolveSeasonSubtitle } from "@/lib/localSeason";
 import { useToast } from "@/components/ui/use-toast";
 import LocalPosterPicker from "@/components/study/LocalPosterPicker";
@@ -164,7 +163,7 @@ export default function LocalSeasonImporter({ onReady, onCancel, saving }) {
         let subtitles = [];
         if (subtitleFile) {
           if (typeof subtitleFile.name !== "string" || typeof subtitleFile.text !== "function") throw new Error(`${row.videoFile.name} 对应的字幕文件无效，请重新选择`);
-          const parsed = mergeFragments(parseTranscript(await subtitleFile.text(), 1800));
+          const parsed = parseTranscript(await subtitleFile.text(), 1800);
           subtitles = (parsed || []).map((cue, index) => ({
             id: `local-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`}`,
             text_en: cue.text_en || "",

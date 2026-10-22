@@ -9,7 +9,7 @@ import { toSec, fromSecPrecise, findCueAtTime } from "../src/lib/timecode.js";
 const raw = JSON.parse(readFileSync(new URL("./fixtures/supadata-IH3Otn9Lz3I.json", import.meta.url), "utf8"));
 
 function serverLines() {
-  // Same shape as server/youtubeTranscript.js successPayload → client mergeFragments.
+  // Legacy sentence merger. The study list no longer calls this; caption windows stay 1:1.
   return subtitlesFromSupadata(raw.content).map((item) => ({
     text_en: item.text,
     time_start: fromSecPrecise(item.start),

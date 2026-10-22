@@ -2,7 +2,6 @@ import React, { useState, useRef } from "react";
 import { FileVideo, FileText, Play, Loader2, Info, ImagePlus, CheckCircle2, AlertCircle } from "lucide-react";
 import PageBackButton from "@/components/common/PageBackButton";
 import { parseTranscript } from "@/lib/transcriptParser";
-import { mergeFragments } from "@/lib/subtitleCleaner";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchYouTubeMeta } from "@/lib/localApi";
 import { transcribeYouTubeClient } from "@/lib/youtubeTranscriptClient";
@@ -158,7 +157,7 @@ export default function LocalStudyImporter({ onReady, onCancel, saving }) {
     try {
       let subs = [];
       if (fetchedSubs && fetchedSubs.length) {
-        // YouTube 链接自动抓取的字幕（已含时间戳，已合并为完整句）
+        // YouTube 链接自动抓取的字幕：每条已是播放器上的一块字幕，时间戳保持原样。
         subs = fetchedSubs.map((p, i) => ({
           id: `local-${i + 1}`,
           text_en: p.text_en || "",
@@ -170,7 +169,7 @@ export default function LocalStudyImporter({ onReady, onCancel, saving }) {
           timestamp: p.time_start || "",
         }));
       } else if (subText.trim()) {
-        const parsed = mergeFragments(parseTranscript(subText, 1800));
+        const parsed = parseTranscript(subText, 1800);
         if (!parsed?.length) {
           toast({ title: "未解析出台词", description: "请确认文件格式（SRT / WebVTT / 带时间码文本）。留空字幕可直接播放。", variant: "destructive" });
           return;

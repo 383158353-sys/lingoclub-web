@@ -1,3 +1,4 @@
+import { captionWindowsFromEvents } from "../../src/lib/captionDisplayCues.js";
 import { cleanVideoTitle } from "../../src/lib/videoTitle.js";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 const ID_RX = /^[A-Za-z0-9_-]{11}$/;
@@ -80,12 +81,10 @@ function clean(text) {
 }
 
 export function linesFromEvents(events) {
-  return (events || []).flatMap((event) => {
-    const text = clean((event.segs || []).map((part) => part.utf8 || "").join(""));
-    const start = Number(event.tStartMs ?? event.dStartMs);
-    if (!text || !Number.isFinite(start)) return [];
-    const duration = Number(event.dDurationMs) || Math.max(1500, Math.min(8000, text.length * 80));
-    return [{ text_en: text, time_start: timecode(start), time_end: timecode(start + duration) }];
+  return captionWindowsFromEvents(events).flatMap((cue) => {
+    const text = clean(cue.text);
+    if (!text) return [];
+    return [{ text_en: text, time_start: timecode(cue.startMs), time_end: timecode(cue.endMs) }];
   });
 }
 
@@ -101,13 +100,12 @@ function subtitlesFromEvents(events) {
   const subtitles = [];
   let previousStart = -1;
   let previousText = "";
-  for (const event of events || []) {
-    const text = clean((event.segs || []).map((part) => part.utf8 || "").join(""));
-    const startMs = Number(event.tStartMs ?? event.dStartMs);
+  for (const cue of captionWindowsFromEvents(events)) {
+    const text = clean(cue.text);
+    const startMs = cue.startMs;
     if (!text || /blocking us from fetching subtitles|currently blocking|sign in to confirm you(?:'|’)?re not a bot|our systems have detected/i.test(text)) continue;
-    if (!Number.isFinite(startMs) || startMs < 0 || (startMs === previousStart && text === previousText)) continue;
-    const durationMs = Number(event.dDurationMs) || Math.max(1500, Math.min(8000, text.length * 80));
-    subtitles.push({ start: startMs / 1000, duration: durationMs / 1000, text });
+    if (startMs === previousStart && text === previousText) continue;
+    subtitles.push({ start: startMs / 1000, duration: Math.max(0.01, (cue.endMs - startMs) / 1000), text });
     previousStart = startMs;
     previousText = text;
   }

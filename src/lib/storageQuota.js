@@ -1,9 +1,9 @@
 // localStorage 配额保护：只清理可再生的缓存，绝不删除用户数据（影片、收藏、进度）。
-export const TRANSCRIPT_CACHE_PREFIX = "lingoclub:youtube-transcript:v2:";
+export const TRANSCRIPT_CACHE_PREFIX = "lingoclub:youtube-transcript:v3:";
 export const TRANSCRIPT_CACHE_MAX_ENTRIES = 10;
 export const TRANSCRIPT_CACHE_MAX_CHARS = 750_000; // UTF-16 ≈ 1.5MB
 // 已废弃的缓存前缀（版本升级后遗留）。
-export const OBSOLETE_PREFIXES = ["lingoclub:youtube-transcript:v1:", "lingoclub:subtitle-ai:v1:"];
+export const OBSOLETE_PREFIXES = ["lingoclub:youtube-transcript:v1:", "lingoclub:youtube-transcript:v2:", "lingoclub:subtitle-ai:v1:"];
 // 可随时删除、可重新生成的缓存前缀。
 export const CACHE_PREFIXES = ["lingoclub:youtube-transcript:", "lingoclub:subtitle-ai:", "lingoclub:ai:v1:"];
 
