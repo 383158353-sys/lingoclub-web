@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Volume2, BookmarkPlus, ChevronDown } from "lucide-react";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ArrowLeft, BookOpen, Volume2, BookmarkPlus, ChevronDown, X } from "lucide-react";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useNavigate } from "react-router-dom";
 import { vocabRepository } from "@/lib/vocabRepository";
 import { saveVocabularyEntry } from "@/lib/vocabularySources";
@@ -13,6 +13,7 @@ import { localMovies } from "@/lib/localStudyMeta";
 import { resolveVocabularySourceCue } from "@/lib/vocabularySourceCue";
 import { pronounce } from "@/lib/pronunciation";
 import { inferExpressionType, isCurrentWordProfile, normalizeWordProfile, summarizeWordProfileShape, WORD_PROFILE_SCHEMA_VERSION } from "@/lib/wordProfile";
+import { focusSourceText, focusedTranslation, highlightParts, isHeadwordOnly, shouldShowSentenceTranslation } from "@/lib/sourceSentenceFocus";
 
 function isDetailed(profile) {
   return isCurrentWordProfile(profile);
@@ -234,7 +235,7 @@ export function WordDetailBody({ vocabulary, onReturnToSource }) {
 
   return (
     <div className="mx-auto w-full max-w-[860px] space-y-4 sm:space-y-5">
-      <div className="flex min-w-0 items-start justify-between gap-3 border-b border-border/60 pb-3 pr-7">
+      <div className="flex min-w-0 items-start justify-between gap-3 border-b border-border/60 pb-3">
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
           <h2 className="min-w-0 break-words font-display text-[30px] font-bold leading-tight text-foreground sm:text-[36px]">{expression}</h2>
           <button type="button" onClick={() => speakExpression(expression)} aria-label="发音" title="发音" className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted/60 hover:text-copper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint"><Volume2 size={17} /></button>
@@ -256,22 +257,7 @@ export function WordDetailBody({ vocabulary, onReturnToSource }) {
       </section>}
 
       {reliableRoots.length > 0 && <section className="border-t border-border/50 pt-3"><div className="flex flex-wrap gap-x-4 gap-y-2">{reliableRoots.map((part, index) => <div key={`${part.part || part.type}-${index}`} className="min-w-[72px]"><p className="font-medium text-foreground">{part.part}</p><p className="text-xs text-muted-foreground">{part.type} · {part.meaning}</p></div>)}</div>{displayProfile.synthesis && <p className="mt-1.5 text-sm text-muted-foreground">{displayProfile.synthesis}</p>}</section>}
-      {primarySource && <section className="rounded-xl border border-border/70 bg-background/45 p-3 sm:p-4">
-        <SectionTitle>原句</SectionTitle>
-        <p className="text-xs text-muted-foreground">{primarySource.source_movie_title || "来源影片"}{primarySource.source_episode_title ? ` · ${primarySource.source_episode_title}` : ""}{primarySource.source_timestamp_text ? ` · ${primarySource.source_timestamp_text}` : ""}</p>
-        <p className="mt-2 text-sm leading-relaxed text-foreground">{primarySource.source_sentence_en || expression}</p>
-        {primarySource.source_sentence_zh && <p className="mt-0.5 text-sm text-muted-foreground">{primarySource.source_sentence_zh}</p>}
-        {["article", "library_article"].includes(primarySource.source_type) ? (
-          <button type="button" onClick={() => onReturnToSource?.(primarySource)} className="mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><BookOpen size={13} /> 返回文章</button>
-        ) : <>
-          <button type="button" onClick={() => setPreviewOpen((value) => !value)} className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><Volume2 size={13} />{previewOpen ? "关闭预览" : "播放原句"}</button>
-          {previewOpen && <SourcePreview source={primarySource} onClose={() => setPreviewOpen(false)} onOpenOriginal={onReturnToSource} />}
-        </>}
-        {sources.length > 1 && <div className="mt-3">
-          <button type="button" aria-expanded={otherSourcesOpen} onClick={() => setOtherSourcesOpen((value) => !value)} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">其他语境 {sources.length - 1} <ChevronDown size={13} className={otherSourcesOpen ? "rotate-180" : ""} /></button>
-          {otherSourcesOpen && <ul className="mt-2 space-y-1.5">{sources.map((source, index) => <li key={source.source_key || source.id || index}><button type="button" onClick={() => { setActiveSourceIndex(index); setPreviewOpen(false); }} className={`w-full rounded-lg border px-2.5 py-2 text-left ${effectiveSourceIndex === index ? "border-copper/40 bg-copper/5" : "border-border/60"}`}><span className="block truncate text-xs text-foreground">{source.source_movie_title || "来源影片"}{source.source_episode_title ? ` · ${source.source_episode_title}` : ""}</span><span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{source.source_sentence_en || expression} {source.source_timestamp_text ? ` · ${source.source_timestamp_text}` : ""}</span></button></li>)}</ul>}
-        </div>}
-      </section>}
+      {primarySource && <RecallBlock source={primarySource} expression={expression} meaning={vocabulary?.meaning_zh || vocabulary?.text_zh || meanings[0]?.meanings?.[0] || ""} previewOpen={previewOpen} onTogglePreview={() => setPreviewOpen((value) => !value)} onClosePreview={() => setPreviewOpen(false)} onReturnToSource={(source) => onReturnToSource?.({ ...source, expression_en: expression })} onSelectSource={(index) => { setActiveSourceIndex(index); setPreviewOpen(false); }} sources={sources} effectiveSourceIndex={effectiveSourceIndex} otherSourcesOpen={otherSourcesOpen} onToggleOtherSources={() => setOtherSourcesOpen((value) => !value)} />}
       {profileStatus === "error" && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-xs text-amber-200"><span>{error || "详细词条补全失败"}</span><button type="button" onClick={() => { requestedExpression.current = ""; setRetryVersion((value) => value + 1); }} className="underline">重新补全</button><AISettingsButton className="text-copper underline">API 设置</AISettingsButton></div>}
     </div>
   );
@@ -285,6 +271,57 @@ function SectionTitle({ children }) {
   return <h3 className="mb-1.5 flex items-center gap-1.5 text-[11px] uppercase tracking-luxe text-copper/80"><BookOpen size={12} />{children}</h3>;
 }
 
+function HighlightedSentence({ text, term }) {
+  return highlightParts(text, term).map((part, index) => part.match
+    ? <mark key={index} className="bg-transparent font-semibold text-mint">{part.text}</mark>
+    : <span key={index}>{part.text}</span>);
+}
+
+function sourceLabel(source) {
+  const article = ["article", "library_article"].includes(source?.source_type);
+  return [
+    source?.source_movie_title || (article ? "文章" : "来源影片"),
+    !article && source?.source_episode_title,
+    !article && source?.source_timestamp_text,
+  ].filter(Boolean).join(" · ");
+}
+
+function RecallBlock({ source, expression, meaning, previewOpen, onTogglePreview, onClosePreview, onReturnToSource, onSelectSource, sources, effectiveSourceIndex, otherSourcesOpen, onToggleOtherSources }) {
+  const article = ["article", "library_article"].includes(source?.source_type);
+  const focus = focusSourceText(source?.source_sentence_en, expression);
+  const translation = focusedTranslation(source?.source_sentence_en, source?.source_sentence_zh, expression);
+  const showSentence = Boolean(focus.sentence) && !isHeadwordOnly(focus.sentence, expression);
+  const showTranslation = showSentence && shouldShowSentenceTranslation(translation, meaning);
+  const showContext = article && showSentence;
+  return (
+    <section className="rounded-xl border border-border/70 bg-background/45 p-3 sm:p-4">
+      <SectionTitle>原句</SectionTitle>
+      <p className="truncate text-xs text-muted-foreground">{sourceLabel(source)}</p>
+      {showContext && focus.before && !isHeadwordOnly(focus.before, expression) && <p className="mt-2 text-xs leading-relaxed text-muted-foreground/75">{focus.before}</p>}
+      {showSentence && <p className={`${showContext && focus.before ? "mt-1" : "mt-2"} text-sm leading-relaxed text-foreground`}><HighlightedSentence text={focus.sentence} term={focus.matched ? expression : ""} /></p>}
+      {showContext && focus.after && !isHeadwordOnly(focus.after, expression) && <p className="mt-1 text-xs leading-relaxed text-muted-foreground/75">{focus.after}</p>}
+      {showTranslation && <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{translation}</p>}
+      {article ? (
+        <button type="button" onClick={() => onReturnToSource?.(source)} className="mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><BookOpen size={13} /> 返回文章</button>
+      ) : <>
+        <button type="button" onClick={onTogglePreview} className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><Volume2 size={13} />{previewOpen ? "关闭预览" : "播放原句"}</button>
+        {previewOpen && <SourcePreview source={{ ...source, expression_en: expression }} expression={expression} onClose={onClosePreview} onOpenOriginal={onReturnToSource} />}
+      </>}
+      {sources.length > 1 && <div className="mt-3">
+        <button type="button" aria-expanded={otherSourcesOpen} onClick={onToggleOtherSources} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">其他语境 {sources.length - 1} <ChevronDown size={13} className={otherSourcesOpen ? "rotate-180" : ""} /></button>
+        {otherSourcesOpen && <ul className="mt-2 space-y-1.5">{sources.map((item, index) => {
+          const sentence = focusSourceText(item.source_sentence_en, expression).sentence || item.source_sentence_en || expression;
+          return <li key={item.source_key || item.id || index}><button type="button" onClick={() => onSelectSource(index)} className={`w-full rounded-lg border px-2.5 py-2 text-left ${effectiveSourceIndex === index ? "border-copper/40 bg-copper/5" : "border-border/60"}`}><span className="block truncate text-xs text-foreground">{item.source_movie_title || "来源"}{item.source_episode_title ? ` · ${item.source_episode_title}` : ""}</span><span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{sentence}{item.source_timestamp_text ? ` · ${item.source_timestamp_text}` : ""}</span></button></li>;
+        })}</ul>}
+      </div>}
+    </section>
+  );
+}
+
+function DetailBackButton({ onClick }) {
+  return <button type="button" onClick={onClick} aria-label="返回" className="inline-flex h-11 w-11 items-center justify-center rounded-full text-foreground hover:bg-white/5"><ArrowLeft size={22} /></button>;
+}
+
 export default function WordDetailDialog({ vocabulary, open, onOpenChange, onReturnToSource, returnContext = "collection", footerLabel = "关闭" }) {
   const navigate = useNavigate();
   const returnToSource = (source) => {
@@ -292,9 +329,13 @@ export default function WordDetailDialog({ vocabulary, open, onOpenChange, onRet
     return openVocabularySource(source, navigate, undefined, { returnContext });
   };
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-border bg-background p-0 pt-[env(safe-area-inset-top)] text-foreground sm:h-auto sm:max-h-[90dvh] sm:w-[calc(100%-2rem)] sm:max-w-3xl sm:rounded-xl sm:p-6">
+    <DialogContent className="flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-border bg-background p-0 pt-[env(safe-area-inset-top)] text-foreground [&>button.absolute]:hidden sm:h-auto sm:max-h-[90dvh] sm:w-[calc(100%-2rem)] sm:max-w-3xl sm:rounded-xl sm:p-6">
       <DialogHeader className="sr-only"><DialogTitle>单词详情</DialogTitle><DialogDescription>词义、语境、例句和原片来源</DialogDescription></DialogHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-5 pt-12 sm:px-1 sm:pt-2">{vocabulary && <WordDetailBody vocabulary={vocabulary} onReturnToSource={returnToSource} />}</div>
+      <div className="flex h-12 shrink-0 items-center justify-between px-1 sm:px-0">
+        <DetailBackButton onClick={() => onOpenChange?.(false)} />
+        <DialogClose aria-label="关闭" className="inline-flex h-11 w-11 items-center justify-center rounded-full text-foreground/80 hover:bg-white/5"><X size={18} /></DialogClose>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-5 sm:px-1">{vocabulary && <WordDetailBody vocabulary={vocabulary} onReturnToSource={returnToSource} />}</div>
       <footer className="border-t border-border/70 bg-background/95 px-4 pt-3 backdrop-blur sm:rounded-b-xl" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}><button type="button" onClick={() => onOpenChange?.(false)} className="w-full rounded-full border border-border px-4 py-3 text-sm text-foreground sm:ml-auto sm:w-auto">{footerLabel}</button></footer>
     </DialogContent>
   </Dialog>;
@@ -307,7 +348,10 @@ export function WordDetailOverlay({ vocabulary, onContinue, onBeforeOpenOriginal
     return openVocabularySource(source, navigate, undefined, { returnContext });
   };
   return <div className="fixed inset-0 z-[100] flex h-[100dvh] w-screen flex-col bg-background text-foreground" role="dialog" aria-modal="true" aria-label="单词详情">
-    <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6 pt-[calc(env(safe-area-inset-top)+1rem)] sm:px-6">
+    <header className="flex h-12 shrink-0 items-center px-2" style={{ marginTop: "env(safe-area-inset-top)" }}>
+      <DetailBackButton onClick={onContinue} />
+    </header>
+    <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6 sm:px-6">
       <div className="mx-auto max-w-2xl space-y-5 pb-8"><WordDetailBody vocabulary={vocabulary} onReturnToSource={onOpenOriginal} /></div>
     </main>
     <footer className="sticky bottom-0 border-t border-border/70 bg-background/95 px-4 pt-3 backdrop-blur sm:px-6" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}><div className="mx-auto max-w-2xl"><button type="button" onClick={onContinue} className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-mint px-5 py-3.5 text-sm font-semibold text-background">继续复习 <span aria-hidden="true">→</span></button></div></footer>

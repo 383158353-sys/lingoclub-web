@@ -3,6 +3,7 @@ import { ExternalLink, Loader2, Play, X } from "lucide-react";
 import VideoPlayer from "@/components/study/VideoPlayer";
 import { localMovies } from "@/lib/localStudyMeta";
 import { clearLocalVideoSource, clearTemporaryLocalVideoFile, getLocalVideoSource, saveLocalVideoHandle, setTemporaryLocalVideoFile } from "@/lib/localStudyLibrary";
+import { narrowLoopToSentence, selectSentenceCue } from "@/lib/sourceSentenceFocus";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { extractYouTubeId } from "@/lib/youtubeTranscriptClient";
 import { normalizeSourceCue, resolveVocabularySourceCue } from "@/lib/vocabularySourceCue";
@@ -12,7 +13,7 @@ function youtubeUrl(source, movie) {
   return extractYouTubeId(candidate) ? candidate : "";
 }
 
-export default function SourcePreview({ source, onClose, onOpenOriginal }) {
+export default function SourcePreview({ source, expression = "", onClose, onOpenOriginal }) {
   const [resolved, setResolved] = useState({ loading: true, movie: null, subtitles: [], url: "", file: null, missing: false, source: null, cue: null });
   const fileInputRef = useRef(null);
   const playerRef = useRef(null);
@@ -58,12 +59,23 @@ export default function SourcePreview({ source, onClose, onOpenOriginal }) {
       }
       if (!url) url = youtubeUrl(source, movie);
       if (!url && source?.source_type === "youtube" && source?.source_video_id) url = `https://www.youtube.com/watch?v=${source.source_video_id}`;
-      const resolvedCue = resolveVocabularySourceCue(resolvedSource, subtitles);
+      const sentenceCue = selectSentenceCue(source, subtitles, expression);
+      const resolvedCue = sentenceCue ? normalizeSourceCue(sentenceCue) : resolveVocabularySourceCue(resolvedSource, subtitles);
+      if (sentenceCue) {
+        resolvedSource = {
+          ...resolvedSource,
+          source_subtitle_id: resolvedCue.id || resolvedSource.source_subtitle_id,
+          source_time_start: resolvedCue.start,
+          source_time_end: resolvedCue.end,
+          source_timestamp_seconds: resolvedCue.start,
+          source_timestamp_end_seconds: resolvedCue.end,
+        };
+      }
       const cue = {
         id: resolvedCue.id,
         time_start: resolvedCue.start,
         time_end: resolvedCue.end,
-        text_en: resolvedCue.textEn,
+        text_en: resolvedCue.textEn || resolvedSource.source_sentence_en,
         text_zh: resolvedCue.textZh,
       };
       if (!cancelled) setResolved({ loading: false, movie, subtitles, url, file, missing: missing || !url, source: resolvedSource, cue });
@@ -72,7 +84,7 @@ export default function SourcePreview({ source, onClose, onOpenOriginal }) {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [recordId, source?.source_type, source?.source_url, source?.source_video_id, source?.source_time_start, source?.source_timestamp_seconds, source?.source_subtitle_id]);
+  }, [expression, recordId, source?.source_type, source?.source_url, source?.source_video_id, source?.source_time_start, source?.source_timestamp_seconds, source?.source_subtitle_id, source?.source_sentence_en]);
 
   useEffect(() => {
     const currentUrl = resolved.url;
@@ -83,7 +95,10 @@ export default function SourcePreview({ source, onClose, onOpenOriginal }) {
     const fallback = normalizeSourceCue(source);
     return { id: fallback.id, time_start: fallback.start, time_end: fallback.end, text_en: fallback.textEn, text_zh: fallback.textZh };
   })();
-  const loop = useMemo(() => cue ? getStudyCueLoopRange(cue, resolved.subtitles) : null, [cue, resolved.subtitles]);
+  const loop = useMemo(() => {
+    if (!cue) return null;
+    return narrowLoopToSentence(getStudyCueLoopRange(cue, resolved.subtitles), cue.text_en || source?.source_sentence_en, expression);
+  }, [cue, expression, resolved.subtitles, source?.source_sentence_en]);
   const start = loop?.start ?? (Number.isFinite(Number(cue?.time_start)) ? Number(cue.time_start) : 0);
 
   const onTimeUpdate = (time) => {
@@ -127,13 +142,9 @@ export default function SourcePreview({ source, onClose, onOpenOriginal }) {
           <input ref={fileInputRef} type="file" accept="video/*,.mp4,.webm,.mov,.m4v,.mkv,.avi" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void chooseVideo(file); event.target.value = ""; }} />
         </div>
       )}
-      <div className="px-3 pb-3 pt-2">
-        <p className="text-sm leading-relaxed text-foreground">{source?.source_sentence_en || cue?.text_en || "原句字幕暂不可用"}</p>
-        {(source?.source_sentence_zh || cue?.text_zh) && <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{source.source_sentence_zh || cue.text_zh}</p>}
-        {resolved.url && <p className="mt-1 text-[10px] text-mint/80">正在循环当前原句</p>}
-        <div className="mt-2 flex justify-end">
-          <button type="button" onClick={() => onOpenOriginal?.(resolved.source || source)} className="inline-flex items-center gap-1.5 rounded-full bg-copper px-3 py-1.5 text-xs font-medium text-copper-foreground"><Play size={12} />打开原片 <ExternalLink size={12} /></button>
-        </div>
+      <div className="flex items-center justify-between gap-2 px-3 pb-3 pt-2">
+        {resolved.url ? <p className="text-[10px] text-mint/80">正在循环当前原句</p> : <span />}
+        <button type="button" onClick={() => onOpenOriginal?.(resolved.source || source)} className="inline-flex items-center gap-1.5 rounded-full bg-copper px-3 py-1.5 text-xs font-medium text-copper-foreground"><Play size={12} />打开原片 <ExternalLink size={12} /></button>
       </div>
     </section>
   );
