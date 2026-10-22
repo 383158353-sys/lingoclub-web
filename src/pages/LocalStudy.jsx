@@ -30,7 +30,7 @@ import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { extractYouTubeId } from "@/lib/youtubeTranscriptClient";
 import { fetchYouTubeMeta } from "@/lib/localApi";
 import { cleanVideoTitle, isPlaceholderVideoTitle, needsTitleCleanup } from "@/lib/videoTitle";
-import { cleanSubtitleText, mergeFragments } from "@/lib/subtitleCleaner";
+import { cleanSubtitleText } from "@/lib/subtitleCleaner";
 import { useAuth } from "@/lib/AuthContext";
 import { readMovieSubtitles, syncUserState } from "@/lib/cloudState";
 import { useGlobalVideoSpace } from "@/hooks/useGlobalVideoSpace";
@@ -904,7 +904,7 @@ export default function LocalStudy() {
       if (cancelled) return;
       const url = searchParams.get("url") || "";
       const title = searchParams.get("title") || "YouTube 视频";
-      const importedSubtitles = mergeFragments(decode(encoded));
+      const importedSubtitles = decode(encoded);
       if (import.meta.env.DEV) console.info("[youtube-import]", { source: "bookmarklet", extraction: "page-handoff", videoId: searchParams.get("videoId") || "", subtitleCount: importedSubtitles.length, handoffWindowOpened: Boolean(handoffId), handoffReady, handoffTransferred: handoffReady && importedSubtitles.length > 0 });
       const saved = await onImported({ videoUrl: url, videoName: title, originalTitle: title, subtitles: importedSubtitles, posterUrl: "" });
       if (saved) window.history.replaceState({}, "", "/local-study");

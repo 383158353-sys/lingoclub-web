@@ -16,13 +16,15 @@ export function cleanSubtitleText(text) {
 }
 
 /**
- * 三阶段字幕分句优化：
- *  ① 预切分：将含句中句号(.!?)的片段拆成独立行，避免两句话混在一行。
+ * Legacy sentence merger. The watch / 精读 list must not call this.
+ * Player caption windows are the list rows (see captionDisplayCues.js).
+ * Merging flashes or cutting them by length drifts away from what is on screen
+ * and rewrites cue timings. Kept so the old timing math stays regression-locked.
+ *
+ * 三阶段字幕分句：
+ *  ① 预切分：将含句中句号(.!?)的片段拆成独立行。
  *  ② 合并：将碎片化的短片段按标点/时间轴合并为完整句。
- *  ③ 拆长句：合并后仍过长的行，在逗号或连接词(and/but/because…)处拆分。
- * 短句保持完整不拆；长句在逗号/连词处断开。
- * 关键：拆分时按文本长度比例分配时间轴，确保每行有唯一 time_start，
- * 视频播放时字幕高亮能逐句跟随、不会跳行。
+ *  ③ 拆长句：合并后仍过长的行，在逗号或连接词处拆分。
  */
 export function mergeFragments(subs, opts = {}) {
   if (!Array.isArray(subs) || subs.length === 0) return [];

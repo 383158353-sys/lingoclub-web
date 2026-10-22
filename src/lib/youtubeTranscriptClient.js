@@ -8,7 +8,7 @@
 // 一旦失败（比如该视频本就没有字幕轨 / 代发服务也已被 YouTube 屏蔽），
 // 返回一个明确的 error，UI 会引导用户走"复制 YouTube 转录"备选流程。
 import { fetchYouTubeTranscript } from "@/lib/localApi";
-import { mergeFragments } from "@/lib/subtitleCleaner";
+import { captionWindowsFromEvents, displayLinesFromTimedCues } from "@/lib/captionDisplayCues";
 import { cleanVideoTitle } from "@/lib/videoTitle";
 import { TRANSCRIPT_CACHE_PREFIX, writeTranscriptCache } from "@/lib/storageQuota";
 
@@ -94,15 +94,11 @@ function cleanCaptionText(value) {
 }
 
 function eventsToLines(events) {
-  const lines = [];
-  for (const event of events || []) {
-    const text = cleanCaptionText((event.segs || []).map((part) => part.utf8 || "").join(""));
-    const start = Number(event.tStartMs ?? event.dStartMs);
-    if (!text || !Number.isFinite(start)) continue;
-    const duration = Number(event.dDurationMs) || Math.max(1500, Math.min(8000, text.length * 80));
-    lines.push({ text_en: text, time_start: msToTimecode(start), time_end: msToTimecode(start + duration) });
-  }
-  return lines;
+  return captionWindowsFromEvents(events).flatMap((cue) => {
+    const text = cleanCaptionText(cue.text);
+    if (!text) return [];
+    return [{ text_en: text, time_start: msToTimecode(cue.startMs), time_end: msToTimecode(cue.endMs) }];
+  });
 }
 
 function captionTracksFromHtml(html) {
@@ -219,7 +215,7 @@ async function fetchTranscriptOnce(videoId, signal) {
   try {
     const data = await fetchYouTubeTranscript(canonicalUrl, { signal });
     if (data?.lines?.length) return {
-      lines: mergeFragments(data.lines),
+      lines: displayLinesFromTimedCues(data.lines),
       videoId: data.videoId,
       title: cleanVideoTitle(data.title),
       language: data.language,
@@ -245,7 +241,7 @@ async function fetchTranscriptOnce(videoId, signal) {
   const fallback = await legacyBrowserFallback(watchUrl);
   if (fallback?.lines?.length) return {
     ...fallback,
-    lines: mergeFragments(fallback.lines),
+    lines: displayLinesFromTimedCues(fallback.lines),
     videoId,
   };
   attemptErrors.push({ attempt: 2, extractor: "browser-proxy", message: "all historical proxy paths failed" });
