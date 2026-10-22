@@ -10,7 +10,7 @@ import { AISettingsButton } from "@/components/AISettingsPanel";
 import { openVocabularySource } from "@/lib/vocabularySourceNavigation";
 import SourcePreview from "@/components/vocab/SourcePreview";
 import { localMovies } from "@/lib/localStudyMeta";
-import { normalizeSourceCue, resolveVocabularySourceCue } from "@/lib/vocabularySourceCue";
+import { normalizeSourceCue, recoverYouTubeSource, resolveVocabularySourceCue, youtubePlaybackUrl } from "@/lib/vocabularySourceCue";
 import { pronounce } from "@/lib/pronunciation";
 import { inferExpressionType, isCurrentWordProfile, normalizeWordProfile, summarizeWordProfileShape, WORD_PROFILE_SCHEMA_VERSION } from "@/lib/wordProfile";
 import { focusSourceText, focusedTranslation, highlightParts, isHeadwordOnly, selectSentenceCue, shouldShowSentenceTranslation } from "@/lib/sourceSentenceFocus";
@@ -124,26 +124,34 @@ export function WordDetailBody({ vocabulary, onReturnToSource }) {
       let changed = false;
       const hydrated = await Promise.all(baseSources.map(async (source) => {
         const recordId = source.source_record_id || source.source_movie_id || source.source_episode_id;
-        if (!recordId) return source;
         try {
-          const movie = await localMovies.get(recordId);
-          const shown = displayLinesFromTimedCues(Array.isArray(movie?.subtitles) ? movie.subtitles : []);
-          const byWord = expression ? selectSentenceCue(source, shown, expression) : null;
-          const cue = byWord ? normalizeSourceCue(byWord) : resolveVocabularySourceCue(source, shown);
-          if (!cue.id && !Number.isFinite(cue.start)) return source;
+          let movie = null;
+          if (recordId) movie = await localMovies.get(recordId);
+          const direct = youtubePlaybackUrl(movie?.video_url, movie?.youtube_video_id, source.source_url, source.source_video_id);
+          const linkedLocal = Boolean(movie) && !youtubePlaybackUrl(movie?.video_url, movie?.youtube_video_id);
+          let library = [];
+          if (!direct && !linkedLocal && !["article", "library_article", "episode"].includes(source.source_type) && source.source_sentence_en) {
+            library = await localMovies.list();
+          }
+          const enriched = recoverYouTubeSource(source, movie, library);
+          const subtitleMovie = movie || library.find((item) => item.id === enriched.source_record_id) || null;
+          const shown = displayLinesFromTimedCues(Array.isArray(subtitleMovie?.subtitles) ? subtitleMovie.subtitles : []);
+          const byWord = expression ? selectSentenceCue(enriched, shown, expression) : null;
+          const cue = byWord ? normalizeSourceCue(byWord) : resolveVocabularySourceCue(enriched, shown);
+          if (!cue.id && !Number.isFinite(cue.start) && enriched === source) return source;
           const savedSentence = String(source.source_sentence_en || "").trim();
           const cueSentence = String(cue.textEn || "").trim();
           const sentence = cueSentence && savedSentence && cueSentence !== savedSentence && cueSentence.includes(savedSentence) ? cueSentence : (savedSentence || cueSentence);
           const next = {
-            ...source,
-            source_subtitle_id: byWord?.id || source.source_subtitle_id || cue.id,
-            source_time_start: Number.isFinite(cue.start) ? cue.start : source.source_time_start,
-            source_time_end: Number.isFinite(cue.end) ? cue.end : source.source_time_end,
-            source_timestamp_seconds: Number.isFinite(cue.start) ? cue.start : source.source_timestamp_seconds,
-            source_timestamp_end_seconds: Number.isFinite(cue.end) ? cue.end : source.source_timestamp_end_seconds,
+            ...enriched,
+            source_subtitle_id: byWord?.id || enriched.source_subtitle_id || cue.id,
+            source_time_start: Number.isFinite(cue.start) ? cue.start : enriched.source_time_start,
+            source_time_end: Number.isFinite(cue.end) ? cue.end : enriched.source_time_end,
+            source_timestamp_seconds: Number.isFinite(cue.start) ? cue.start : enriched.source_timestamp_seconds,
+            source_timestamp_end_seconds: Number.isFinite(cue.end) ? cue.end : enriched.source_timestamp_end_seconds,
             source_sentence_en: sentence,
-            source_sentence_zh: source.source_sentence_zh || cue.textZh,
-            source_movie_title: source.source_movie_title || movie?.name || null,
+            source_sentence_zh: enriched.source_sentence_zh || cue.textZh,
+            source_movie_title: enriched.source_movie_title || subtitleMovie?.name || null,
           };
           if (JSON.stringify(next) !== JSON.stringify(source)) changed = true;
           return next;

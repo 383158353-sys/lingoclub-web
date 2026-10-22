@@ -6,7 +6,7 @@ import { clearLocalVideoSource, clearTemporaryLocalVideoFile, getLocalVideoSourc
 import { displayLinesFromTimedCues } from "@/lib/captionDisplayCues";
 import { narrowLoopToSentence, selectSentenceCue } from "@/lib/sourceSentenceFocus";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
-import { normalizeSourceCue, resolveVocabularySourceCue, youtubePlaybackUrl } from "@/lib/vocabularySourceCue";
+import { matchYouTubeSourceMovie, normalizeSourceCue, resolveVocabularySourceCue, youtubePlaybackUrl } from "@/lib/vocabularySourceCue";
 
 export default function SourcePreview({ source, expression = "", onClose, onOpenOriginal }) {
   const [resolved, setResolved] = useState({ loading: true, movie: null, subtitles: [], url: "", file: null, missing: false, source: null, cue: null });
@@ -48,7 +48,26 @@ export default function SourcePreview({ source, expression = "", onClose, onOpen
         const cue = resolveVocabularySourceCue(source, subtitles);
         resolvedSource = { ...resolvedSource, source_subtitle_id: resolvedSource.source_subtitle_id || cue.id, source_time_start: cue.start, source_time_end: cue.end, source_timestamp_seconds: cue.start, source_timestamp_end_seconds: cue.end, source_sentence_en: resolvedSource.source_sentence_en || cue.textEn, source_sentence_zh: resolvedSource.source_sentence_zh || cue.textZh };
       }
-      url = youtubePlaybackUrl(movie?.video_url, source?.source_url, source?.source_video_id);
+      url = youtubePlaybackUrl(movie?.video_url, movie?.youtube_video_id, source?.source_url, source?.source_video_id);
+      const linkedLocal = Boolean(movie) && !youtubePlaybackUrl(movie?.video_url, movie?.youtube_video_id);
+      if (!url && !linkedLocal) {
+        try {
+          const match = matchYouTubeSourceMovie(await localMovies.list(), resolvedSource);
+          if (match?.url) {
+            url = match.url;
+            movie = movie || match.movie;
+            if (!subtitles.length) subtitles = displayLinesFromTimedCues(Array.isArray(match.movie?.subtitles) ? match.movie.subtitles : []);
+            resolvedSource = {
+              ...resolvedSource,
+              source_url: resolvedSource.source_url || match.url,
+              source_video_id: resolvedSource.source_video_id || new URL(match.url).searchParams.get("v") || "",
+              source_movie_title: resolvedSource.source_movie_title || match.movie?.name || "",
+              source_record_id: resolvedSource.source_record_id || match.movie?.id || "",
+              source_type: resolvedSource.source_type === "episode" ? resolvedSource.source_type : "youtube",
+            };
+          }
+        } catch { /* a library miss still leaves the local-file picker for real local movies */ }
+      }
       if (!url && recordId) {
         try {
           const local = await getLocalVideoSource(recordId);

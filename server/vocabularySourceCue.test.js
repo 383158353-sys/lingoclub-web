@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeSourceCue, resolveVocabularySourceCue, youtubePlaybackUrl } from "../src/lib/vocabularySourceCue.js";
+import { matchYouTubeSourceMovie, normalizeSourceCue, planVocabularyRecall, recoverYouTubeSource, resolveVocabularySourceCue, youtubePlaybackUrl } from "../src/lib/vocabularySourceCue.js";
 
 test("word and phrase sources anchor to the complete subtitle cue, not the click timestamp", () => {
   const sourceCue = normalizeSourceCue({
@@ -40,4 +40,62 @@ test("YouTube recall builds an embed URL from the video id alone", () => {
     "https://www.youtube.com/watch?v=83hYhbknuJc",
   );
   assert.equal(youtubePlaybackUrl("local-movie.mp4"), "");
+  assert.equal(youtubePlaybackUrl("", "83hYhbknuJc"), "https://www.youtube.com/watch?v=83hYhbknuJc");
+});
+
+test("a YouTube favorite saved without a url still recalls the library movie, not a local file", () => {
+  const source = {
+    source_type: "local",
+    source_sentence_en: "The field is massively important to how",
+    source_timestamp_text: "1:10.000",
+    source_timestamp_seconds: 70,
+  };
+  const youtube = {
+    id: "movie-yt",
+    name: "Production design",
+    video_url: "",
+    youtube_video_id: "83hYhbknuJc",
+    subtitles: [
+      { id: "massively", time_start: "1:10.000", time_end: "1:14.479", text_en: "The field is massively important to how" },
+    ],
+  };
+  const local = {
+    id: "movie-local",
+    name: "Local film",
+    video_url: "",
+    subtitles: [
+      { id: "local-line", time_start: "1:10.000", time_end: "1:14.000", text_en: "The field is massively important to how" },
+    ],
+  };
+  const match = matchYouTubeSourceMovie([local, youtube], source);
+  assert.equal(match?.movie.id, "movie-yt");
+  assert.equal(match.url, "https://www.youtube.com/watch?v=83hYhbknuJc");
+  assert.equal(matchYouTubeSourceMovie([local], source), null);
+
+  const recovered = recoverYouTubeSource(source, null, [local, youtube]);
+  assert.equal(recovered.source_type, "youtube");
+  assert.equal(recovered.source_video_id, "83hYhbknuJc");
+  assert.equal(recovered.source_record_id, "movie-yt");
+  assert.equal(recovered.source_movie_title, "Production design");
+
+  const recall = planVocabularyRecall(source, { movies: [local, youtube] });
+  assert.equal(recall.kind, "local-study");
+  const href = new URL(recall.href, "https://lingoclub.local");
+  assert.equal(href.pathname, "/local-study");
+  assert.equal(href.searchParams.get("open"), "movie-yt");
+  assert.equal(href.searchParams.get("closeReading"), "1");
+  assert.equal(href.searchParams.get("t"), "70");
+
+  const localRecall = planVocabularyRecall(source, { movie: local, movies: [youtube] });
+  assert.equal(localRecall.kind, "local-study");
+  assert.equal(new URL(localRecall.href, "https://lingoclub.local").searchParams.get("open"), "movie-local");
+  assert.equal(recoverYouTubeSource(source, local, [youtube]).source_type, "local");
+
+  const byId = planVocabularyRecall({ ...source, source_video_id: "83hYhbknuJc", source_type: "local" }, {});
+  assert.equal(byId.kind, "quick-study");
+  assert.equal(new URL(byId.href, "https://lingoclub.local").searchParams.get("url"), "https://www.youtube.com/watch?v=83hYhbknuJc");
+
+  const episode = planVocabularyRecall({ source_episode_id: "episode-id", source_sentence_en: source.source_sentence_en }, { movies: [youtube] });
+  assert.equal(episode.kind, "episode");
+  assert.match(episode.href, /^\/episode\/episode-id\?/);
 });

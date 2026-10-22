@@ -47,3 +47,16 @@ test("word, phrase and sentence saves retain article provenance and merge repeat
     assert.equal(another.entry.sources.length, 2);
   }
 });
+test("a YouTube watch URL saved as a local source keeps the video id", async () => {
+  const { buildVocabularySource } = await loadModule("src/lib/vocabularySources.js");
+  const source = buildVocabularySource({
+    type: "word",
+    expression_en: "massively",
+    source_type: "local",
+    source_url: "https://www.youtube.com/watch?v=83hYhbknuJc",
+    source_sentence_en: "The field is massively important to how",
+  });
+  assert.equal(source.source_type, "youtube");
+  assert.equal(source.source_video_id, "83hYhbknuJc");
+  assert.equal(source.source_url, "https://www.youtube.com/watch?v=83hYhbknuJc");
+});
