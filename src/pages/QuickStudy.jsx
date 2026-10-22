@@ -54,6 +54,7 @@ export default function QuickStudy() {
   const [clockRunning, setClockRunning] = useState(false);
   const [loopRange, setLoopRange] = useState(null);
   const loopRangeRef = useRef(null);
+  const studySubsRef = useRef([]);
   const [subHeight, setSubHeight] = useState(() => {
     try { const v = parseInt(localStorage.getItem("study_sub_h"), 10); return Number.isFinite(v) && v ? v : 256; } catch { return 256; }
   });
@@ -300,12 +301,12 @@ export default function QuickStudy() {
   }, [clockRunning, currentTime, isBili, simTime]);
 
   const onStudyEnter = useCallback((sub) => {
-    const nextLoop = getStudyCueLoopRange(sub, materials?.subtitles || []);
+    const nextLoop = getStudyCueLoopRange(sub, studySubsRef.current);
     if (!nextLoop) return;
     loopRangeRef.current = nextLoop;
     setLoopRange(nextLoop);
     playFromLine(nextLoop.start);
-  }, [materials?.subtitles, playFromLine]);
+  }, [playFromLine]);
   const onStudyExit = useCallback(() => {
     loopRangeRef.current = null;
     setLoopRange(null);
@@ -332,6 +333,7 @@ export default function QuickStudy() {
     onStudyEnter,
     onStudyExit,
   });
+  studySubsRef.current = study.subs;
   const onExternalSeek = useCallback((time) => {
     const activeLoop = loopRangeRef.current;
     if (activeLoop && (time < activeLoop.start - 0.05 || time > activeLoop.end + 0.35)) study.exitCloseReading();

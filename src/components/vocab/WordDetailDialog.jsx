@@ -10,10 +10,11 @@ import { AISettingsButton } from "@/components/AISettingsPanel";
 import { openVocabularySource } from "@/lib/vocabularySourceNavigation";
 import SourcePreview from "@/components/vocab/SourcePreview";
 import { localMovies } from "@/lib/localStudyMeta";
-import { resolveVocabularySourceCue } from "@/lib/vocabularySourceCue";
+import { normalizeSourceCue, resolveVocabularySourceCue } from "@/lib/vocabularySourceCue";
 import { pronounce } from "@/lib/pronunciation";
 import { inferExpressionType, isCurrentWordProfile, normalizeWordProfile, summarizeWordProfileShape, WORD_PROFILE_SCHEMA_VERSION } from "@/lib/wordProfile";
-import { focusSourceText, focusedTranslation, highlightParts, isHeadwordOnly, shouldShowSentenceTranslation } from "@/lib/sourceSentenceFocus";
+import { focusSourceText, focusedTranslation, highlightParts, isHeadwordOnly, selectSentenceCue, shouldShowSentenceTranslation } from "@/lib/sourceSentenceFocus";
+import { displayLinesFromTimedCues } from "@/lib/captionDisplayCues";
 
 function isDetailed(profile) {
   return isCurrentWordProfile(profile);
@@ -126,16 +127,21 @@ export function WordDetailBody({ vocabulary, onReturnToSource }) {
         if (!recordId) return source;
         try {
           const movie = await localMovies.get(recordId);
-          const cue = resolveVocabularySourceCue(source, Array.isArray(movie?.subtitles) ? movie.subtitles : []);
+          const shown = displayLinesFromTimedCues(Array.isArray(movie?.subtitles) ? movie.subtitles : []);
+          const byWord = expression ? selectSentenceCue(source, shown, expression) : null;
+          const cue = byWord ? normalizeSourceCue(byWord) : resolveVocabularySourceCue(source, shown);
           if (!cue.id && !Number.isFinite(cue.start)) return source;
+          const savedSentence = String(source.source_sentence_en || "").trim();
+          const cueSentence = String(cue.textEn || "").trim();
+          const sentence = cueSentence && savedSentence && cueSentence !== savedSentence && cueSentence.includes(savedSentence) ? cueSentence : (savedSentence || cueSentence);
           const next = {
             ...source,
-            source_subtitle_id: source.source_subtitle_id || cue.id,
+            source_subtitle_id: byWord?.id || source.source_subtitle_id || cue.id,
             source_time_start: Number.isFinite(cue.start) ? cue.start : source.source_time_start,
             source_time_end: Number.isFinite(cue.end) ? cue.end : source.source_time_end,
             source_timestamp_seconds: Number.isFinite(cue.start) ? cue.start : source.source_timestamp_seconds,
             source_timestamp_end_seconds: Number.isFinite(cue.end) ? cue.end : source.source_timestamp_end_seconds,
-            source_sentence_en: source.source_sentence_en || cue.textEn,
+            source_sentence_en: sentence,
             source_sentence_zh: source.source_sentence_zh || cue.textZh,
             source_movie_title: source.source_movie_title || movie?.name || null,
           };
@@ -150,7 +156,7 @@ export function WordDetailBody({ vocabulary, onReturnToSource }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [baseSources, vocabulary?.id]);
+  }, [baseSources, expression, vocabulary?.id]);
 
   useEffect(() => {
     if (!expression || isDetailed(profile)) { if (isDetailed(profile)) setProfileStatus("success"); return undefined; }

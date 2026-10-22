@@ -8,6 +8,7 @@ import {
 
 import { fetchSupadataTranscript } from "./transcript/supadataTranscript.js";
 import { readSharedTranscript, writeSharedTranscript } from "./transcriptStore.js";
+import { displayLinesFromTimedCues } from "../src/lib/captionDisplayCues.js";
 
 export { linesFromEvents, normalizeYouTubeUrl, videoId };
 
@@ -26,11 +27,11 @@ function timecode(seconds) {
 
 function successPayload(result, rawInput, normalizedUrl, { cached = false, serviceFallback = null } = {}) {
   const extractor = result.extractor;
-  const lines = result.subtitles.map((item) => ({
+  const lines = displayLinesFromTimedCues(result.subtitles.map((item) => ({
     text_en: item.text,
     time_start: timecode(item.start),
     time_end: timecode(item.start + item.duration),
-  }));
+  })));
   return {
     videoId: result.videoId,
     title: result.title,
@@ -51,7 +52,7 @@ function successPayload(result, rawInput, normalizedUrl, { cached = false, servi
       captionTracksFound: result.diagnostics.find(
         (item) => item.extractor === extractor && item.step === "caption-tracks",
       )?.found || 0,
-      subtitleCount: result.subtitles.length,
+      subtitleCount: lines.length,
       attempt: result.attempt,
       upstream: result.diagnostics,
     },

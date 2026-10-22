@@ -256,11 +256,12 @@ export async function transcribeYouTubeClient(url, { signal } = {}) {
   const videoId = extractYouTubeId(url);
   if (!videoId) return { error: "不是有效的 YouTube 链接" };
   const cached = transcriptCache.get(videoId);
-  if (cached?.length) return { lines: cached, cached: true };
+  if (cached?.length) return { lines: displayLinesFromTimedCues(cached), cached: true };
   const persistentCached = readPersistentTranscript(videoId);
   if (persistentCached?.length) {
-    transcriptCache.set(videoId, persistentCached);
-    return { lines: persistentCached, cached: true };
+    const lines = displayLinesFromTimedCues(persistentCached);
+    transcriptCache.set(videoId, lines);
+    return { lines, cached: true };
   }
   if (transcriptRequests.has(videoId)) return transcriptRequests.get(videoId);
 

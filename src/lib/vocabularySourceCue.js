@@ -1,5 +1,38 @@
 import { toSec } from "./timecode.js";
 
+const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+
+function youtubeIdFromValue(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (YOUTUBE_ID.test(text)) return text;
+  try {
+    const raw = text.match(/https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&*+,;=%]+/i)?.[0] || text;
+    const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "").replace(/^m\./, "");
+    if (host === "youtu.be") {
+      const id = url.pathname.split("/").filter(Boolean)[0] || "";
+      return YOUTUBE_ID.test(id) ? id : "";
+    }
+    if (host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtube-nocookie.com" || host.endsWith(".youtube-nocookie.com")) {
+      const query = url.searchParams.get("v") || "";
+      if (YOUTUBE_ID.test(query)) return query;
+      const path = url.pathname.match(/\/(?:embed|shorts|live|v)\/([A-Za-z0-9_-]{11})/)?.[1] || "";
+      return YOUTUBE_ID.test(path) ? path : "";
+    }
+  } catch { /* a local file name is not a YouTube id */ }
+  return "";
+}
+
+/** Watch URL for an embedded one-cue recall. Any of video URL, source URL, or video id. */
+export function youtubePlaybackUrl(...values) {
+  for (const value of values) {
+    const id = youtubeIdFromValue(value);
+    if (id) return `https://www.youtube.com/watch?v=${id}`;
+  }
+  return "";
+}
+
 function cueStart(cue) {
   return parseTime(cue?.time_start);
 }
@@ -47,11 +80,18 @@ export function resolveVocabularySourceCue(source = {}, subtitles = []) {
     .map((cue, index) => ({ cue, index, start: cueStart(cue), end: cueEnd(cue) }))
     .filter((item) => Number.isFinite(item.start))
     .sort((a, b) => a.start - b.start || a.index - b.index);
-  const containing = ordered.find((item, index) => {
+  // Rolling ASR cues overlap, so a timestamp can sit inside an older line
+  // and on the newer line that actually starts there. The later start is the
+  // cue the card timestamp names (same rule as findCueAtTime).
+  let containing = null;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const item = ordered[index];
     const nextStart = ordered[index + 1]?.start ?? Infinity;
     const end = Number.isFinite(item.end) ? item.end : nextStart;
-    return normalized.start >= item.start - 0.05 && normalized.start <= end + 0.05;
-  });
+    if (normalized.start >= item.start - 0.05 && normalized.start <= end + 0.05) {
+      if (!containing || item.start >= containing.start) containing = item;
+    }
+  }
   if (containing) return normalizeSourceCue(containing.cue);
 
   let nearest = null;
