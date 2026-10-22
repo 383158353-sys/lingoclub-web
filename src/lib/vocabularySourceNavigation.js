@@ -1,4 +1,5 @@
 import { localMovies } from "@/lib/localStudyMeta";
+import { articleReturnPath } from "@/lib/sourceSentenceFocus";
 import { resolveVocabularySourceCue } from "@/lib/vocabularySourceCue";
 import { toSec } from "@/lib/timecode";
 
@@ -14,12 +15,8 @@ function youtubeId(value) {
 }
 
 export async function openVocabularySource(source, navigate, onUnavailable = () => {}, { returnContext = "collection" } = {}) {
-  if (source?.source_type === "library_article" && source?.source_record_id) {
-    navigate(`/library-articles/${encodeURIComponent(source.source_record_id)}`);
-    return true;
-  }
-  if (source?.source_type === "article" && source?.source_record_id) {
-    navigate(`/articles/${encodeURIComponent(source.source_record_id)}`);
+  if ((source?.source_type === "library_article" || source?.source_type === "article") && source?.source_record_id) {
+    navigate(articleReturnPath(source));
     return true;
   }
   const recordId = source?.source_record_id || source?.source_movie_id || source?.source_episode_id;

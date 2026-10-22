@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ExternalLink, Heart, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 import { useToast } from "@/components/ui/use-toast";
@@ -8,6 +8,7 @@ import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
 import VocabSaveButton from "@/components/study/VocabSaveButton";
 import { articlesAvailable, getDailyArticle, markArticleRead, setArticleFavorite } from "@/lib/dailyArticles";
 import { articleDomain, articleParagraphs, articleSourceUrl, normalizeAnalysis } from "@/lib/dailyArticlesFormat";
+import { locateArticleSentence, splitSourceSentences } from "@/lib/sourceSentenceFocus";
 import { getLibraryArticle, markLibraryArticleRead, setLibraryArticleFavorite } from "@/lib/libraryArticles";
 
 export default function DailyArticleReader({ library = false }) {
@@ -15,6 +16,9 @@ export default function DailyArticleReader({ library = false }) {
   const markRead = library ? markLibraryArticleRead : markArticleRead;
   const setFavorite = library ? setLibraryArticleFavorite : setArticleFavorite;
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
+  const focusSentence = searchParams.get("sentence") || "";
+  const focusWord = searchParams.get("word") || "";
   const { user } = useAuth();
   const { toast } = useToast();
   const [article, setArticle] = useState(null);
@@ -49,6 +53,17 @@ export default function DailyArticleReader({ library = false }) {
     finally { setSaving(false); }
   };
   const analysis = normalizeAnalysis(article?.analysis);
+  const located = article ? locateArticleSentence(article.body_en, { sentence: focusSentence, word: focusWord }) : null;
+  const focusParagraph = located?.paragraphIndex;
+  const focusSentenceIndex = located?.sentenceIndex;
+  useEffect(() => {
+    if (loading || focusParagraph === undefined || focusSentenceIndex === undefined || (!focusSentence && !focusWord)) return undefined;
+    const selector = `[data-article-sentence="${focusParagraph}-${focusSentenceIndex}"]`;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector(selector)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [article?.id, loading, focusParagraph, focusSentenceIndex, focusSentence, focusWord]);
   const source = article ? { sourceType: library ? "library_article" : "article", sourceRecordId: article.id, sourceUrl: article.source_url, movieTitle: article.title } : {};
   const href = articleSourceUrl(article?.source_url);
   return <div className="mx-auto max-w-5xl px-4 pb-20 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-8 md:pt-28">
@@ -72,9 +87,14 @@ export default function DailyArticleReader({ library = false }) {
           <p className="mb-4 text-xs text-muted-foreground">点击单词查看释义并收藏；短语、整句可划选后收藏，手机上可长按拖选。</p>
           <div className="space-y-7">{articleParagraphs(article.body_en).map((paragraph, index) => {
             const summary = analysis.paragraph_summaries.find((row) => row.index === index + 1)?.zh;
+            const sentences = splitSourceSentences(paragraph);
+            const parts = sentences.length ? sentences : [paragraph];
             return <div key={`${id}-${index}`}>
               <SelectionBubble {...source} text={paragraph} translation={summary} selectionMeanings={Object.fromEntries([...analysis.key_vocab, ...analysis.long_sentences, ...analysis.ielts_expressions].map((row) => [row.en.toLowerCase(), row.zh || row.usage || ""]))} className="whitespace-pre-line text-base leading-8 md:text-lg md:leading-9">
-                <SubtitleWordLookup {...source} text={paragraph} translation={summary} contextText={paragraph} wordMeanings={Object.fromEntries(analysis.key_vocab.filter((row) => row.zh).map((row) => [row.en.toLowerCase(), row.zh]))} />
+                {parts.map((sentence, sentenceIndex) => {
+                  const focused = located?.paragraphIndex === index && located?.sentenceIndex === sentenceIndex;
+                  return <span key={sentenceIndex} data-article-sentence={`${index}-${sentenceIndex}`} className={focused ? "scroll-mt-24 rounded-sm bg-mint/10" : undefined}>{sentenceIndex > 0 ? " " : ""}<SubtitleWordLookup as="span" {...source} text={sentence} translation={summary} contextText={paragraph} highlightTerm={focused ? focusWord : ""} wordMeanings={Object.fromEntries(analysis.key_vocab.filter((row) => row.zh).map((row) => [row.en.toLowerCase(), row.zh]))} /></span>;
+                })}
               </SelectionBubble>
               {summary && <p className="mt-3 border-l-2 border-copper/30 pl-4 text-sm leading-relaxed text-muted-foreground"><span className="mr-2 text-foreground/70">段落大意</span>{summary}</p>}
             </div>;

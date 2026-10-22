@@ -10,12 +10,13 @@ import WordDetailDialog from "@/components/vocab/WordDetailDialog";
 import { AISettingsButton } from "@/components/AISettingsPanel";
 import { safeAIErrorMessage } from "@/lib/aiSettings";
 import { normalizeSourceCue } from "@/lib/vocabularySourceCue";
+import { textHasExpression } from "@/lib/sourceSentenceFocus";
 import { getStudyWordCacheResult, quickWordLookupPayload, resolveStudyWordLookup } from "@/lib/studyLearningCache";
 
 // 将一句英文字幕渲染为可点击的单词 span。
 // 点击任意单词 → 先查内存缓存 → 再调 vocab-profile 后端（后端自带 DB 缓存）→ 弹出释义 + 收藏。
 // 收藏写入当前浏览器的本地词库。
-export default function SubtitleWordLookup({ text, translation, movieId, videoId = movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, subtitleId, timestamp, timestampSeconds, timestampEnd, sourceCue, className, aiProcessing, subtitleHash, contextText, wordMeanings }) {
+export default function SubtitleWordLookup({ text, translation, movieId, videoId = movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, subtitleId, timestamp, timestampSeconds, timestampEnd, sourceCue, className, aiProcessing, subtitleHash, contextText, wordMeanings, as: Element = "p", highlightTerm = "" }) {
   const { toast } = useToast();
   const [word, setWord] = useState(null); // { text, loading, profile, err, x, top, h, showBelow }
   const [saved, setSaved] = useState(false);
@@ -132,11 +133,12 @@ export default function SubtitleWordLookup({ text, translation, movieId, videoId
 
   return (
     <>
-      <p className={className}>
+      <Element className={className}>
         {segments.map((seg, i) => {
           if (!seg || /^\s+$/.test(seg)) return <span key={i}>{seg}</span>;
           const w = seg.replace(/[^A-Za-z'-]/g, "");
           if (!w) return <span key={i}>{seg}</span>;
+          const highlighted = highlightTerm && (w.toLowerCase() === highlightTerm.toLowerCase() || textHasExpression(highlightTerm, w));
           return (
             <span
               key={i}
@@ -145,13 +147,13 @@ export default function SubtitleWordLookup({ text, translation, movieId, videoId
               aria-label={`查看单词 ${w}`}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); lookup(w, e.currentTarget.getBoundingClientRect()); } }}
               onClick={(e) => { e.stopPropagation(); if (window.getSelection()?.toString().trim()) return; lookup(w, e.currentTarget.getBoundingClientRect()); }}
-              className="cursor-pointer underline decoration-transparent underline-offset-2 transition-colors hover:text-mint hover:decoration-mint/60"
+              className={`cursor-pointer underline decoration-transparent underline-offset-2 transition-colors hover:text-mint hover:decoration-mint/60 ${highlighted ? "font-semibold text-mint decoration-mint/40" : ""}`}
             >
               {seg}
             </span>
           );
         })}
-      </p>
+      </Element>
       {word && (
         <div
           data-word-bubble

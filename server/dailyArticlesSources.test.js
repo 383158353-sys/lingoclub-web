@@ -22,8 +22,18 @@ test("article source navigation bypasses local and video paths", async () => {
   assert.deepEqual(paths, ["/articles/article-id"]);
   await openVocabularySource({ source_type: "library_article", source_record_id: "library-id" }, (url) => paths.push(url));
   assert.equal(paths.pop(), "/library-articles/library-id");
+  await openVocabularySource({
+    source_type: "article",
+    source_record_id: "article-id",
+    source_sentence_en: "People noticed the surge. Labels followed.",
+    expression_en: "surge",
+  }, (url) => paths.push(url));
+  const focused = new URL(paths.at(-1), "https://lingoclub.local");
+  assert.equal(focused.pathname, "/articles/article-id");
+  assert.match(focused.searchParams.get("sentence"), /^People noticed the surge/);
+  assert.equal(focused.searchParams.get("word"), "surge");
   await openVocabularySource({ source_episode_id: "episode-id" }, (url) => paths.push(url));
-  assert.match(paths[1], /^\/episode\/episode-id\?/);
+  assert.match(paths.at(-1), /^\/episode\/episode-id\?/);
 });
 test("word, phrase and sentence saves retain article provenance and merge repeated saves", async () => {
   const { saveVocabularyEntry } = await loadModule("src/lib/vocabularySources.js");
