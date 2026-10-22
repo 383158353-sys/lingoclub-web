@@ -53,7 +53,10 @@ export default function QuickStudy() {
   const [simTime, setSimTime] = useState(null);
   const [clockRunning, setClockRunning] = useState(false);
   const [loopRange, setLoopRange] = useState(null);
+  const [recallStart, setRecallStart] = useState(null);
+  const recallHandledRef = useRef(false);
   const loopRangeRef = useRef(null);
+  const studySubsRef = useRef([]);
   const [subHeight, setSubHeight] = useState(() => {
     try { const v = parseInt(localStorage.getItem("study_sub_h"), 10); return Number.isFinite(v) && v ? v : 256; } catch { return 256; }
   });
@@ -300,12 +303,12 @@ export default function QuickStudy() {
   }, [clockRunning, currentTime, isBili, simTime]);
 
   const onStudyEnter = useCallback((sub) => {
-    const nextLoop = getStudyCueLoopRange(sub, materials?.subtitles || []);
+    const nextLoop = getStudyCueLoopRange(sub, studySubsRef.current);
     if (!nextLoop) return;
     loopRangeRef.current = nextLoop;
     setLoopRange(nextLoop);
     playFromLine(nextLoop.start);
-  }, [materials?.subtitles, playFromLine]);
+  }, [playFromLine]);
   const onStudyExit = useCallback(() => {
     loopRangeRef.current = null;
     setLoopRange(null);
@@ -332,6 +335,7 @@ export default function QuickStudy() {
     onStudyEnter,
     onStudyExit,
   });
+  studySubsRef.current = study.subs;
   const onExternalSeek = useCallback((time) => {
     const activeLoop = loopRangeRef.current;
     if (activeLoop && (time < activeLoop.start - 0.05 || time > activeLoop.end + 0.35)) study.exitCloseReading();
@@ -343,6 +347,17 @@ export default function QuickStudy() {
   }, [loopRange, playFromLine, studyTime]);
 
   const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, setActiveId: study.setActiveId, setSelectedCueId: study.setSelectedCueId });
+  useEffect(() => {
+    if (recallHandledRef.current || searchParams.get("closeReading") !== "1") return;
+    const at = Number(searchParams.get("t"));
+    if (!Number.isFinite(at) || !study.subs.length) return;
+    const cue = transcriptFocus.focusTranscriptCueByIdOrTime(searchParams.get("cue"), at);
+    if (!cue) return;
+    recallHandledRef.current = true;
+    const start = toSec(cue.time_start);
+    if (Number.isFinite(start)) setRecallStart(start);
+    study.toggleCloseReading(cue);
+  }, [searchParams, study.subs, study.toggleCloseReading, transcriptFocus.focusTranscriptCueByIdOrTime]);
   const startCloseReadingFromKeyboard = useCallback(() => {
     const cue = transcriptFocus.focusCurrentTranscriptCue();
     if (cue) study.toggleCloseReading(cue);
@@ -428,6 +443,9 @@ export default function QuickStudy() {
 
   const hasSubs = (materials?.subtitles?.length || 0) > 0;
   const canPlay = !!materials?.videoUrl;
+  const youtubeId = extractYouTubeId(materials?.videoUrl || "");
+  const studySourceType = youtubeId ? "youtube" : "local";
+  const studyVideoId = youtubeId || materials?.recordId || "";
 
   const biliDuration = Math.max(
     (materials?.subtitles || []).reduce((m, s) => {
@@ -440,7 +458,7 @@ export default function QuickStudy() {
   const videoSlot = (
     <div>
       <div className="relative">
-        <VideoPlayer ref={videoRef} url={materials.videoUrl} onTimeUpdate={setCurrentTime} onUserSeek={onExternalSeek} />
+        <VideoPlayer ref={videoRef} url={materials.videoUrl} autoPlayFrom={recallStart} onTimeUpdate={setCurrentTime} onUserSeek={onExternalSeek} />
         {isBili && !isPhone && !maskOn && (
           <button
             type="button"
@@ -502,7 +520,7 @@ export default function QuickStudy() {
         />
       )}
       {hasSubs ? (
-        <SubtitleScrubber study={study} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} />
+        <SubtitleScrubber study={study} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} movieTitle={materials.videoName} videoId={studyVideoId} sourceType={studySourceType} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} />
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-background-elev/30 p-6 text-sm leading-relaxed text-muted-foreground">
           {fetchError ? (
@@ -524,7 +542,7 @@ export default function QuickStudy() {
 
   const analysisSlot = (
     <div className={`h-full rounded-2xl border border-border/60 bg-background-elev/30 p-4 scrollbar-none ${theater ? "overflow-y-auto" : "lg:sticky lg:top-24 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto"}`}>
-      <StudyAnalysisColumn study={study} movieTitle={materials.videoName || "快速导入"} movieId={materials.recordId} />
+      <StudyAnalysisColumn study={study} movieTitle={materials.videoName || "快速导入"} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} videoId={studyVideoId} sourceType={studySourceType} />
     </div>
   );
 
@@ -538,7 +556,7 @@ export default function QuickStudy() {
         videoSlot={videoSlot}
         analysisSlot={analysisSlot}
         subtitleSlot={subtitleSlot}
-        minimalSubSlot={<MinimalSubtitleBar study={study} movieId={materials.recordId} movieTitle={materials.videoName} storageKey="theater_quick_min_sub_y" storageSizeKey="theater_quick_min_sub_size" />}
+        minimalSubSlot={<MinimalSubtitleBar study={study} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} videoId={studyVideoId} movieTitle={materials.videoName} sourceType={studySourceType} storageKey="theater_quick_min_sub_y" storageSizeKey="theater_quick_min_sub_size" />}
       />
     );
   }

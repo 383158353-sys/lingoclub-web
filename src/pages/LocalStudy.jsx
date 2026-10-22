@@ -460,6 +460,7 @@ export default function LocalStudy() {
       return;
     }
     if (!videoUrl && meta.video_url) { videoUrl = meta.video_url; }
+    if (!videoUrl && meta.youtube_video_id) videoUrl = `https://www.youtube.com/watch?v=${meta.youtube_video_id}`;
     revokeCurrent();
     // Titles saved from a signed-in YouTube tab may carry "(5) " / " - YouTube".
     if (needsTitleCleanup(meta.name) || needsTitleCleanup(meta.original_title)) {

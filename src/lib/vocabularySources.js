@@ -1,7 +1,7 @@
 import { vocabRepository } from "@/lib/vocabRepository";
 import { supabase } from "@/lib/supabaseClient";
 import { fromSecPrecise, toSec } from "@/lib/timecode";
-import { normalizeSourceCue } from "@/lib/vocabularySourceCue";
+import { normalizeSourceCue, youtubePlaybackUrl } from "@/lib/vocabularySourceCue";
 
 const normalizedExpression = (value) => String(value || "").trim().toLocaleLowerCase().replace(/\s+/g, " ");
 
@@ -32,15 +32,11 @@ export function buildVocabularySource(payload = {}) {
   const parsedEnd = Number(cue.end ?? payload.source_time_end ?? payload.source_timestamp_end_seconds);
   const parsedEndTimecode = toSec(cue.end ?? payload.source_time_end ?? payload.source_timestamp_end_seconds);
   const timestampEndSeconds = Number.isFinite(parsedEnd) ? parsedEnd : Number.isFinite(parsedEndTimecode) ? parsedEndTimecode : null;
-  const sourceType = payload.source_type || (payload.source_episode_id ? "episode" : "local");
   const sourceUrl = payload.source_url || null;
-  let sourceVideoId = payload.source_video_id || null;
-  if (!sourceVideoId && sourceUrl) {
-    try {
-      const url = new URL(sourceUrl);
-      sourceVideoId = url.hostname.endsWith("youtu.be") ? url.pathname.slice(1).split("/")[0] : url.searchParams.get("v");
-    } catch { /* a non-URL local source is valid */ }
-  }
+  const playback = youtubePlaybackUrl(payload.source_video_id, sourceUrl);
+  let sourceVideoId = playback ? new URL(playback).searchParams.get("v") : (payload.source_video_id || null);
+  let sourceType = payload.source_type || (payload.source_episode_id ? "episode" : "local");
+  if (playback && (!payload.source_type || payload.source_type === "local")) sourceType = "youtube";
   const sourceRecordId = payload.source_record_id || payload.source_movie_id || null;
   const stableKey = [sourceType, sourceRecordId, payload.source_episode_id, subtitleId, Number.isFinite(timestampSeconds) ? timestampSeconds : timestampText, sentenceEn].join("|");
   return {
@@ -51,7 +47,7 @@ export function buildVocabularySource(payload = {}) {
     context_meaning: payload.context_meaning || payload.contextMeaning || null,
     source_movie_id: payload.source_movie_id || null,
     source_record_id: sourceRecordId,
-    source_url: sourceUrl,
+    source_url: youtubePlaybackUrl(sourceUrl) ? sourceUrl : (playback || sourceUrl),
     source_video_id: sourceVideoId,
     source_movie_title: payload.source_movie_title || null,
     source_episode_id: payload.source_episode_id || null,

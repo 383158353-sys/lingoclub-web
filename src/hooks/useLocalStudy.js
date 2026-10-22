@@ -4,6 +4,7 @@ import { describeCloseReadingError, requestCloseReading } from "@/lib/closeReadi
 import { getCueContext, getSubtitleProcessingCache, isTranslationStalled, translationSetupMessage, processSubtitleEpisode, processSubtitleLearningWindow, recordSubtitleAICall, subtitleHash, CLOSE_READING_VERSION } from "@/lib/subtitleAiProcessing";
 import { useToast } from "@/components/ui/use-toast";
 import { toSec, fromSecPrecise } from "@/lib/timecode";
+import { displayLinesFromTimedCues } from "@/lib/captionDisplayCues";
 import { mergeCompleteAnalysis, partialAnalysisForCue } from "@/lib/studyLearningCache";
 
 // 本地学习素材专用 study hook —— 与 useEpisodeStudy 同形，但台词来自浏览器
@@ -99,8 +100,12 @@ function normalizeTimestamps(list) {
   return subs;
 }
 
+function presentStudySubtitles(list) {
+  return ensureIds(normalizeTimestamps(displayLinesFromTimedCues(list || [])));
+}
+
 export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSeek, onStudyEnter, onStudyExit, onPlayOnly, onAnalysisCached, onSubtitlesProcessed, onSubtitleLearningProcessed }) {
-  const [subs, setSubs] = useState(() => ensureIds(normalizeTimestamps(subtitles || [])));
+  const [subs, setSubs] = useState(() => presentStudySubtitles(subtitles));
   const [activeId, setActiveId] = useState(null);
   const [selectedCueId, setSelectedCueId] = useState(null);
   const [closeReadingState, setCloseReadingState] = useState({ activeCloseReadingCueId: null, isCloseReadingLoop: false });
@@ -127,7 +132,7 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
   // 避免 onAnalysisCached 写回 materials.subtitles 后触发重置导致精读面板闪现后消失。
   const prevSigRef = useRef("");
   useEffect(() => {
-    const normalized = ensureIds(normalizeTimestamps(subtitles || []));
+    const normalized = presentStudySubtitles(subtitles);
     const sig = normalized.map((s) => s.id).join(",");
     if (sig === prevSigRef.current && sig !== "") {
       // 同一批字幕的内容更新（如 ai_analysis 被父组件写回）——仅合并，不重置
@@ -174,7 +179,7 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
   }, [subtitles, onStudyExit]);
 
   const sourceHash = subtitleHash(subs);
-  const inputSubtitles = ensureIds(normalizeTimestamps(subtitles || []));
+  const inputSubtitles = presentStudySubtitles(subtitles);
   const inputHash = subtitleHash(inputSubtitles);
   const startLearningPreload = useCallback((jobKey, sourceSubtitles) => {
     const learningJobKey = `${jobKey}:learning`;
