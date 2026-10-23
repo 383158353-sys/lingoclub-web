@@ -150,7 +150,7 @@ export default function SourcePreview({ source, expression = "", onClose, onOpen
       </div>
       {resolved.loading ? <div className="grid aspect-video place-items-center text-muted-foreground"><Loader2 size={18} className="animate-spin" /></div> : resolved.url ? (
         <div className="px-3">
-          <VideoPlayer ref={playerRef} url={resolved.url} autoPlayFrom={start} onTimeUpdate={onTimeUpdate} className="[&_video]:rounded-lg" />
+          <VideoPlayer ref={playerRef} url={resolved.url} autoPlayFrom={start} cueAutoplay onTimeUpdate={onTimeUpdate} className="[&_video]:rounded-lg" />
         </div>
       ) : (
         <div className="mx-3 flex aspect-video flex-col items-center justify-center rounded-lg border border-dashed border-border text-center">

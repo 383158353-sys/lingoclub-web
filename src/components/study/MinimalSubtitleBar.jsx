@@ -270,7 +270,7 @@ export default function MinimalSubtitleBar({
             type="button"
             onClick={handleStudy}
             title={isLooping ? "再次点击退出循环" : "精读当前这句"}
-            className={`rounded-full p-1 transition-colors ${
+            className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-full p-2 touch-manipulation transition-colors [-webkit-tap-highlight-color:transparent] ${
               isLooping ? "text-mint" : "text-white/45 hover:bg-white/10 hover:text-mint"
             }`}
           >

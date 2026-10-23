@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer } from "../src/lib/reviewDistractors.js";
+import { buildLocalDistractors, buildReviewQuestion, clearReviewDistractorCache, distractorsForReview, getReviewQuestionPresentation, isCorrectReviewAnswer, prefetchReviewDistractors } from "../src/lib/reviewDistractors.js";
 
 const card = {
   id: "marquee",
@@ -50,4 +50,41 @@ test("listening uses Chinese meaning distractors from the shared vocabulary pool
   assert.deepEqual(question.options.map((option) => option.value).sort(), [card.meaning_zh, "遮篷；雨棚", "广告牌；告示牌", "舞台；看台"].sort());
   const unrelatedSamePartOfSpeech = { id: "cat", expression_en: "cat", meaning_zh: "猫", profile: { pos: "名词" } };
   assert.ok(!buildLocalDistractors(card, [card, unrelatedSamePartOfSpeech], "r3").includes("猫"));
+});
+
+test("listening still shows four choices immediately when the pool has no near match and AI has not returned", async () => {
+  clearReviewDistractorCache();
+  const current = { id: "wiener", expression_en: "wiener", meaning_zh: "香肠" };
+  const pool = [
+    current,
+    { id: "closet", expression_en: "closet", meaning_zh: "衣柜，服装" },
+    { id: "guess", expression_en: "guess", meaning_zh: "推测，猜测" },
+    { id: "sign", expression_en: "sign", meaning_zh: "招牌" },
+  ];
+  const immediate = distractorsForReview(current, pool, "r3");
+  assert.equal(immediate.length, 3);
+  assert.ok(immediate.every((value) => /[\u3400-\u9fff]/.test(value)));
+  assert.ok(!immediate.includes(current.meaning_zh));
+  const question = buildReviewQuestion(current, pool, "r3", immediate, () => 0);
+  assert.equal(question.options.length, 4);
+  assert.equal(question.options.filter((option) => option.value === current.meaning_zh).length, 1);
+
+  const alone = { id: "solo", expression_en: "solo", meaning_zh: "独奏" };
+  const filled = distractorsForReview(alone, [alone], "r3");
+  assert.equal(filled.length, 3);
+  assert.equal(buildReviewQuestion(alone, [alone], "r3", filled, () => 0).options.length, 4);
+
+  let release;
+  const pending = prefetchReviewDistractors([current], "r3", () => new Promise((resolve) => { release = resolve; }), pool);
+  assert.equal(distractorsForReview(current, pool, "r3").length, 3);
+  release({ meaning_options: ["热狗", "维也纳香肠", "小面包"] });
+  await pending;
+  const warmed = distractorsForReview(current, pool, "r3");
+  assert.deepEqual(warmed, ["热狗", "维也纳香肠", "小面包"]);
+
+  clearReviewDistractorCache();
+  await prefetchReviewDistractors([current], "r3", async () => { throw new Error("offline"); }, pool);
+  const offline = distractorsForReview(current, pool, "r3");
+  assert.equal(offline.length, 3);
+  assert.ok(!offline.includes("热狗"));
 });

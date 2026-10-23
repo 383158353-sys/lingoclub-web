@@ -47,11 +47,15 @@ export function createScrollIntentTracker(now = () => Date.now()) {
     /** @returns {boolean} true if this scroll event was caused by the user */
     scroll() {
       const t = now();
-      lastScrollAt = t;
       if (!touching && t < ignoreUntil) return false;
       const isUser = touching || t <= userUntil;
-      if (isUser && touching) { moved = true; suppressClick = true; }
-      return isUser;
+      // Ignored follow-scroll must not stamp lastScrollAt, or the next 精读 tap
+      // looks like a tap that stopped momentum. A scroll event by itself is not
+      // a drag — touchMove past TAP_MOVE_PX is what cancels the click.
+      if (!isUser) return false;
+      lastScrollAt = t;
+      if (touching) moved = true;
+      return true;
     },
     /** @returns {boolean} true if the click should be treated as a tap (allowed to seek) */
     consumeClick() {

@@ -385,7 +385,7 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
                             if (event.code === "Space") event.preventDefault();
                           }}
                           title={loopingId === s.id ? "精读中，再次点击退出并继续播放" : "精读并循环该台词"}
-                          className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all hover:scale-[1.03] ${
+                          className={`inline-flex min-h-11 min-w-11 touch-manipulation items-center gap-1 rounded-full border px-3 py-2 text-[11px] font-medium transition-all [-webkit-tap-highlight-color:transparent] hover:scale-[1.03] ${
                             loopingId === s.id
                               ? "border-mint bg-mint/25 text-mint shadow-sm shadow-mint/40"
                               : "border-copper/40 bg-copper/10 text-copper"

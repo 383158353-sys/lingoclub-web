@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, Check, Volume2, VolumeX } from "lucide-react";
 import { invokeAI } from "@/lib/localApi";
-import { buildLocalDistractors, buildReviewQuestion, getReviewQuestionPresentation, isCorrectReviewAnswer } from "@/lib/reviewDistractors";
+import { buildReviewQuestion, distractorsForReview, getReviewQuestionPresentation, isCorrectReviewAnswer, prefetchReviewDistractors } from "@/lib/reviewDistractors";
 import { commitReviewAnswer, scheduleReviewAutoAdvance } from "@/lib/reviewFlow";
 import { WordDetailOverlay } from "@/components/vocab/WordDetailDialog";
 import { pronounce } from "@/lib/pronunciation";
@@ -11,13 +11,13 @@ function speak(text) {
   pronounce(text, { accent: "en-US" });
 }
 
-export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScale = 1 }) {
+export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, onBack, onBury, fontScale = 1 }) {
   const [picked, setPicked] = useState(null);
   const [correct, setCorrect] = useState(null);
   const [showAnswer, setShowAnswer] = useState(false);
   const [soundOn, setSoundOn] = useState(() => isReviewSoundEnabled());
-  const [questionState, setQuestionState] = useState({ key: null, question: null });
   const questionCache = useRef({ key: null, question: null });
+  const poolRef = useRef(pool);
   const autoTimer = useRef(null);
   const pendingAnswer = useRef(null);
   const answerToken = useRef(0);
@@ -28,10 +28,15 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
   const meaning = card.meaning_zh || card.text_zh || "";
   const ts = card.timestamp || "";
   const presentation = getReviewQuestionPresentation(card, mode, picked !== null);
-  const questionKey = JSON.stringify([card.id, mode]);
-  const question = questionState.key === questionKey ? questionState.question : null;
+  const questionKey = `${card?.id}:${mode}`;
+  if (questionCache.current.key !== questionKey) {
+    questionCache.current = { key: questionKey, question: buildReviewQuestion(card, pool, mode, distractorsForReview(card, pool, mode)) };
+  }
+  const question = questionCache.current.question;
   const options = question?.options || [];
-  const hasCompleteOptions = options.length === 4;
+  const hasCompleteOptions = options.length > 0;
+  const upcomingKey = upcoming.map((item) => item?.id).filter(Boolean).slice(0, 2).join("\n");
+  poolRef.current = pool;
 
   const commitAnswer = useCallback((token) => {
     const pending = pendingAnswer.current;
@@ -54,33 +59,23 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
   }, []);
 
   useEffect(() => {
-    let alive = true;
-    if (questionCache.current.key !== questionKey) questionCache.current = { key: questionKey, question: null };
-    const getQuestion = (distractors) => {
-      const cached = questionCache.current;
-      if (cached.key === questionKey && cached.question?.options.length === 4) return cached.question;
-      const next = buildReviewQuestion(card, pool, mode, distractors);
-      questionCache.current = { key: questionKey, question: next };
-      return next;
+    const targets = upcoming.filter((item) => item?.id).slice(0, 2);
+    if (!targets.length) return undefined;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    prefetchReviewDistractors(targets, mode, (target) => invokeAI("generate_distractors", {
+      expression_en: target.expression_en || target.text_en || "",
+      meaning_zh: target.meaning_zh || target.text_zh || "",
+      subtitle_text: target.expression_en || target.text_en || "",
+      video_id: target.source_movie_id || "review",
+    }, { signal: controller.signal, timeoutMs: 3500 }), poolRef.current);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
     };
-    const local = buildLocalDistractors(card, pool, mode);
-    const initialQuestion = getQuestion(local);
-    setQuestionState({ key: questionKey, question: initialQuestion });
-    if (initialQuestion.options.length === 4) return () => { alive = false; };
-    invokeAI("generate_distractors", {
-      expression_en: expr,
-      meaning_zh: meaning,
-      subtitle_text: expr,
-      video_id: card.source_movie_id || "review",
-    }).then((res) => {
-      if (!alive) return;
-      const data = res?.distractors || {};
-      const remote = mode === "r1" || mode === "r3" ? data.meaning_options : data.expression_options;
-      const nextQuestion = getQuestion([...local, ...(remote || [])]);
-      setQuestionState({ key: questionKey, question: nextQuestion });
-    }).catch(() => { /* local options remain available */ });
-    return () => { alive = false; };
-  }, [card.id, mode]);
+    // upcomingKey is the identity of the next two cards; pool is read from poolRef.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, upcomingKey]);
 
   const pronounceTimer = useRef(null);
   useEffect(() => () => { if (pronounceTimer.current) clearTimeout(pronounceTimer.current); }, []);
@@ -163,11 +158,6 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col px-3 pb-3 md:min-h-0 md:px-0">
-      <div className="mb-2 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-luxe md:mb-4 md:gap-2 md:text-[11px]">
-        <span className={mode === "r1" ? "text-mint" : "text-muted-foreground/60"}>① 英译中</span><ArrowRight size={11} className="text-muted-foreground/40" />
-        <span className={mode === "r2" ? "text-mint" : "text-muted-foreground/60"}>② 中译英</span><ArrowRight size={11} className="text-muted-foreground/40" />
-        <span className={mode === "r3" ? "text-mint" : "text-muted-foreground/60"}>③ 听音选词</span>
-      </div>
       <div className="mb-1 flex items-center justify-center gap-3 text-[10px] text-muted-foreground/50 md:mb-2"><span>键盘 1-4 快速选答案</span><button type="button" onClick={() => { const next = !soundOn; setReviewSoundEnabled(next); setSoundOn(next); if (next) playReviewSound("correct"); }} aria-pressed={soundOn} aria-label={soundOn ? "关闭答题音效" : "开启答题音效"} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 hover:text-mint">{soundOn ? <Volume2 size={11} /> : <VolumeX size={11} />}音效{soundOn ? "开" : "关"}</button></div>
       <div className="flex flex-col rounded-2xl border border-white/10 bg-card p-4 md:min-h-[340px] md:flex-none md:p-6">
         <p className="text-[11px] uppercase tracking-luxe text-mint/80">{card.source_movie_title || "语料复习"} · {mode === "r1" ? "第一轮 · 英译中" : mode === "r2" ? "第二轮 · 中译英" : "第三轮 · 听音选词"}</p>
@@ -185,7 +175,10 @@ export default function Flashcard({ mode, card, pool, onAnswer, onBack, fontScal
         </div>}
         {picked !== null && correct && !showAnswer && <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-mint"><p className="flex items-center gap-1.5"><Check size={16} />回答正确</p><button type="button" onClick={() => commitAnswer(pendingAnswer.current?.token)} className="rounded-full bg-mint px-4 py-2 font-medium text-background hover:bg-mint/90">下一张</button></div>}
       </div>
-      <div className="mt-3 flex items-center justify-between md:mt-5"><button onClick={() => onBack?.()} className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-sm text-muted-foreground hover:border-mint/40 hover:text-mint"><ArrowLeft size={14} /> 上一张</button></div>
+      <div className="mt-3 flex items-center justify-between gap-2 md:mt-5">
+        <button type="button" onClick={() => onBack?.()} className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-sm text-muted-foreground touch-manipulation hover:border-mint/40 hover:text-mint"><ArrowLeft size={14} /> 上一张</button>
+        {onBury && <button type="button" onClick={() => onBury(card)} className="inline-flex min-h-11 items-center rounded-full border border-copper/50 px-4 py-2 text-sm font-medium text-copper touch-manipulation [-webkit-tap-highlight-color:transparent] hover:bg-copper/10">斩</button>}
+      </div>
     </div>
   );
 }
