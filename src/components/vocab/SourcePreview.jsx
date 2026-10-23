@@ -7,6 +7,7 @@ import { displayLinesFromTimedCues } from "@/lib/captionDisplayCues";
 import { narrowLoopToSentence, selectSentenceCue } from "@/lib/sourceSentenceFocus";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { matchYouTubeSourceMovie, normalizeSourceCue, resolveVocabularySourceCue, youtubePlaybackUrl } from "@/lib/vocabularySourceCue";
+import { shouldRestartCueLoop } from "@/lib/youtubePlayerConfig";
 
 export default function SourcePreview({ source, expression = "", onClose, onOpenOriginal }) {
   const [resolved, setResolved] = useState({ loading: true, movie: null, subtitles: [], url: "", file: null, missing: false, source: null, cue: null });
@@ -119,7 +120,7 @@ export default function SourcePreview({ source, expression = "", onClose, onOpen
   const start = loop?.start ?? (Number.isFinite(Number(cue?.time_start)) ? Number(cue.time_start) : 0);
 
   const onTimeUpdate = (time) => {
-    if (loop && time >= loop.end) playerRef.current?.play?.(loop.start);
+    if (shouldRestartCueLoop(time, loop)) playerRef.current?.play?.(loop.start);
   };
 
   const chooseVideo = async (file) => {

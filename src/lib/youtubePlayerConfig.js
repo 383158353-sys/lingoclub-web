@@ -1,9 +1,14 @@
 // Cue recall mounts the iframe after an async URL lookup, so the original tap is
 // no longer a user gesture. Mobile Safari/Chrome allow autoplay only when the
 // embed starts muted and inline (WebKit's media policy; YouTube player params
-// autoplay, start, mute, playsinline). The player unmutes after playback
-// begins, and the word card keeps an in-app control if the browser still blocks it.
-// Same parameters as the MIT @u-wave/react-youtube player (autoplay, startSeconds, muted, playsInline).
+// autoplay, start, mute, playsinline). controls=0 hides the control bar and the
+// large center play button for this preview only. The player unmutes after
+// playback begins. Sentence looping seeks back to the cue; YouTube's loop=1
+// restarts the whole video and requires playlist=<video id>, so it is not set.
+// Same parameters as the MIT @u-wave/react-youtube player
+// (autoplay, startSeconds, muted, playsInline, controls).
+const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+
 export function createYouTubePlayerVars(origin, options = {}) {
   const autoplay = Boolean(options.autoplay);
   const start = Number(options.start);
@@ -17,11 +22,76 @@ export function createYouTubePlayerVars(origin, options = {}) {
   };
   if (autoplay && Number.isFinite(start) && start >= 1) vars.start = Math.floor(start);
   if (options.mute) vars.mute = 1;
+  if (options.controls === 0) vars.controls = 0;
+  if (options.fs === 0) vars.fs = 0;
+  if (options.disablekb) vars.disablekb = 1;
+  if (options.ivLoadPolicy != null) vars.iv_load_policy = options.ivLoadPolicy;
   return vars;
 }
 
 export function createYouTubeCueAutoplayVars(origin, startSeconds) {
-  return createYouTubePlayerVars(origin, { autoplay: true, start: startSeconds, mute: true });
+  return createYouTubePlayerVars(origin, {
+    autoplay: true,
+    start: startSeconds,
+    mute: true,
+    controls: 0,
+    fs: 0,
+    disablekb: true,
+    ivLoadPolicy: 3,
+  });
+}
+
+export function createYouTubeCueEmbedUrl(videoId, origin, startSeconds) {
+  const params = new URLSearchParams({
+    ...Object.fromEntries(Object.entries(createYouTubeCueAutoplayVars(origin, startSeconds)).map(([key, value]) => [key, String(value)])),
+  });
+  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params}`;
+}
+
+/** Opening the sentence preview is the playback gesture. Study pages do not call this. */
+export function armCuePreviewPlayback() {
+  if (typeof window === "undefined" || typeof Audio === "undefined") return false;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) {
+      const context = armCuePreviewPlayback.context || new Ctx();
+      armCuePreviewPlayback.context = context;
+      if (context.state === "suspended") void context.resume();
+    }
+  } catch { /* unlocking audio is best-effort */ }
+  try {
+    const audio = armCuePreviewPlayback.audio || new Audio();
+    armCuePreviewPlayback.audio = audio;
+    audio.muted = true;
+    audio.setAttribute("playsinline", "");
+    audio.src = SILENT_WAV;
+    audio.play?.()?.catch?.(() => {});
+  } catch { /* a blocked unlock must not stop the preview */ }
+  return true;
+}
+
+export function cuePreviewPlaybackConfig(origin, startSeconds, endSeconds) {
+  const start = Number(startSeconds);
+  const end = Number(endSeconds);
+  return {
+    autoplay: true,
+    loop: true,
+    showPlayButton: false,
+    muted: true,
+    playsInline: true,
+    controls: false,
+    start: Number.isFinite(start) ? start : 0,
+    end: Number.isFinite(end) ? end : null,
+    playerVars: createYouTubeCueAutoplayVars(origin, startSeconds),
+    youtubeLoopParam: false,
+  };
+}
+
+export function shouldRestartCueLoop(time, loop) {
+  const position = Number(time);
+  const start = Number(loop?.start);
+  const end = Number(loop?.end);
+  return Number.isFinite(position) && Number.isFinite(start) && Number.isFinite(end) && end > start && position >= end;
 }
 
 export function createYouTubeEmbedUrl(videoId, origin, options) {
