@@ -29,11 +29,11 @@ function detectType(url) {
   }
 }
 
-const VideoPlayer = forwardRef(function VideoPlayer({ url, className = "", onTimeUpdate, onPlaybackError, onUserSeek, autoPlayFrom, controls = true }, ref) {
+const VideoPlayer = forwardRef(function VideoPlayer({ url, className = "", onTimeUpdate, onPlaybackError, onUserSeek, autoPlayFrom, cueAutoplay = false, controls = true }, ref) {
   const type = useMemo(() => detectType(url), [url]);
 
   if (type === "youtube") {
-    return <YouTubePlayer ref={ref} url={url} className={className} onTimeUpdate={onTimeUpdate} onUserSeek={onUserSeek} autoPlayFrom={autoPlayFrom} />;
+    return <YouTubePlayer ref={ref} url={url} className={className} onTimeUpdate={onTimeUpdate} onUserSeek={onUserSeek} autoPlayFrom={autoPlayFrom} cueAutoplay={cueAutoplay} />;
   }
 
   if (type === "bilibili") {

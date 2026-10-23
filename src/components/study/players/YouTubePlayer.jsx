@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle, useMemo } from "react";
-import { checkYouTubeEmbeddable, createYouTubeEmbedUrl, createYouTubePlayerVars, describeYouTubeEmbedError } from "@/lib/youtubePlayerConfig";
+import { checkYouTubeEmbeddable, createYouTubeCueAutoplayVars, createYouTubeEmbedUrl, createYouTubePlayerVars, describeYouTubeEmbedError } from "@/lib/youtubePlayerConfig";
 
 /**
  * YouTube 播放器：通过 IFrame Player API 嵌入。
@@ -45,11 +45,12 @@ function parseYouTube(url) {
   }
 }
 
-const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", onTimeUpdate, onUserSeek, autoPlayFrom }, ref) {
+const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", onTimeUpdate, onUserSeek, autoPlayFrom, cueAutoplay = false }, ref) {
   const embed = useMemo(() => parseYouTube(url), [url]);
   const [playerErrorCode, setPlayerErrorCode] = useState(null);
   const [embedUnavailable, setEmbedUnavailable] = useState(false);
   const [embeddable, setEmbeddable] = useState(null);
+  const [gestureNeeded, setGestureNeeded] = useState(false);
 
   // Host container React owns but renders NO JSX children into — so React never
   // tries to reconcile the iframe the YT API injects/destroys inside it.
@@ -68,6 +69,9 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
   onUserSeekRef.current = onUserSeek;
   const autoPlayFromRef = useRef(autoPlayFrom);
   autoPlayFromRef.current = autoPlayFrom;
+  const cueAutoplayRef = useRef(cueAutoplay);
+  cueAutoplayRef.current = cueAutoplay;
+  const unmutedRef = useRef(false);
   const lastClockRef = useRef({ time: null, at: 0 });
   const suppressSeekDetectionUntilRef = useRef(0);
 
@@ -86,6 +90,24 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     host.appendChild(mount);
 
     const origin = typeof window !== "undefined" ? window.location.origin : undefined;
+    const cueStart = autoPlayFromRef.current;
+    const cuePlayback = cueAutoplayRef.current && Number.isFinite(cueStart);
+    const playerVars = cuePlayback ? createYouTubeCueAutoplayVars(origin, cueStart) : createYouTubePlayerVars(origin);
+    unmutedRef.current = false;
+    if (cuePlayback) setGestureNeeded(false);
+
+    const armCuePlayback = (player) => {
+      if (!cuePlayback || !player) return;
+      try { player.mute?.(); } catch { /* noop */ }
+      if (Number.isFinite(cueStart)) {
+        try { player.seekTo?.(cueStart, true); } catch { /* noop */ }
+      }
+      try { player.playVideo?.(); } catch { /* autoplay may still be blocked */ }
+    };
+
+    const revealGesture = () => {
+      if (!cancelled && cuePlayback) setGestureNeeded(true);
+    };
 
     // Fallback: if YT IFrame API doesn't load within 6s, inject a plain iframe (enablejsapi=1).
     // When the API arrives later we attach YT.Player to THIS iframe, so time sync, highlight and
@@ -95,7 +117,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
       if (cancelled || ytPlayerRef.current) return;
       host.innerHTML = "";
       const iframe = document.createElement("iframe");
-      iframe.src = createYouTubeEmbedUrl(embed.videoId, origin);
+      iframe.src = createYouTubeEmbedUrl(embed.videoId, origin, cuePlayback ? { autoplay: true, start: cueStart, mute: true } : undefined);
       iframe.style.cssText = "width:100%;height:100%;border:0";
       iframe.allow = "autoplay; fullscreen; encrypted-media";
       iframe.referrerPolicy = "strict-origin-when-cross-origin";
@@ -104,6 +126,11 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
       host.appendChild(iframe);
       fallbackIframe = iframe;
     }, 6000);
+    const gestureTimer = setTimeout(() => {
+      if (cancelled || !cuePlayback) return;
+      const state = ytPlayerRef.current?.getPlayerState?.();
+      if (state !== 1 && state !== 3) setGestureNeeded(true);
+    }, 1500);
     const availabilityTimer = setTimeout(() => {
       const state = ytPlayerRef.current?.getPlayerState?.();
       const t = lastClockRef.current.time;
@@ -124,10 +151,19 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
       try { ytPlayerRef.current?.destroy?.(); } catch { /* noop */ }
       const target = fallbackIframe && fallbackIframe.isConnected ? fallbackIframe : mount;
       ytPlayerRef.current = new window.YT.Player(target, {
-        ...(target === mount ? { videoId: embed.videoId, width: "100%", height: "100%", playerVars: createYouTubePlayerVars(origin) } : {}),
+        ...(target === mount ? { videoId: embed.videoId, width: "100%", height: "100%", playerVars } : {}),
         events: {
           onReady: (e) => {
             if (cancelled) return;
+            try {
+              const frame = e.target.getIframe?.();
+              if (frame) frame.setAttribute("allow", "autoplay; fullscreen; encrypted-media; picture-in-picture");
+            } catch { /* noop */ }
+            if (cuePlayback) {
+              armCuePlayback(e.target);
+              ytPendingPlay.current = false;
+              return;
+            }
             if (Number.isFinite(autoPlayFromRef.current)) {
               try { e.target.seekTo(autoPlayFromRef.current, true); } catch { /* noop */ }
               try { e.target.playVideo(); } catch { /* autoplay may be blocked by the browser */ }
@@ -145,11 +181,26 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
           },
           onStateChange: (e) => {
             if (e.data === 1 || e.data === 3) { setEmbedUnavailable(false); setPlayerErrorCode(null); }
+            if (cuePlayback && e.data === 1) {
+              setGestureNeeded(false);
+              if (!unmutedRef.current) {
+                unmutedRef.current = true;
+                try { e.target.unMute?.(); e.target.setVolume?.(100); } catch { /* iOS may ignore unmute until a tap */ }
+                const player = e.target;
+                setTimeout(() => {
+                  if (cancelled) return;
+                  let stillMuted = false;
+                  try { stillMuted = Boolean(player.isMuted?.()); } catch { stillMuted = false; }
+                  if (stillMuted) setGestureNeeded(true);
+                }, 500);
+              }
+            }
             // 1=playing, 2=paused, 3=buffering → emit time for snappy scrub feedback
             if (e.data === 1 || e.data === 2 || e.data === 3) {
               try { emit(e.target.getCurrentTime()); } catch { /* noop */ }
             }
           },
+          onAutoplayBlocked: () => revealGesture(),
           onError: (e) => {
             const code = Number(e?.data) || 0;
             setPlayerErrorCode(code);
@@ -182,6 +233,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     return () => {
       cancelled = true;
       clearTimeout(fallbackTimer);
+      clearTimeout(gestureTimer);
       clearTimeout(availabilityTimer);
       if (ytTickRef.current) { clearInterval(ytTickRef.current); ytTickRef.current = null; }
       try { ytPlayerRef.current?.destroy?.(); } catch { /* noop */ }
@@ -224,7 +276,11 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
         ytPendingPlay.current = true;
         return;
       }
-      try { if (Number.isFinite(sec)) player.seekTo?.(sec, true); player.playVideo?.(); } catch { /* noop */ }
+      try {
+        if (cueAutoplayRef.current) { player.unMute?.(); player.setVolume?.(100); }
+        if (Number.isFinite(sec)) player.seekTo?.(sec, true);
+        player.playVideo?.();
+      } catch { /* noop */ }
     },
     pause(sec) {
       const t = Number.isFinite(sec) ? sec : 0;
@@ -246,6 +302,25 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     <div className={className}>
       <div className="relative w-full overflow-hidden rounded-2xl border border-border bg-black" style={{ aspectRatio: "16 / 9" }}>
         <div ref={ytHostRef} className="absolute inset-0 h-full w-full" />
+        {gestureNeeded && (
+          <button
+            type="button"
+            className="absolute inset-0 z-20 flex items-center justify-center bg-black/45 text-sm font-medium text-background touch-manipulation [-webkit-tap-highlight-color:transparent]"
+            onClick={() => {
+              const player = ytPlayerRef.current;
+              const startAt = autoPlayFromRef.current;
+              try {
+                if (Number.isFinite(startAt)) player?.seekTo?.(startAt, true);
+                player?.unMute?.();
+                player?.setVolume?.(100);
+                player?.playVideo?.();
+              } catch { /* the next tap can retry */ }
+              setGestureNeeded(false);
+            }}
+          >
+            <span className="rounded-full bg-mint px-4 py-2.5">播放原句</span>
+          </button>
+        )}
       </div>
       {(playerErrorCode !== null || embedUnavailable) && <p role="status" className="mt-2 text-xs text-amber-300/90">
         {describeYouTubeEmbedError(playerErrorCode, embeddable)}

@@ -189,6 +189,10 @@ curl -X POST http://127.0.0.1:5173/api/articles/import \
 
 同一视频提取成功后，服务端实例内存和浏览器 localStorage 都会缓存，重复打开不会再消耗额度。
 
+单词卡「播放原句」在查到原句时间点之后才挂上 YouTube iframe，此时原来的点击已经不是用户手势。内嵌播放器因此用静音、内联、`autoplay=1` 和 `start`（秒）开始循环，开始播放后再取消静音。若浏览器仍拦住有声自动播放，卡片上的「播放原句」会盖住画面，不依赖 YouTube 正中的红色播放钮。普通精读页没有这条请求时仍保持 `autoplay=0`。参数与 [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference) 和 [WebKit 媒体策略](https://webkit.org/blog/6784/) 一致，写法参考 MIT 许可的 [@u-wave/react-youtube](https://github.com/u-wave/react-youtube)（`autoplay`、`startSeconds`、`muted`、`playsInline`）。
+
+复习选项先用本机词库和固定干扰项立刻凑满四选一，下一张的相近干扰项在后台预取；网络慢或失败时当前题不等待。已掌握（斩）的词不再进入每日队列和到期列表。
+
 ### 给推荐助手的提示：优先推荐可嵌入的视频
 
 部分视频的作者关闭了“允许嵌入”。这类视频在 App 里不能直接播放，只能点「在 YouTube 上观看」跳出，但字幕精读仍可用。判断方法：`https://www.youtube.com/oembed?format=json&url=<视频链接>` 返回 401 或 403 就是不可嵌入。请优先推荐可嵌入的视频。

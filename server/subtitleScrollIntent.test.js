@@ -47,6 +47,25 @@ test("↑ (programmatic) clears momentum window so its scroll is not manual", ()
   assert.equal(s.scroll(), false);
 });
 
+test("programmatic follow-scroll does not swallow the next tap", () => {
+  const c = clock();
+  const s = createScrollIntentTracker(c);
+  assert.equal(s.scroll(), false);
+  c.adv(20);
+  s.touchStart(10, 10);
+  s.touchEnd();
+  assert.equal(s.consumeClick(), true);
+});
+
+test("a scroll event without finger movement still allows the tap", () => {
+  const c = clock();
+  const s = createScrollIntentTracker(c);
+  s.touchStart(10, 10);
+  assert.equal(s.scroll(), true);
+  s.touchEnd();
+  assert.equal(s.consumeClick(), true);
+});
+
 test("mouse click (no touch) still seeks", () => {
   const s = createScrollIntentTracker(clock());
   assert.equal(s.consumeClick(), true);

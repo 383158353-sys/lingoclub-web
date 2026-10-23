@@ -74,8 +74,14 @@ export function scheduleReview(card, quality) {
   };
 }
 
+export function isMasteredCard(card) {
+  const mastery = card?.mastery_level || card?.masteryLevel;
+  return mastery === "mastered";
+}
+
 export function isDue(vocab) {
-  if (!vocab.next_review) return true;
+  if (isMasteredCard(vocab)) return false;
+  if (!vocab?.next_review) return true;
   return new Date(vocab.next_review).getTime() <= Date.now();
 }
 
@@ -121,6 +127,15 @@ export function formatDate(d) {
 export const STAGE_INTERVALS = [0, 1, 2, 4, 7, 15];
 export const STAGE_LABELS = ["新词", "一轮", "二轮", "三轮", "四轮", "长期记忆"];
 export const DAILY_REVIEW_GOAL = 40;
+export const DAILY_REVIEW_GOAL_MIN = 5;
+export const DAILY_REVIEW_GOAL_MAX = 100;
+
+export function clampDailyReviewGoal(value, fallback = DAILY_REVIEW_GOAL) {
+  if (value == null || value === "") return fallback;
+  const parsed = Math.round(Number(value));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(DAILY_REVIEW_GOAL_MAX, Math.max(DAILY_REVIEW_GOAL_MIN, parsed));
+}
 export const REVIEW_INTERVAL_DAYS = [1, 3, 7, 14, 30, 60];
 const NORMAL_QUOTA = { new: 20, due: 15, weak: 5 };
 const BACKLOG_QUOTA = { new: 24, due: 12, weak: 4 };
@@ -273,7 +288,7 @@ export function classifyMistakeTiers(vocab, reviewLogs = [], now = Date.now()) {
 export function classifyReviewPools(vocab, now = Date.now()) {
   const instant = now instanceof Date ? now.getTime() : Number(now);
   const today = localDateKey(instant);
-  const candidates = (vocab || []).filter((card) => (card?.meaning_zh || card?.text_zh) && (card?.expression_en || card?.text_en));
+  const candidates = (vocab || []).filter((card) => !isMasteredCard(card) && (card?.meaning_zh || card?.text_zh) && (card?.expression_en || card?.text_en));
   const pools = { new: [], due: [], weak: [] };
   for (const card of candidates) {
     if (isNewReviewItem(card)) {
@@ -297,6 +312,74 @@ export function classifyReviewPools(vocab, now = Date.now()) {
     return bRate - aRate || Date.parse(lastWrongAt(b) || lastReviewedOf(b) || 0) - Date.parse(lastWrongAt(a) || lastReviewedOf(a) || 0) || byDailyTieBreak(a, b);
   });
   return pools;
+}
+
+function quotasForGoal(goal, backlogMode) {
+  const base = backlogMode ? BACKLOG_QUOTA : NORMAL_QUOTA;
+  const baseTotal = base.new + base.due + base.weak;
+  const target = Math.max(1, Math.floor(Number(goal) || baseTotal));
+  if (target === baseTotal) return { ...base };
+  const names = ["new", "due", "weak"];
+  const raw = names.map((name) => (base[name] * target) / baseTotal);
+  const quotas = Object.fromEntries(names.map((name, index) => [name, Math.floor(raw[index])]));
+  let leftover = target - names.reduce((sum, name) => sum + quotas[name], 0);
+  const order = names
+    .map((name, index) => ({ name, frac: raw[index] - Math.floor(raw[index]), index }))
+    .sort((a, b) => b.frac - a.frac || a.index - b.index);
+  for (const item of order) {
+    if (leftover <= 0) break;
+    quotas[item.name] += 1;
+    leftover -= 1;
+  }
+  return quotas;
+}
+
+export function masterVocabulary(card = {}, reviewedAt = new Date()) {
+  const at = reviewedAt instanceof Date ? reviewedAt : new Date(reviewedAt);
+  const iso = Number.isFinite(at.getTime()) ? at.toISOString() : new Date().toISOString();
+  const nextReviewAt = new Date(Date.parse(iso) + 3650 * 86400000).toISOString();
+  const reviewCount = Math.max(reviewCountOf(card), 1);
+  const intervalDays = Math.max(60, Number(card?.intervalDays ?? card?.interval_days ?? 0));
+  const lastReviewedAt = lastReviewedOf(card) || iso;
+  return {
+    stage: 5,
+    reviewCount,
+    correctCount: correctCountOf(card),
+    wrongCount: wrongCountOf(card),
+    lastReviewedAt,
+    nextReviewAt,
+    intervalDays,
+    status: "mastered",
+    review_count: reviewCount,
+    correct_count: correctCountOf(card),
+    wrong_count: wrongCountOf(card),
+    error_count: wrongCountOf(card),
+    last_reviewed_date: lastReviewedAt,
+    last_reviewed_at: lastReviewedAt,
+    next_review_date: nextReviewAt,
+    next_review_at: nextReviewAt,
+    next_review: nextReviewAt,
+    interval_days: intervalDays,
+    review_status: "mastered",
+    mastery_level: "mastered",
+  };
+}
+
+export function unmasterVocabulary(card = {}, reviewedAt = new Date()) {
+  const at = reviewedAt instanceof Date ? reviewedAt : new Date(reviewedAt);
+  const iso = Number.isFinite(at.getTime()) ? at.toISOString() : new Date().toISOString();
+  return {
+    stage: Math.min(stageOf(card), 1),
+    intervalDays: 1,
+    interval_days: 1,
+    status: "learning",
+    review_status: "learning",
+    mastery_level: "learning",
+    nextReviewAt: iso,
+    next_review_at: iso,
+    next_review_date: iso,
+    next_review: iso,
+  };
 }
 
 function nextIntervalDays(previous, correct) {
@@ -366,7 +449,7 @@ export function scheduleStage(card, correct, reviewedAt = new Date()) {
 export function buildDailyQueue(vocab, now = Date.now(), goal = DAILY_REVIEW_GOAL) {
   const pools = classifyReviewPools(vocab, now);
   const backlogMode = pools.new.length > 100;
-  const quotas = backlogMode ? BACKLOG_QUOTA : NORMAL_QUOTA;
+  const quotas = quotasForGoal(goal, backlogMode);
   const selected = {
     new: pools.new.slice(0, quotas.new),
     due: pools.due.slice(0, quotas.due),

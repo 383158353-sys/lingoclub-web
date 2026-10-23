@@ -3,8 +3,8 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { vocabRepository } from "@/lib/vocabRepository";
 import { useToast } from "@/components/ui/use-toast";
 import Flashcard from "@/components/study/Flashcard";
-import { scheduleStage, buildDailyQueue, dailyQueueSnapshot, restoreDailyQueue, localDateKey, STAGE_LABELS, stageOf } from "@/lib/srs";
-import { loadSession, saveSession, isResumable } from "@/lib/reviewSession";
+import { scheduleStage, buildDailyQueue, dailyQueueSnapshot, restoreDailyQueue, localDateKey, STAGE_LABELS, stageOf, clampDailyReviewGoal, DAILY_REVIEW_GOAL, isMasteredCard, masterVocabulary, unmasterVocabulary } from "@/lib/srs";
+import { loadSession, saveSession, isResumable, buryCardInSession } from "@/lib/reviewSession";
 import { BookMarked, Brain, ArrowRight, Trash2, RotateCw, AlertTriangle } from "lucide-react";
 import { appendReviewLog, loadReviewLogs } from "@/lib/reviewLogs";
 import { classifyMistakeTiers, classifyReviewPools, normalizeVocabularyProgress } from "@/lib/srs";
@@ -15,12 +15,22 @@ import { advanceReviewQuestion, createAnswerCommitGate, createReviewQuestionToke
 
 const REVIEW_FONT_SCALES = [0.85, 1, 1.15];
 const corpusFontStorageKey = (userId) => `lingoclub:corpus-preview-font-scale:${userId || "guest"}`;
+const corpusHideSourceKey = (userId) => `lingoclub:corpus-hide-source:${userId || "guest"}`;
+const dailyGoalStorageKey = (userId) => `lingoclub:daily-review-goal:${userId || "guest"}`;
 
 function loadCorpusFontScale(userId) {
   try {
     const saved = Number(localStorage.getItem(corpusFontStorageKey(userId)));
     return REVIEW_FONT_SCALES.includes(saved) ? saved : 1;
   } catch { return 1; }
+}
+
+function loadHideSource(userId) {
+  try { return localStorage.getItem(corpusHideSourceKey(userId)) === "1"; } catch { return false; }
+}
+
+function loadDailyGoal(userId) {
+  try { return clampDailyReviewGoal(localStorage.getItem(dailyGoalStorageKey(userId))); } catch { return DAILY_REVIEW_GOAL; }
 }
 
 const MASTERY = {
@@ -89,6 +99,8 @@ export default function Collection() {
   const [otherReviewOpen, setOtherReviewOpen] = useState(false);
   const [reviewSessionId, setReviewSessionId] = useState(() => loadSession()?.sessionId || createSessionId());
   const [corpusFontScale, setCorpusFontScale] = useState(1);
+  const [hideSource, setHideSource] = useState(false);
+  const [dailyGoal, setDailyGoal] = useState(DAILY_REVIEW_GOAL);
   const answerCommitGate = useRef(createAnswerCommitGate());
   const reviewQuestionToken = useRef(null);
   const { toast } = useToast();
@@ -98,12 +110,28 @@ export default function Collection() {
 
   useEffect(() => {
     setCorpusFontScale(loadCorpusFontScale(user?.id));
+    setHideSource(loadHideSource(user?.id));
+    setDailyGoal(loadDailyGoal(user?.id));
   }, [user?.id]);
 
   const changeCorpusFontScale = (scale) => {
     if (!REVIEW_FONT_SCALES.includes(scale)) return;
     setCorpusFontScale(scale);
     try { localStorage.setItem(corpusFontStorageKey(user?.id), String(scale)); } catch { /* local preference is optional */ }
+  };
+
+  const changeHideSource = () => {
+    setHideSource((current) => {
+      const next = !current;
+      try { localStorage.setItem(corpusHideSourceKey(user?.id), next ? "1" : "0"); } catch { /* preference is optional */ }
+      return next;
+    });
+  };
+
+  const changeDailyGoal = (value) => {
+    const next = clampDailyReviewGoal(value, dailyGoal);
+    setDailyGoal(next);
+    try { localStorage.setItem(dailyGoalStorageKey(user?.id), String(next)); } catch { /* preference is optional */ }
   };
 
   const reload = useCallback(() => {
@@ -141,12 +169,17 @@ export default function Collection() {
   }, []);
 
   const byId = useMemo(() => Object.fromEntries(vocab.map((c) => [c.id, c])), [vocab]);
+  const vocabIds = useMemo(() => vocab.map((card) => card.id), [vocab]);
+  const resumable = isResumable(savedSession, vocabIds);
 
-  // 每日首次生成的 ID 快照固定保存；词库后续变动只补充显示对象，不重抽当天队列。
+  // 每日首次生成的 ID 快照固定保存；进行中的断点不因题量改动重抽。
   const dailyQ = useMemo(() => {
     const restored = restoreDailyQueue(savedSession?.dailyQueue, vocab);
-    return restored || buildDailyQueue(vocab);
-  }, [savedSession, vocab]);
+    const snapshotGoal = Number(savedSession?.dailyQueue?.goal) || DAILY_REVIEW_GOAL;
+    const finishedToday = savedSession?.date === todayISO() && (savedSession.completed || savedSession.phase === "done");
+    if (restored && (resumable || finishedToday || snapshotGoal === dailyGoal)) return restored;
+    return buildDailyQueue(vocab, Date.now(), dailyGoal);
+  }, [dailyGoal, resumable, savedSession, vocab]);
 
   useEffect(() => {
     if (loading || !vocab.length || savedSession?.dailyQueue?.date === todayISO()) return;
@@ -182,16 +215,21 @@ export default function Collection() {
   const sectionWords = useMemo(() => vocab.filter((c) => (c.type || "phrase") !== "sentence"), [vocab]);
   const sectionSentences = useMemo(() => vocab.filter((c) => c.type === "sentence"), [vocab]);
   const mistakeTiers = useMemo(() => classifyMistakeTiers(vocab, reviewLogs), [vocab, reviewLogs]);
-  const errorWords = useMemo(() => [...mistakeTiers.focus, ...mistakeTiers.weak, ...mistakeTiers.occasional], [mistakeTiers]);
-  const visibleMistakes = mistakeFilter === "all" ? errorWords : mistakeTiers[mistakeFilter] || [];
+  const activeMistakes = useMemo(() => ({
+    focus: mistakeTiers.focus.filter((card) => !isMasteredCard(card)),
+    weak: mistakeTiers.weak.filter((card) => !isMasteredCard(card)),
+    occasional: mistakeTiers.occasional.filter((card) => !isMasteredCard(card)),
+  }), [mistakeTiers]);
+  const errorWords = useMemo(() => [...activeMistakes.focus, ...activeMistakes.weak, ...activeMistakes.occasional], [activeMistakes]);
+  const visibleMistakes = mistakeFilter === "all" ? errorWords : activeMistakes[mistakeFilter] || [];
   const [visibleWordCount, wordsSentinelRef] = useProgressiveRenderLimit(sectionWords.length, sectionWords.length);
   const [visibleSentenceCount, sentencesSentinelRef] = useProgressiveRenderLimit(sectionSentences.length, sectionSentences.length);
   const [visibleMistakeCount, mistakesSentinelRef] = useProgressiveRenderLimit(visibleMistakes.length, `${mistakeFilter}:${visibleMistakes.length}`);
-  const resumable = isResumable(savedSession, vocab.map((c) => c.id));
+  const masteredIdSet = useMemo(() => new Set(vocab.filter(isMasteredCard).map((card) => card.id)), [vocab]);
   const todaysCompletedIds = savedSession?.dailyQueue?.date === todayISO()
     ? (savedSession.dailyQueue.completedIds || savedSession.completedIds || [])
     : [];
-  const remainingDailyCount = dailyQ.ids.filter((id) => !todaysCompletedIds.includes(id)).length;
+  const remainingDailyCount = dailyQ.ids.filter((id) => !todaysCompletedIds.includes(id) && !masteredIdSet.has(id)).length;
   const todayLogs = reviewLogs.filter((log) => localDateKey(log.reviewed_at) === todayISO());
   const todayAccuracy = todayLogs.length ? Math.round(todayLogs.filter((log) => log.is_correct).length / todayLogs.length * 100) : 0;
   const masteredCount = vocab.filter((card) => card.mastery_level === "mastered").length;
@@ -224,16 +262,18 @@ export default function Collection() {
       toast({ title: "今日复习已完成", description: "明天会生成新的每日队列。" });
       return;
     }
-    const generated = existingSnapshot || buildDailyQueue(vocab);
-    const snapshot = existingSnapshot ? session.dailyQueue : dailyQueueSnapshot(generated);
+    const snapshotGoal = Number(session?.dailyQueue?.goal) || DAILY_REVIEW_GOAL;
+    const reuseSnapshot = Boolean(existingSnapshot) && snapshotGoal === dailyGoal;
+    const generated = reuseSnapshot ? existingSnapshot : buildDailyQueue(vocab, Date.now(), dailyGoal);
+    const snapshot = reuseSnapshot ? session.dailyQueue : dailyQueueSnapshot(generated);
     const finishedIds = new Set(snapshot.completedIds || session?.completedIds || []);
     let selectedCards;
     const pools = classifyReviewPools(vocab);
     if (mode === "daily") selectedCards = generated.queue.filter((c) => !finishedIds.has(c.id));
     else if (mode === "due") selectedCards = pools.due;
-    else if (mode === "weak") selectedCards = [...mistakeTiers.focus, ...mistakeTiers.weak];
-    else if (mode === "focus") selectedCards = mistakeTiers.focus;
-    else if (mode === "occasional") selectedCards = mistakeTiers.occasional;
+    else if (mode === "weak") selectedCards = [...activeMistakes.focus, ...activeMistakes.weak];
+    else if (mode === "focus") selectedCards = activeMistakes.focus;
+    else if (mode === "occasional") selectedCards = activeMistakes.occasional;
     else if (mode === "mistakes") selectedCards = errorWords;
     else if (mode === "new") selectedCards = pools.new;
     else if (mode === "today") selectedCards = vocab.filter((card) => card.created_date && localDateKey(card.created_date) === todayISO());
@@ -244,6 +284,7 @@ export default function Collection() {
     }
     else if (mode === "random") selectedCards = [...vocab].sort(() => Math.random() - 0.5);
     else selectedCards = vocab;
+    selectedCards = selectedCards.filter((card) => !isMasteredCard(card));
     const ids = selectedCards.map((c) => c.id);
     // 三阶段都需要中英文内容，缺释义的卡自动跳过。
     const idMap = Object.fromEntries(vocab.map((c) => [c.id, c]));
@@ -370,6 +411,55 @@ export default function Collection() {
 
   const goBack = () => setIdx((i) => Math.max(0, i - 1));
 
+  const writeMastery = (card, fields) => {
+    Promise.resolve()
+      .then(() => VocabApi.updateReviewState(card.id, fields))
+      .catch(() => toast({ title: "掌握状态暂存本机", description: "云端更新稍后重试。" }));
+    setVocab((items) => items.map((item) => (item.id === card.id ? { ...item, ...fields } : item)));
+  };
+
+  const buryCard = (card) => {
+    if (!card?.id || isMasteredCard(card)) return;
+    writeMastery(card, masterVocabulary(card));
+    const buried = buryCardInSession(loadSession(), card.id);
+    if (buried) setSavedSession(saveSession(buried) || buried);
+    if (tab !== "review") return;
+    const position = queue.indexOf(card.id);
+    const nextQueue = queue.filter((id) => id !== card.id);
+    const nextOriginal = originalQueue.filter((id) => id !== card.id);
+    let nextIdx = idx;
+    if (position >= 0 && position < idx) nextIdx -= 1;
+    setOriginalQueue(nextOriginal);
+    setCompletedIds((ids) => (ids.includes(card.id) ? ids : [...ids, card.id]));
+    if (nextIdx < nextQueue.length) {
+      setQueue(nextQueue);
+      setIdx(Math.max(0, nextIdx));
+      return;
+    }
+    const advanced = advanceReviewQuestion({ phase, idx: 0, queueLength: 0 });
+    if (advanced.phase === "done") {
+      setQueue(nextQueue);
+      setIdx(0);
+      setPhase("done");
+      return;
+    }
+    setQueue([...nextOriginal]);
+    setIdx(0);
+    setReviewed(0);
+    setRetried({});
+    setPhase(advanced.phase);
+  };
+
+  const restoreCard = (card) => {
+    if (!card?.id || !isMasteredCard(card)) return;
+    writeMastery(card, unmasterVocabulary(card));
+    const session = loadSession();
+    if (!session?.dailyQueue || session.queue?.length || session.completed || session.phase === "done") return;
+    if (session.dailyQueue.date !== todayISO()) return;
+    const next = saveSession({ ...session, dailyQueue: { ...session.dailyQueue, date: "" } });
+    if (next) setSavedSession(next);
+  };
+
   if (tab === "review" && phase !== "done" && queue[idx] !== undefined) {
     const activeCard = byId[queue[idx]] || { id: queue[idx] };
     const totalErrors = vocab.reduce((s, c) => s + (c.error_count || 0), 0);
@@ -389,7 +479,9 @@ export default function Collection() {
             pool={vocab}
             onAnswer={onAnswer}
             reviewMode={reviewMode}
+            upcoming={queue.slice(idx + 1, idx + 3).map((id) => byId[id]).filter(Boolean)}
             onBack={goBack}
+            onBury={buryCard}
           />
         </div>
       </div>
@@ -407,7 +499,7 @@ export default function Collection() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl px-3 pb-16 pt-6 md:px-8 md:pt-28 md:pb-20">
+    <div className="mx-auto max-w-7xl px-3 pb-16 pt-[calc(env(safe-area-inset-top)+1.25rem)] md:px-8 md:pt-28 md:pb-20">
       <header className="hidden max-w-2xl md:block">
         <p className="mb-2 text-[10px] uppercase tracking-luxe text-copper/80 md:mb-3 md:text-[11px]">语料库</p>
         <h1 className="font-display text-2xl leading-tight text-foreground md:text-5xl">语料库</h1>
@@ -437,10 +529,17 @@ export default function Collection() {
             <RotateCw size={13} className="md:size-[15px]" /> {tab === "list" ? (remainingDailyCount ? (resumable ? "继续今日复习" : "开始今日复习") : "今日复习已完成") + (remainingDailyCount > 0 ? ` (${remainingDailyCount})` : "") : `复习错词 (${errorWords.length})`}
           </button>
           <button type="button" aria-expanded={otherReviewOpen} onClick={() => setOtherReviewOpen((value) => !value)} className="min-h-10 rounded-full border border-border px-4 py-2 text-xs text-muted-foreground">复习方式 {otherReviewOpen ? "▴" : "▾"}</button>
+          <div role="group" aria-label="每日题量" title="进行中的复习不会改题量。新题量在下次生成新队列时生效。" className="inline-flex min-h-10 items-center gap-0.5 rounded-full border border-border px-1.5 text-xs text-muted-foreground">
+            <span className="px-1.5">每日题量</span>
+            <button type="button" aria-label="减少每日题量" onClick={() => changeDailyGoal(dailyGoal - 5)} disabled={dailyGoal <= 5} className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full touch-manipulation hover:text-foreground disabled:opacity-40">−</button>
+            <span className="w-8 text-center text-sm tabular-nums text-foreground">{dailyGoal}</span>
+            <button type="button" aria-label="增加每日题量" onClick={() => changeDailyGoal(dailyGoal + 5)} disabled={dailyGoal >= 100} className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full touch-manipulation hover:text-foreground disabled:opacity-40">+</button>
+          </div>
         </div>
         <div className="flex min-h-10 items-center gap-1.5">
           <Seg active={tab === "list"} onClick={() => setTab("list")}>语料库</Seg>
           <Seg active={tab === "errors"} onClick={() => setTab("errors")}>错词本 {errorWords.length}</Seg>
+          <button type="button" aria-pressed={hideSource} onClick={changeHideSource} className={`min-h-10 rounded-full border px-3 py-1.5 text-xs touch-manipulation ${hideSource ? "border-copper/50 text-copper" : "border-border text-muted-foreground"}`}>{hideSource ? "显示来源" : "隐藏来源"}</button>
           <div role="group" aria-label="语料库预览字号" className="ml-auto flex items-center gap-0.5 rounded-full border border-border p-0.5 text-[11px]">
             {REVIEW_FONT_SCALES.map((scale, index) => {
               const label = ["A−", "A", "A+"][index];
@@ -473,10 +572,10 @@ export default function Collection() {
         ) : (
           <div className="mt-6 md:mt-8">
             <div className="mt-3 flex flex-wrap gap-2">
-              {[["all", "\u5168\u90e8", errorWords.length], ["occasional", "\u5076\u5c14\u5931\u8bef", mistakeTiers.occasional.length], ["weak", "\u8584\u5f31", mistakeTiers.weak.length], ["focus", "\u91cd\u70b9\u653b\u514b", mistakeTiers.focus.length]].map(([key, label, count]) => <button type="button" key={key} onClick={() => setMistakeFilter(key)} className={`rounded-full px-3 py-1.5 text-xs ${mistakeFilter === key ? "bg-copper/20 text-copper" : "border border-border text-muted-foreground"}`}>{label} {count}</button>)}
+              {[["all", "\u5168\u90e8", errorWords.length], ["occasional", "\u5076\u5c14\u5931\u8bef", activeMistakes.occasional.length], ["weak", "\u8584\u5f31", activeMistakes.weak.length], ["focus", "\u91cd\u70b9\u653b\u514b", activeMistakes.focus.length]].map(([key, label, count]) => <button type="button" key={key} onClick={() => setMistakeFilter(key)} className={`rounded-full px-3 py-1.5 text-xs ${mistakeFilter === key ? "bg-copper/20 text-copper" : "border border-border text-muted-foreground"}`}>{label} {count}</button>)}
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-              {visibleMistakes.slice(0, visibleMistakeCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+              {visibleMistakes.slice(0, visibleMistakeCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} hideSource={hideSource} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onBury={buryCard} onRestore={restoreCard} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
             </div>
             {visibleMistakeCount < visibleMistakes.length && <div ref={mistakesSentinelRef} className="h-px" aria-hidden="true" />}
           </div>
@@ -489,7 +588,7 @@ export default function Collection() {
             <section>
               <h2 className="font-display text-base text-foreground md:text-lg">单词 · 短语 <span className="text-xs font-body text-muted-foreground md:text-sm">· {sectionWords.length}</span></h2>
               <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-                {sectionWords.slice(0, visibleWordCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+                {sectionWords.slice(0, visibleWordCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} hideSource={hideSource} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onBury={buryCard} onRestore={restoreCard} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
               </div>
               {visibleWordCount < sectionWords.length && <div ref={wordsSentinelRef} className="h-px" aria-hidden="true" />}
             </section>
@@ -498,7 +597,7 @@ export default function Collection() {
             <section>
               <h2 className="font-display text-base text-foreground md:text-lg">句子 <span className="text-xs font-body text-muted-foreground md:text-sm">· {sectionSentences.length}</span></h2>
               <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-                {sectionSentences.slice(0, visibleSentenceCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+                {sectionSentences.slice(0, visibleSentenceCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} hideSource={hideSource} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onBury={buryCard} onRestore={restoreCard} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
               </div>
               {visibleSentenceCount < sectionSentences.length && <div ref={sentencesSentinelRef} className="h-px" aria-hidden="true" />}
             </section>
@@ -543,23 +642,27 @@ function Seg({ active, onClick, children }) {
   );
 }
 
-function VocabCard({ c, onGone, onDelete, onSelect, fontScale = 1 }) {
+function VocabCard({ c, onGone, onDelete, onSelect, onBury, onRestore, hideSource = false, fontScale = 1 }) {
   const m = MASTERY[c.mastery_level] || MASTERY.new;
+  const mastered = isMasteredCard(c);
   return (
-    <div onClick={() => onSelect?.(c)} onKeyDown={(event) => { if (event.key === "Enter") onSelect?.(c); }} role="button" tabIndex={0} className="group cursor-pointer rounded-lg border border-border/60 bg-card p-2 md:rounded-xl md:p-4">
-      <div className="flex items-start justify-between gap-1.5">
-        <p style={{ "--corpus-font-scale": fontScale }} className="font-display text-[calc(1.25rem*var(--corpus-font-scale))] font-semibold leading-snug text-foreground md:text-[calc(1.5rem*var(--corpus-font-scale))]">{c.expression_en || c.text_en}</p>
+    <div className="group relative rounded-lg border border-border/60 bg-card">
+      <button type="button" onClick={() => onSelect?.(c)} className="block w-full rounded-lg p-2 text-left touch-manipulation [-webkit-tap-highlight-color:transparent] active:bg-white/[0.04] md:rounded-xl md:p-4">
+        <p style={{ "--corpus-font-scale": fontScale }} className="pr-6 font-display text-[calc(1.25rem*var(--corpus-font-scale))] font-semibold leading-snug text-foreground md:text-[calc(1.5rem*var(--corpus-font-scale))]">{c.expression_en || c.text_en}</p>
+        {(c.meaning_zh || c.text_zh) && <p style={{ "--corpus-font-scale": fontScale }} className="mt-1 text-[calc(0.875rem*var(--corpus-font-scale))] leading-snug text-foreground/75 md:text-[calc(1rem*var(--corpus-font-scale))]">{c.meaning_zh || c.text_zh}</p>}
+        <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px] md:mt-2.5 md:gap-1.5 md:text-xs">
+          <span className={`rounded-full px-1.5 py-0.5 md:px-2 ${m.className}`}>{m.label}</span>
+          {c.type && <span className="rounded-full bg-background-elev px-1.5 py-0.5 md:px-2">{typeLabel(c.type)}</span>}
+          {(c.error_count || 0) >= 1 && <span className="rounded-full bg-rose-500/10 px-1.5 py-0.5 text-rose-300/90 md:px-2">错 {c.error_count}</span>}
+          {(c.stage || 0) > 0 && <span className="rounded-full bg-mint/10 px-1.5 py-0.5 text-mint/90 md:px-2">{STAGE_LABELS[c.stage] || ""}</span>}
+          {c.timestamp && <span className="font-mono text-copper/70">{c.timestamp}</span>}
+        </div>
+        {!hideSource && c.source_movie_title && <p className="mt-1 text-[10px] text-muted-foreground/65 md:text-[11px]">— {c.source_movie_title}</p>}
+      </button>
+      <div className="flex items-center justify-end gap-1 px-2 pb-2">
+        <button type="button" onClick={() => (mastered ? onRestore?.(c) : onBury?.(c))} className="inline-flex min-h-11 items-center rounded-full border border-copper/40 px-3 text-[11px] font-medium text-copper touch-manipulation [-webkit-tap-highlight-color:transparent] hover:bg-copper/10">{mastered ? "取消斩" : "斩"}</button>
         <DeleteChip id={c.id} onGone={onGone} onDelete={onDelete} />
       </div>
-      {(c.meaning_zh || c.text_zh) && <p style={{ "--corpus-font-scale": fontScale }} className="mt-1 text-[calc(0.875rem*var(--corpus-font-scale))] leading-snug text-foreground/75 md:text-[calc(1rem*var(--corpus-font-scale))]">{c.meaning_zh || c.text_zh}</p>}
-      <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px] md:mt-2.5 md:gap-1.5 md:text-xs">
-        <span className={`rounded-full px-1.5 py-0.5 md:px-2 ${m.className}`}>{m.label}</span>
-        {c.type && <span className="rounded-full bg-background-elev px-1.5 py-0.5 md:px-2">{typeLabel(c.type)}</span>}
-        {(c.error_count || 0) >= 1 && <span className="rounded-full bg-rose-500/10 px-1.5 py-0.5 text-rose-300/90 md:px-2">错 {c.error_count}</span>}
-        {(c.stage || 0) > 0 && <span className="rounded-full bg-mint/10 px-1.5 py-0.5 text-mint/90 md:px-2">{STAGE_LABELS[c.stage] || ""}</span>}
-        {c.timestamp && <span className="font-mono text-copper/70">{c.timestamp}</span>}
-      </div>
-      {c.source_movie_title && <p className="mt-1 text-[10px] text-muted-foreground/65 md:text-[11px]">— {c.source_movie_title}</p>}
     </div>
   );
 }
@@ -572,7 +675,7 @@ function DeleteChip({ id, onGone, onDelete }) {
         if (onDelete) await onDelete(id);
         onGone();
       }}
-      className="text-muted-foreground/40 opacity-0 transition-opacity hover:text-rose-300 group-hover:opacity-100"
+      className="inline-flex min-h-11 min-w-11 items-center justify-center text-muted-foreground/40 opacity-0 pointer-events-none transition-opacity hover:text-rose-300 focus:opacity-100 focus:pointer-events-auto group-hover:opacity-100 group-hover:pointer-events-auto [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-70"
       aria-label="delete"
     >
       <Trash2 size={14} />

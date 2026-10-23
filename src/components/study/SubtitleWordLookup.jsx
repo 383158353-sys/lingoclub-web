@@ -119,8 +119,15 @@ export default function SubtitleWordLookup({ text, translation, movieId, videoId
   // 气泡出现后：点击外部 / 滚动 → 关闭
   useEffect(() => {
     if (!word) return;
-    const onDown = (e) => { if (!e.target.closest?.("[data-word-bubble]")) setWord(null); };
-    const onScroll = () => setWord(null);
+    const openedAt = Date.now();
+    const onDown = (e) => {
+      if (Date.now() - openedAt < 500) return;
+      if (!e.target.closest?.("[data-word-bubble]")) setWord(null);
+    };
+    const onScroll = () => {
+      if (Date.now() - openedAt < 600) return;
+      setWord(null);
+    };
     document.addEventListener("mousedown", onDown);
     window.addEventListener("scroll", onScroll, true);
     return () => {
@@ -147,7 +154,7 @@ export default function SubtitleWordLookup({ text, translation, movieId, videoId
               aria-label={`查看单词 ${w}`}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); lookup(w, e.currentTarget.getBoundingClientRect()); } }}
               onClick={(e) => { e.stopPropagation(); if (window.getSelection()?.toString().trim()) return; lookup(w, e.currentTarget.getBoundingClientRect()); }}
-              className={`cursor-pointer underline decoration-transparent underline-offset-2 transition-colors hover:text-mint hover:decoration-mint/60 ${highlighted ? "font-semibold text-mint decoration-mint/40" : ""}`}
+              className={`cursor-pointer touch-manipulation underline decoration-transparent underline-offset-2 transition-colors [-webkit-tap-highlight-color:transparent] hover:text-mint hover:decoration-mint/60 ${highlighted ? "font-semibold text-mint decoration-mint/40" : ""}`}
             >
               {seg}
             </span>

@@ -1,17 +1,32 @@
-export function createYouTubePlayerVars(origin) {
-  return {
+// Cue recall mounts the iframe after an async URL lookup, so the original tap is
+// no longer a user gesture. Mobile Safari/Chrome allow autoplay only when the
+// embed starts muted and inline (WebKit's media policy; YouTube player params
+// autoplay, start, mute, playsinline). The player unmutes after playback
+// begins, and the word card keeps an in-app control if the browser still blocks it.
+// Same parameters as the MIT @u-wave/react-youtube player (autoplay, startSeconds, muted, playsInline).
+export function createYouTubePlayerVars(origin, options = {}) {
+  const autoplay = Boolean(options.autoplay);
+  const start = Number(options.start);
+  const vars = {
     rel: 0,
     modestbranding: 1,
-    autoplay: 0,
+    autoplay: autoplay ? 1 : 0,
     playsinline: 1,
     enablejsapi: 1,
     ...(origin ? { origin } : {}),
   };
+  if (autoplay && Number.isFinite(start) && start >= 1) vars.start = Math.floor(start);
+  if (options.mute) vars.mute = 1;
+  return vars;
 }
 
-export function createYouTubeEmbedUrl(videoId, origin) {
+export function createYouTubeCueAutoplayVars(origin, startSeconds) {
+  return createYouTubePlayerVars(origin, { autoplay: true, start: startSeconds, mute: true });
+}
+
+export function createYouTubeEmbedUrl(videoId, origin, options) {
   const params = new URLSearchParams({
-    ...Object.fromEntries(Object.entries(createYouTubePlayerVars(origin)).map(([key, value]) => [key, String(value)])),
+    ...Object.fromEntries(Object.entries(createYouTubePlayerVars(origin, options)).map(([key, value]) => [key, String(value)])),
   });
   return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params}`;
 }

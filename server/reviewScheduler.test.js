@@ -2,11 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildDailyQueue,
+  clampDailyReviewGoal,
   dailyQueueSnapshot,
   restoreDailyQueue,
   scheduleStage,
   classifyMistakeTiers,
+  classifyReviewPools,
+  isDue,
+  masterVocabulary,
   normalizeVocabularyProgress,
+  unmasterVocabulary,
 } from "../src/lib/srs.js";
 import { createReviewLog } from "../src/lib/reviewLogModel.js";
 
@@ -170,4 +175,46 @@ test("a single miss enters mistake tiers and recent stable results downgrade old
   assert.deepEqual(tiers.occasional.map((card) => card.id), ["occasional"]);
   assert.deepEqual(tiers.weak.map((card) => card.id), ["weak"]);
   assert.deepEqual(tiers.focus.map((card) => card.id), ["focus"]);
+});
+
+test("custom daily goals scale the 40-card quotas and clamp to 5–100", () => {
+  const cards = [
+    ...Array.from({ length: 30 }, (_, i) => makeCard(`goal-n-${i}`)),
+    ...Array.from({ length: 20 }, (_, i) => makeCard(`goal-d-${i}`, { reviewCount: 1, correctCount: 1, nextReviewAt: "2026-01-01" })),
+    ...Array.from({ length: 10 }, (_, i) => makeCard(`goal-w-${i}`, { reviewCount: 2, correctCount: 1, wrongCount: 1, lastReviewedAt: "2026-01-02" })),
+  ];
+  const small = buildDailyQueue(cards, date(3), 10);
+  assert.equal(small.goal, 10);
+  assert.equal(small.queue.length, 10);
+  assert.equal(small.newCount + small.dueCount + small.weakCount, 10);
+  const wide = buildDailyQueue(cards, date(3), 100);
+  assert.equal(wide.goal, 100);
+  assert.equal(wide.queue.length, 60);
+  assert.ok(wide.queue.length <= 100);
+  const unchanged = buildDailyQueue(cards, date(3));
+  assert.deepEqual(unchanged.counts, { new: 20, due: 15, weak: 5 });
+  assert.equal(clampDailyReviewGoal(0), 5);
+  assert.equal(clampDailyReviewGoal(500), 100);
+  assert.equal(clampDailyReviewGoal("40"), 40);
+  assert.equal(clampDailyReviewGoal(null), 40);
+});
+
+test("mastered cards leave the daily queue and due list, and 斩 can be undone", () => {
+  const mastered = makeCard("gone", { mastery_level: "mastered" });
+  const dueMastered = makeCard("old", { mastery_level: "mastered", reviewCount: 2, nextReviewAt: "2020-01-01" });
+  const fresh = makeCard("stay");
+  const queue = buildDailyQueue([mastered, dueMastered, fresh], date(3));
+  assert.deepEqual(queue.ids, ["stay"]);
+  assert.deepEqual(classifyReviewPools([mastered, dueMastered, fresh], date(3)).new.map((card) => card.id), ["stay"]);
+  assert.equal(isDue(dueMastered), false);
+  assert.equal(isDue(fresh), true);
+  const fields = masterVocabulary(makeCard("wiener"), date(3));
+  assert.equal(fields.mastery_level, "mastered");
+  assert.equal(fields.review_status, "mastered");
+  assert.equal(fields.stage, 5);
+  assert.ok(fields.intervalDays >= 60);
+  const restored = unmasterVocabulary({ ...makeCard("wiener"), ...fields }, date(3));
+  assert.equal(restored.mastery_level, "learning");
+  assert.equal(restored.review_status, "learning");
+  assert.equal(isDue({ ...makeCard("wiener"), ...restored }), true);
 });

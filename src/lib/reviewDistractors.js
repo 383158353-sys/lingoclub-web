@@ -137,3 +137,94 @@ export function isCorrectReviewAnswer(question, option) {
 export function buildReviewOptions(card, pool, mode, distractors = buildLocalDistractors(card, pool, mode)) {
   return buildReviewQuestion(card, pool, mode, distractors).options;
 }
+
+// Generic fillers only run after the vocabulary pool is exhausted, so a card
+// still has four choices when no near-match and no network result is ready.
+const FALLBACK_MEANINGS = ["时间", "地方", "方法", "原因", "结果", "机会", "问题", "答案", "故事", "声音", "画面", "决定", "计划", "经验", "感觉"];
+const FALLBACK_EXPRESSIONS = ["moment", "place", "method", "reason", "result", "chance", "problem", "answer", "story", "sound", "picture", "decision", "plan", "experience", "feeling"];
+const reviewDistractorCache = new Map();
+
+const distractorCacheKey = (card, mode) => `${card?.id ?? ""}:${mode}`;
+
+export function clearReviewDistractorCache() {
+  reviewDistractorCache.clear();
+}
+
+export function cachedReviewDistractors(card, mode) {
+  return reviewDistractorCache.get(distractorCacheKey(card, mode)) || null;
+}
+
+export function rememberReviewDistractors(card, mode, values) {
+  const list = (Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean).slice(0, 8);
+  if (!card?.id || !list.length) return;
+  reviewDistractorCache.set(distractorCacheKey(card, mode), list);
+}
+
+export function distractorValuesFromRemote(remote, mode) {
+  if (Array.isArray(remote)) return remote;
+  const data = remote?.distractors || remote || {};
+  const list = mode === "r2" ? data.expression_options : data.meaning_options;
+  return Array.isArray(list) ? list : [];
+}
+
+function relaxedPoolValues(card, pool, mode) {
+  const usesMeaning = mode === "r1" || mode === "r3";
+  const correct = normalize(usesMeaning ? card?.meaning_zh || card?.text_zh : card?.expression_en || card?.text_en);
+  const values = [];
+  for (const candidate of pool || []) {
+    if (!candidate || candidate.id === card?.id) continue;
+    const value = usesMeaning
+      ? String(candidate.meaning_zh || candidate.text_zh || "").trim()
+      : String(candidate.expression_en || candidate.text_en || "").trim();
+    if (!value || normalize(value) === correct) continue;
+    values.push(value);
+  }
+  return values;
+}
+
+function takeDistractors(values, card, mode, limit = 3) {
+  const usesMeaning = mode === "r1" || mode === "r3";
+  const correct = normalize(usesMeaning ? card?.meaning_zh || card?.text_zh : card?.expression_en || card?.text_en);
+  const seen = new Set(correct ? [mode === "r3" ? meaningKey(correct) : correct] : []);
+  const result = [];
+  for (const value of values) {
+    const clean = String(value || "").trim();
+    const key = mode === "r3" ? meaningKey(clean) : normalize(clean);
+    if (!clean || (mode === "r3" && !isChineseMeaning(clean)) || seen.has(key) || (mode === "r3" && (nearDuplicateMeaning(clean, correct) || result.some((item) => nearDuplicateMeaning(clean, item))))) continue;
+    seen.add(key);
+    result.push(clean);
+    if (result.length === limit) break;
+  }
+  return result;
+}
+
+// Strict near-matches stay first. The rest of the user's vocabulary, then a
+// fixed bank, fills the card immediately so review does not wait on AI.
+export function distractorsForReview(card, pool, mode) {
+  const cached = cachedReviewDistractors(card, mode) || [];
+  const fallback = mode === "r2" ? FALLBACK_EXPRESSIONS : FALLBACK_MEANINGS;
+  return takeDistractors([
+    ...cached,
+    ...buildLocalDistractors(card, pool, mode),
+    ...relaxedPoolValues(card, pool, mode),
+    ...fallback,
+  ], card, mode, 3);
+}
+
+export async function prefetchReviewDistractors(cards, mode, loader, pool = []) {
+  const jobs = [];
+  for (const card of cards || []) {
+    if (!card?.id || cachedReviewDistractors(card, mode)) continue;
+    if (buildLocalDistractors(card, pool, mode).length >= 3) continue;
+    let request;
+    try { request = Promise.resolve(loader?.(card)); }
+    catch (error) { request = Promise.reject(error); }
+    jobs.push(request
+      .then((remote) => {
+        const values = distractorValuesFromRemote(remote, mode);
+        if (values.length) rememberReviewDistractors(card, mode, values);
+      })
+      .catch(() => { /* a failed prefetch must not block the card already on screen */ }));
+  }
+  await Promise.all(jobs);
+}
