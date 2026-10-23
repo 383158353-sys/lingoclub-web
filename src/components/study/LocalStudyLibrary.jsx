@@ -2,7 +2,8 @@ import { sortLibraryItems } from "@/lib/librarySort";
 import React, { useState, useMemo, useEffect } from "react";
 import LocalMovieCard from "./LocalMovieCard";
 import FolderBar from "./FolderBar";
-import { Film, Plus, Trash2, Loader2, FolderInput, Check, X, SlidersHorizontal, Youtube, GripVertical, Pencil } from "lucide-react";
+import { Film, Plus, Trash2, Loader2, FolderInput, Check, X, SlidersHorizontal, Youtube, GripVertical, Pencil, Heart } from "lucide-react";
+import { FAVORITES_FOLDER, itemsInLibraryFolder, libraryFolderCounts } from "@/lib/libraryFilters";
 import { formatEpisodeCode, parseEpisodeNumber } from "@/lib/localSeason";
 import LocalPosterPicker from "@/components/study/LocalPosterPicker";
 import LocalPosterImage from "@/components/study/LocalPosterImage";
@@ -10,7 +11,7 @@ import PageBackButton from "@/components/common/PageBackButton";
 import { readLocalLibraryView, saveLocalLibraryView, pushLocalLibraryView, replaceLocalLibraryView } from "@/lib/localLibraryNavigation";
 import { useNavigate } from "react-router-dom";
 
-export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onDelete, onDeleteMany, onDeleteSeason, onReorder, onReorderLocal, onMoveToFolder, onCreateFolder, onCreateAlbum, onUpdateAlbum, onRenameFolder, onSetFolderCover, onDeleteFolder, requireAuth, onImportLocal, onImportSeason, onOrganizeAsSeason, onAssignEpisode, onUpdateEpisodeNumber, onImportYoutube, onPublishFolder, onUnpublishFolder }) {
+export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onDelete, onDeleteMany, onDeleteSeason, onReorder, onReorderLocal, onMoveToFolder, onCreateFolder, onCreateAlbum, onUpdateAlbum, onRenameFolder, onSetFolderCover, onDeleteFolder, onToggleFavorite, requireAuth, onImportLocal, onImportSeason, onOrganizeAsSeason, onAssignEpisode, onUpdateEpisodeNumber, onImportYoutube, onPublishFolder, onUnpublishFolder }) {
   const navigate = useNavigate();
   const [initialView] = useState(readLocalLibraryView);
   const [tab, setTab] = useState(initialView.tab === "films" ? "films" : "videos");
@@ -92,28 +93,11 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
     return () => window.removeEventListener("popstate", restoreHistoryView);
   }, [tab, activeFolder, activeSeasonId]);
 
-  const folderCounts = useMemo(() => {
-    const counts = { uncategorized: 0 };
-    currentMetas.forEach((m) => {
-      if (m.folder && tabFolders.find((f) => f.id === m.folder)) {
-        counts[m.folder] = (counts[m.folder] || 0) + 1;
-      } else {
-        counts.uncategorized++;
-      }
-    });
-    return counts;
-  }, [currentMetas, tabFolders]);
+  const folderCounts = useMemo(() => libraryFolderCounts(currentMetas, tabFolders), [currentMetas, tabFolders]);
 
-  const filtered = useMemo(() => {
-    let list = currentMetas;
-    if (activeFolder === "uncategorized") {
-      list = list.filter((m) => !m.folder || !tabFolders.find((f) => f.id === m.folder));
-    } else if (activeFolder !== "all") {
-      list = list.filter((m) => m.folder === activeFolder);
-    }
-    return sortLibraryItems(list);
-  }, [currentMetas, activeFolder, tabFolders]);
-  const displayCount = landscape ? filtered.length : activeSeason ? activeEpisodes.length : movieMetas.length + looseEpisodes.length + seasonProjects.length;
+  const filtered = useMemo(() => sortLibraryItems(itemsInLibraryFolder(currentMetas, activeFolder, tabFolders)), [currentMetas, activeFolder, tabFolders]);
+  const favoriteFilms = useMemo(() => itemsInLibraryFolder(currentMetas, FAVORITES_FOLDER, tabFolders), [currentMetas, tabFolders]);
+  const displayCount = !landscape && activeFolder === FAVORITES_FOLDER ? favoriteFilms.length : landscape ? filtered.length : activeSeason ? activeEpisodes.length : movieMetas.length + looseEpisodes.length + seasonProjects.length;
   const selectableKeys = landscape
     ? filtered.map((meta) => meta.id)
     : activeSeason
@@ -373,6 +357,13 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
       </div>
 
       {/* Existing YouTube organization remains unchanged; Local uses direct Season Projects. */}
+      {!landscape && (
+        <div className="mt-4">
+          <button type="button" onClick={() => enterFolder(activeFolder === FAVORITES_FOLDER ? "all" : FAVORITES_FOLDER)} aria-pressed={activeFolder === FAVORITES_FOLDER} className={chip(activeFolder === FAVORITES_FOLDER)}>
+            收藏 {folderCounts.favorites > 0 && <span className="opacity-70">{folderCounts.favorites}</span>}
+          </button>
+        </div>
+      )}
       {landscape && <div className="mt-4">
         <FolderBar
           folders={tabFolders}
@@ -488,10 +479,23 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
               onDragEnd={onDragEnd}
               className={`transition-opacity ${dragIndex === i ? "opacity-40" : ""} ${manageMode && overIndex === i && dragIndex !== null && dragIndex !== i ? "ring-2 ring-copper rounded-xl" : ""} ${dragIndex !== null ? "cursor-grabbing" : "cursor-grab"}`}
             >
-              <LocalMovieCard meta={m} manageMode={manageMode} selected={selectedIds.has(m.id)} onToggleSelect={toggleSelect} onOpen={openMetaFromView} onDelete={() => handleDeleteMovie(m)} landscape={landscape} />
+              <LocalMovieCard meta={m} manageMode={manageMode} selected={selectedIds.has(m.id)} onToggleSelect={toggleSelect} onOpen={openMetaFromView} onDelete={() => handleDeleteMovie(m)} onToggleFavorite={onToggleFavorite} landscape={landscape} />
             </div>
           ))}
         </div>
+      ) : activeFolder === FAVORITES_FOLDER ? (
+        favoriteFilms.length === 0 ? (
+          <div className="mt-10 rounded-2xl border border-dashed border-border bg-background-elev/30 p-14 text-center">
+            <Film size={28} className="mx-auto text-muted-foreground/60" />
+            <p className="mt-3 text-sm text-muted-foreground">还没有收藏的影片。</p>
+          </div>
+        ) : (
+          <div className={gridClass}>
+            {favoriteFilms.map((movie) => (
+              <LocalMovieCard key={movie.id} meta={movie} manageMode={manageMode} selected={selectedIds.has(movie.id)} onToggleSelect={toggleSelect} onOpen={(meta) => openMetaFromView(meta, true)} onDelete={() => handleDeleteMovie(movie)} onToggleFavorite={onToggleFavorite} landscape={false} />
+            ))}
+          </div>
+        )
       ) : activeSeason ? (
         <section className="mt-5">
           <h2 className="font-display text-xl text-foreground">{activeSeason.display_title || activeSeason.name}</h2>
@@ -521,6 +525,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
                       <span className="block truncate text-sm font-medium text-foreground">{episode.title || episode.episode_title || episodeCode}</span>
                       <span className="mt-0.5 block text-[11px] text-muted-foreground">{(episode.subtitle_count || episode.subtitles?.length) ? `${episode.subtitle_count || episode.subtitles.length} 条字幕` : "暂无字幕"}{episode.last_studied_at ? " · 已学习" : ""}</span>
                     </button>
+                    {onToggleFavorite && <button type="button" onClick={() => onToggleFavorite(episode)} aria-pressed={Boolean(episode.favorited)} aria-label={episode.favorited ? "取消收藏" : "收藏"} title={episode.favorited ? "取消收藏" : "收藏"} className={`grid h-8 w-8 place-items-center rounded-full ${episode.favorited ? "text-rose-400" : "text-muted-foreground"}`}><Heart size={15} fill={episode.favorited ? "currentColor" : "none"} /></button>}
                     {!manageMode && <button type="button" onClick={() => handleDeleteMovie(episode)} aria-label={`删除${episode.episode_title || episode.name}`} title="从影片库移除此集" className="rounded-full p-2 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-300"><Trash2 size={14} /></button>}
                   </div>
                 );
@@ -544,7 +549,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
                 {movieMetas.map((movie) => (
                   <div key={movie.id} draggable={manageMode} onDragStart={(event) => manageMode && setLocalDragPayload(event, "movie", movie.id)} onDragOver={(event) => manageMode && event.preventDefault()} onDrop={(event) => reorderLocalTarget(event, "movie", movie.id)} className={manageMode ? "cursor-grab" : ""}>
-                    <LocalMovieCard meta={movie} manageMode={manageMode} selected={selectedIds.has(movie.id)} onToggleSelect={toggleSelect} onOpen={(meta) => openMetaFromView(meta, true)} onDelete={() => handleDeleteMovie(movie)} landscape={false} />
+                    <LocalMovieCard meta={movie} manageMode={manageMode} selected={selectedIds.has(movie.id)} onToggleSelect={toggleSelect} onOpen={(meta) => openMetaFromView(meta, true)} onDelete={() => handleDeleteMovie(movie)} onToggleFavorite={onToggleFavorite} landscape={false} />
                     <p className="mt-1 text-center text-[10px] text-muted-foreground">{movie.last_studied_at ? "已学习" : "未学习"}{(movie.subtitle_count || movie.subtitles?.length) ? ` · ${movie.subtitle_count || movie.subtitles.length} 条字幕` : ""}</p>
                   </div>
                 ))}
@@ -557,7 +562,7 @@ export default function LocalStudyLibrary({ metas, folders, loading, onOpen, onD
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
                 {looseEpisodes.map((episode) => (
                   <div key={episode.id} draggable={manageMode} onDragStart={(event) => manageMode && setLocalDragPayload(event, "looseEpisode", episode.id)} onDragOver={(event) => manageMode && event.preventDefault()} onDrop={(event) => reorderLocalTarget(event, "looseEpisode", episode.id)} className={manageMode ? "cursor-grab" : ""}>
-                    <LocalMovieCard meta={episode} manageMode={manageMode} selected={selectedIds.has(episode.id)} onToggleSelect={toggleSelect} onOpen={(meta) => openMetaFromView(meta, true)} onDelete={() => handleDeleteMovie(episode)} landscape={false} />
+                    <LocalMovieCard meta={episode} manageMode={manageMode} selected={selectedIds.has(episode.id)} onToggleSelect={toggleSelect} onOpen={(meta) => openMetaFromView(meta, true)} onDelete={() => handleDeleteMovie(episode)} onToggleFavorite={onToggleFavorite} landscape={false} />
                   </div>
                 ))}
               </div>

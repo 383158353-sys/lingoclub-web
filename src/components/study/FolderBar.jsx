@@ -67,6 +67,9 @@ export default function FolderBar({
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <button type="button" onClick={() => onSelect("all")} className={chip(activeFolder === "all")}>全部</button>
+      <button type="button" onClick={() => onSelect("favorites")} className={chip(activeFolder === "favorites")} aria-pressed={activeFolder === "favorites"}>
+        收藏 {counts.favorites > 0 && <span className="opacity-70">{counts.favorites}</span>}
+      </button>
       <button type="button" onClick={() => onSelect("uncategorized")} className={chip(activeFolder === "uncategorized")}>
         未分类 {counts.uncategorized > 0 && <span className="opacity-70">{counts.uncategorized}</span>}
       </button>
@@ -167,7 +170,7 @@ export default function FolderBar({
             </button>
           )}
           <div className="my-1 border-t border-border/50" />
-          <button type="button" onClick={() => { if (window.confirm(`删除文件夹「${menu.folder.name}」？文件夹内的视频将移至「未分类」。`)) onDelete(menu.folder.id); setMenu(null); }} className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-xs text-rose-300 hover:bg-rose-500/10">
+          <button type="button" onClick={() => { if (window.confirm(`删除文件夹「${menu.folder.name}」？文件夹内的内容将移至「未分类」。`)) onDelete(menu.folder.id); setMenu(null); }} className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-xs text-rose-300 hover:bg-rose-500/10">
             <Trash2 size={12} /> 删除文件夹
           </button>
         </div>

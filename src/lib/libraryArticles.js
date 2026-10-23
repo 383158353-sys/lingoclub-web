@@ -30,7 +30,7 @@ export async function importLibraryArticle(input) {
 }
 export async function listLibraryArticles() {
   const user = await client();
-  const { data, error } = await supabase.from("library_articles").select("id,title,source_url,outlet,level,summary_zh,read_at,favorited,created_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(200);
+  const { data, error } = await supabase.from("library_articles").select("id,title,source_url,outlet,level,summary_zh,read_at,favorited,folder,created_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(200);
   if (error) throw error;
   return data || [];
 }
@@ -47,3 +47,4 @@ async function status(id, fields) {
 }
 export const markLibraryArticleRead = (id, read_at) => status(id, { read_at });
 export const setLibraryArticleFavorite = (id, favorited) => status(id, { favorited });
+export const setLibraryArticleFolder = (id, folder) => status(id, { folder: folder || "" });

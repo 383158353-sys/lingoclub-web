@@ -136,7 +136,7 @@ curl -X POST https://<your-app>/api/recommendations/import \
 - `supabase/migrations/20261014000000_daily_articles.sql`
 - `supabase/migrations/20261014010000_daily_articles_service_role_grant.sql`
 
-浏览器只能读自己的文章，修改 `read_at`、`favorited`、`updated_at`。同一用户、日期、出处 URL 重导只更新内容，保留已读和收藏状态。
+浏览器只能读自己的文章，修改 `read_at`、`favorited`、`folder`、`updated_at`。同一用户、日期、出处 URL 重导只更新内容，保留已读、收藏和文件夹。学习页「收藏」文件夹不另存一行，它只列出 `favorited` 为真的文章。
 每次 1–10 篇；`title` / `body_en` / http(s) `source_url` 必填。长度上限：标题 300、作者/出处 120、难度 32、简介 4000、正文 50000、链接 2048；标签最多 20 个（每个 40 字），解析 JSON 最多 200000 字符。
 
 ```bash
@@ -172,8 +172,8 @@ curl -X POST http://127.0.0.1:5173/api/articles/import \
 
 ## 学习文章手动导入
 
-学习页 `/local-study?tab=articles` 使用独立 `library_articles` 表，不与每日推荐混排。
-发布前应用 `supabase/migrations/20261015000000_library_articles.sql`；authenticated 只能 CRUD 自己的文章，匿名无权限。
+学习页 `/local-study?tab=articles` 同时列出每日推荐（`daily_articles`）和手动导入（`library_articles`）。文件夹复用视频库的 `FolderBar` 与 `localFolders`（`tab_type: "articles"`），文章上的 `folder` 字段记下归类。`收藏` 是独立文件夹，视频库和文章库都按 `favorited` 筛选，不把条目标出原来的文件夹。
+发布前按顺序应用 `supabase/migrations/20261015000000_library_articles.sql` 和 `supabase/migrations/20261023000000_article_folders.sql`；authenticated 只能 CRUD 自己的导入文章，每日推荐文章只能改阅读状态、收藏和文件夹，匿名无权限。
 底栏「导入 → 精读文章」可粘贴公开出处 URL 后点击「提取正文」：登录态 `/api/articles/extract` 在服务端读取网页并回填标题、英文正文、作者和出处。付费墙、反爬及纯客户端渲染页面可能提取失败，此时手动填写标题和正文仍可导入。精读解析 JSON 保持选填，不会自动生成；不使用每日推荐自动化导入口令。
 阅读路由 `/library-articles/:id` 复用精读阅读页，收藏来源类型 `library_article` 回跳该路由。
 
@@ -192,6 +192,10 @@ curl -X POST http://127.0.0.1:5173/api/articles/import \
 单词详情里的「预览原句」在查到原句时间点之后才挂上 YouTube iframe，此时原来的点击已经不是用户手势。预览因此用静音、内联、`autoplay=1`、`start`（秒）和 `controls=0` 直接循环当前句：不显示「播放原句」，也不把 YouTube 控制条和正中的大红播放钮留给第二次点击。打开预览的那一下会先做一次静音媒体解锁。开始播放后再尝试取消静音；若浏览器拒绝有声播放，预览继续静音循环，而不是盖一层播放按钮。循环的是当前句的起止时间（播到句末 seek 回句首）。没有使用 YouTube 的 `loop=1`，因为那会把整段视频重播，并且必须同时设置 `playlist` 为同一个视频 ID。`controls=0` 只用于这条原句预览。精读、本地文件和文章点播没有这条请求，仍保持 `autoplay=0` 和播放器自己的控件。参数与 [YouTube IFrame Player API 播放器参数](https://developers.google.com/youtube/player_parameters) 和 [WebKit 媒体策略](https://webkit.org/blog/6784/) 一致，写法参考 MIT 许可的 [@u-wave/react-youtube](https://github.com/u-wave/react-youtube)（`autoplay`、`startSeconds`、`muted`、`playsInline`、`controls`）。
 
 斩只出现在单词详情底栏（「关闭」旁）和复习底栏（「继续复习」旁，以及测验卡底栏）。语料库和错词列表的卡片行上没有斩，也没有取消斩。点斩仍写入已有的已掌握状态，复习队列、到期列表和首页待复习不再包含该词；取消斩只在详情和复习底栏。
+
+语料库和错词列表的卡片底部只保留掌握状态（未学、学习中、熟悉、已掌握）。类型「单词 / 短语」、轮次和时间序号不显示。这里没有可复用的开源组件，记为 N/A。
+
+文章与视频对齐复用了现有实现，没有新增依赖：推荐页的「全部 / 未看 / 收藏」来自 `src/lib/libraryFilters.js` 和 `StatusFilterBar`；收藏写入已有的 `favorited` 字段；学习页文件夹继续用 `FolderBar` 的原生拖放。项目里已有 MIT 许可的 [`@hello-pangea/dnd`](https://github.com/hello-pangea/dnd)（react-beautiful-dnd 的维护分支），这次没有改用它，避免和现有文件夹拖放各做一套。
 
 复习选项先用本机词库和固定干扰项立刻凑满四选一，下一张的相近干扰项在后台预取；网络慢或失败时当前题不等待。
 

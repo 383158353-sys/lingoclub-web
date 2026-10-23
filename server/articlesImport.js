@@ -63,7 +63,7 @@ export async function handleArticlesImport(req, res, body, env = process.env, { 
   const existing = await client.from("daily_articles").select("source_url").eq("user_id", userId).eq("rec_date", parsed.date).in("source_url", urls);
   if (existing.error) throw Object.assign(new Error("Article lookup failed"), { code: "DATABASE_ERROR" });
   const known = new Set((existing.data || []).map((row) => row.source_url));
-  // 只 upsert 内容字段，不发送 read_at/favorited，保留已有阅读与收藏状态。
+  // 只 upsert 内容字段，不发送 read_at/favorited/folder，保留已有阅读、收藏和文件夹。
   const records = parsed.rows.map((row) => ({ ...row, user_id: userId, rec_date: parsed.date, updated_at: new Date().toISOString() }));
   const { error } = await client.from("daily_articles").upsert(records, { onConflict: "user_id,rec_date,source_url" });
   if (error) throw Object.assign(new Error("Article upsert failed"), { code: "DATABASE_ERROR" });

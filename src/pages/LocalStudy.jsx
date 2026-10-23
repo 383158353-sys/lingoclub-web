@@ -969,6 +969,18 @@ export default function LocalStudy() {
     }
   }, [refreshLibrary, toast]);
 
+  const toggleVideoFavorite = useCallback(async (meta) => {
+    if (!meta?.id) return;
+    const next = !meta.favorited;
+    setMetas((list) => list.map((item) => (item.id === meta.id ? { ...item, favorited: next } : item)));
+    try {
+      await localMovies.update(meta.id, { favorited: next });
+    } catch (error) {
+      setMetas((list) => list.map((item) => (item.id === meta.id ? { ...item, favorited: !next } : item)));
+      toast({ title: "收藏失败", description: error?.message || "请稍后重试", variant: "destructive" });
+    }
+  }, [toast]);
+
   // ===== 文件夹 CRUD =====
   const createFolder = useCallback(async (name, tabType) => {
     try {
@@ -1168,6 +1180,7 @@ export default function LocalStudy() {
         onRenameFolder={renameFolder}
         onSetFolderCover={setFolderCover}
         onDeleteFolder={deleteFolder}
+        onToggleFavorite={toggleVideoFavorite}
         requireAuth={requireAuth}
         onImportLocal={() => { setImportMode("local"); setShowImporter(true); }}
         onImportSeason={() => { setImportMode("season"); setShowImporter(true); }}
