@@ -5,7 +5,7 @@ import { useToast } from "@/components/ui/use-toast";
 import Flashcard from "@/components/study/Flashcard";
 import { scheduleStage, buildDailyQueue, dailyQueueSnapshot, restoreDailyQueue, localDateKey, STAGE_LABELS, stageOf, clampDailyReviewGoal, DAILY_REVIEW_GOAL, isMasteredCard, masterVocabulary, unmasterVocabulary } from "@/lib/srs";
 import { loadSession, saveSession, isResumable, buryCardInSession } from "@/lib/reviewSession";
-import { BookMarked, Brain, ArrowRight, Trash2, RotateCw, AlertTriangle } from "lucide-react";
+import { BookMarked, Brain, ArrowRight, RotateCw, AlertTriangle } from "lucide-react";
 import { appendReviewLog, loadReviewLogs } from "@/lib/reviewLogs";
 import { classifyMistakeTiers, classifyReviewPools, normalizeVocabularyProgress } from "@/lib/srs";
 import WordDetailDialog from "@/components/vocab/WordDetailDialog";
@@ -575,7 +575,7 @@ export default function Collection() {
               {[["all", "\u5168\u90e8", errorWords.length], ["occasional", "\u5076\u5c14\u5931\u8bef", activeMistakes.occasional.length], ["weak", "\u8584\u5f31", activeMistakes.weak.length], ["focus", "\u91cd\u70b9\u653b\u514b", activeMistakes.focus.length]].map(([key, label, count]) => <button type="button" key={key} onClick={() => setMistakeFilter(key)} className={`rounded-full px-3 py-1.5 text-xs ${mistakeFilter === key ? "bg-copper/20 text-copper" : "border border-border text-muted-foreground"}`}>{label} {count}</button>)}
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-              {visibleMistakes.slice(0, visibleMistakeCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} hideSource={hideSource} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onBury={buryCard} onRestore={restoreCard} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+              {visibleMistakes.slice(0, visibleMistakeCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} hideSource={hideSource} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onBury={buryCard} onRestore={restoreCard} />)}
             </div>
             {visibleMistakeCount < visibleMistakes.length && <div ref={mistakesSentinelRef} className="h-px" aria-hidden="true" />}
           </div>
@@ -588,7 +588,7 @@ export default function Collection() {
             <section>
               <h2 className="font-display text-base text-foreground md:text-lg">单词 · 短语 <span className="text-xs font-body text-muted-foreground md:text-sm">· {sectionWords.length}</span></h2>
               <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-                {sectionWords.slice(0, visibleWordCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} hideSource={hideSource} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onBury={buryCard} onRestore={restoreCard} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+                {sectionWords.slice(0, visibleWordCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} hideSource={hideSource} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onBury={buryCard} onRestore={restoreCard} />)}
               </div>
               {visibleWordCount < sectionWords.length && <div ref={wordsSentinelRef} className="h-px" aria-hidden="true" />}
             </section>
@@ -597,7 +597,7 @@ export default function Collection() {
             <section>
               <h2 className="font-display text-base text-foreground md:text-lg">句子 <span className="text-xs font-body text-muted-foreground md:text-sm">· {sectionSentences.length}</span></h2>
               <div className="mt-3 grid grid-cols-2 gap-2 md:mt-4 md:gap-3 sm:grid-cols-4">
-                {sectionSentences.slice(0, visibleSentenceCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} hideSource={hideSource} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onBury={buryCard} onRestore={restoreCard} onGone={reload} onDelete={(id) => VocabApi.delete(id)} />)}
+                {sectionSentences.slice(0, visibleSentenceCount).map((c) => <VocabCard key={c.id} c={c} fontScale={corpusFontScale} hideSource={hideSource} onSelect={(item) => setSelectedWord({ ...item, recentReviewLogs: reviewLogs.filter((log) => log.vocabulary_id === item.id) })} onBury={buryCard} onRestore={restoreCard} />)}
               </div>
               {visibleSentenceCount < sectionSentences.length && <div ref={sentencesSentinelRef} className="h-px" aria-hidden="true" />}
             </section>
@@ -642,13 +642,13 @@ function Seg({ active, onClick, children }) {
   );
 }
 
-function VocabCard({ c, onGone, onDelete, onSelect, onBury, onRestore, hideSource = false, fontScale = 1 }) {
+function VocabCard({ c, onSelect, onBury, onRestore, hideSource = false, fontScale = 1 }) {
   const m = MASTERY[c.mastery_level] || MASTERY.new;
   const mastered = isMasteredCard(c);
   return (
-    <div className="group relative rounded-lg border border-border/60 bg-card">
+    <div className="rounded-lg border border-border/60 bg-card">
       <button type="button" onClick={() => onSelect?.(c)} className="block w-full rounded-lg p-2 text-left touch-manipulation [-webkit-tap-highlight-color:transparent] active:bg-white/[0.04] md:rounded-xl md:p-4">
-        <p style={{ "--corpus-font-scale": fontScale }} className="pr-6 font-display text-[calc(1.25rem*var(--corpus-font-scale))] font-semibold leading-snug text-foreground md:text-[calc(1.5rem*var(--corpus-font-scale))]">{c.expression_en || c.text_en}</p>
+        <p style={{ "--corpus-font-scale": fontScale }} className="font-display text-[calc(1.25rem*var(--corpus-font-scale))] font-semibold leading-snug text-foreground md:text-[calc(1.5rem*var(--corpus-font-scale))]">{c.expression_en || c.text_en}</p>
         {(c.meaning_zh || c.text_zh) && <p style={{ "--corpus-font-scale": fontScale }} className="mt-1 text-[calc(0.875rem*var(--corpus-font-scale))] leading-snug text-foreground/75 md:text-[calc(1rem*var(--corpus-font-scale))]">{c.meaning_zh || c.text_zh}</p>}
         <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px] md:mt-2.5 md:gap-1.5 md:text-xs">
           <span className={`rounded-full px-1.5 py-0.5 md:px-2 ${m.className}`}>{m.label}</span>
@@ -659,27 +659,10 @@ function VocabCard({ c, onGone, onDelete, onSelect, onBury, onRestore, hideSourc
         </div>
         {!hideSource && c.source_movie_title && <p className="mt-1 text-[10px] text-muted-foreground/65 md:text-[11px]">— {c.source_movie_title}</p>}
       </button>
-      <div className="flex items-center justify-end gap-1 px-2 pb-2">
+      <div className="flex items-center justify-end px-2 pb-2">
         <button type="button" onClick={() => (mastered ? onRestore?.(c) : onBury?.(c))} className="inline-flex min-h-11 items-center rounded-full border border-copper/40 px-3 text-[11px] font-medium text-copper touch-manipulation [-webkit-tap-highlight-color:transparent] hover:bg-copper/10">{mastered ? "取消斩" : "斩"}</button>
-        <DeleteChip id={c.id} onGone={onGone} onDelete={onDelete} />
       </div>
     </div>
-  );
-}
-
-function DeleteChip({ id, onGone, onDelete }) {
-  return (
-    <button
-      onClick={async (e) => {
-        e.stopPropagation();
-        if (onDelete) await onDelete(id);
-        onGone();
-      }}
-      className="inline-flex min-h-11 min-w-11 items-center justify-center text-muted-foreground/40 opacity-0 pointer-events-none transition-opacity hover:text-rose-300 focus:opacity-100 focus:pointer-events-auto group-hover:opacity-100 group-hover:pointer-events-auto [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-70"
-      aria-label="delete"
-    >
-      <Trash2 size={14} />
-    </button>
   );
 }
 

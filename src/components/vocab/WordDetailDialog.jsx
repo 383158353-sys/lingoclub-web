@@ -13,7 +13,8 @@ import { localMovies } from "@/lib/localStudyMeta";
 import { normalizeSourceCue, recoverYouTubeSource, resolveVocabularySourceCue, youtubePlaybackUrl } from "@/lib/vocabularySourceCue";
 import { pronounce } from "@/lib/pronunciation";
 import { inferExpressionType, isCurrentWordProfile, normalizeWordProfile, summarizeWordProfileShape, WORD_PROFILE_SCHEMA_VERSION } from "@/lib/wordProfile";
-import { focusSourceText, focusedTranslation, highlightParts, isHeadwordOnly, selectSentenceCue, shouldShowSentenceTranslation } from "@/lib/sourceSentenceFocus";
+import { focusSourceText, focusedTranslation, highlightParts, selectSentenceCue, shouldShowSentenceTranslation } from "@/lib/sourceSentenceFocus";
+import { compactExpressionText, detailExpressionPresentation, detailPosLabel, showRecallSentence } from "@/lib/wordDetailPresentation";
 import { displayLinesFromTimedCues } from "@/lib/captionDisplayCues";
 
 function isDetailed(profile) {
@@ -237,7 +238,8 @@ export function WordDetailBody({ vocabulary, onReturnToSource }) {
   };
 
   const displayProfile = isDetailed(profile) ? profile : {};
-  const expressionType = displayProfile.expression_type || inferExpressionType(expression);
+  const expressionType = displayProfile.expression_type || vocabulary?.type || inferExpressionType(expression);
+  const presentation = detailExpressionPresentation(expression, expressionType);
   const isPhrase = expressionType === "phrase";
   const isSentence = expressionType === "sentence";
   const legacyProfile = vocabulary?.profile || {};
@@ -248,11 +250,13 @@ export function WordDetailBody({ vocabulary, onReturnToSource }) {
   const meanings = meaningRows(displayProfile, vocabulary, legacyProfile);
 
   return (
-    <div className="mx-auto w-full max-w-[860px] space-y-4 sm:space-y-5">
+    <div className={`mx-auto w-full max-w-[860px] ${presentation.compact ? "space-y-3" : "space-y-4 sm:space-y-5"}`}>
       <div className="flex min-w-0 items-start justify-between gap-3 border-b border-border/60 pb-3">
-        <div className="flex min-w-0 flex-1 items-center gap-2.5">
-          <h2 className="min-w-0 break-words font-display text-[30px] font-bold leading-tight text-foreground sm:text-[36px]">{expression}</h2>
-          <button type="button" onClick={() => speakExpression(expression)} aria-label="发音" title="发音" className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted/60 hover:text-copper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint"><Volume2 size={17} /></button>
+        <div className={`flex min-w-0 flex-1 gap-2.5 ${presentation.compact ? "items-start" : "items-center"}`}>
+          <h2 className={presentation.compact
+            ? "min-w-0 text-base font-semibold leading-snug text-foreground sm:text-lg"
+            : "min-w-0 break-words font-display text-[30px] font-bold leading-tight text-foreground sm:text-[36px]"}>{presentation.text}</h2>
+          <button type="button" onClick={() => speakExpression(presentation.text || expression)} aria-label="发音" title="发音" className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted/60 hover:text-copper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-mint"><Volume2 size={17} /></button>
         </div>
         <button type="button" onClick={save} disabled={saved} aria-label={saved ? "已收藏" : "收藏词条"} className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-copper/50 hover:text-copper disabled:opacity-60">
           <BookmarkPlus size={13} /> {saved ? "已收藏" : "收藏"}
@@ -266,12 +270,15 @@ export function WordDetailBody({ vocabulary, onReturnToSource }) {
       </div>}
 
       {(meanings.length > 0 || profileStatus === "loading") && <section className="space-y-1.5">
-        {meanings.map((row, index) => <p key={`${row.pos}-${index}`} className="text-[15px] leading-relaxed text-foreground sm:text-base"><span className="mr-2 inline-block min-w-8 align-baseline text-[11px] font-medium text-copper/80">{row.pos || (isSentence ? "sent." : isPhrase ? "phr." : "")}</span>{row.meanings.join("；")}</p>)}
-        {!meanings.length && profileStatus === "loading" && <p role="status" className="text-sm text-muted-foreground"><span className="mr-2 text-[11px] text-copper/70">{isSentence ? "sent." : isPhrase ? "phr." : "词性释义"}</span>···</p>}
+        {meanings.map((row, index) => {
+          const pos = detailPosLabel(row.pos || (isSentence ? "sent." : isPhrase ? "phr." : ""));
+          return <p key={`${row.pos}-${index}`} className="text-[15px] leading-relaxed text-foreground sm:text-base">{pos ? <span className="mr-2 inline-block min-w-8 align-baseline text-[11px] font-medium text-copper/80">{pos}</span> : null}{row.meanings.join("；")}</p>;
+        })}
+        {!meanings.length && profileStatus === "loading" && <p role="status" className="text-sm text-muted-foreground">{presentation.compact ? "释义" : "词性释义"} ···</p>}
       </section>}
 
       {reliableRoots.length > 0 && <section className="border-t border-border/50 pt-3"><div className="flex flex-wrap gap-x-4 gap-y-2">{reliableRoots.map((part, index) => <div key={`${part.part || part.type}-${index}`} className="min-w-[72px]"><p className="font-medium text-foreground">{part.part}</p><p className="text-xs text-muted-foreground">{part.type} · {part.meaning}</p></div>)}</div>{displayProfile.synthesis && <p className="mt-1.5 text-sm text-muted-foreground">{displayProfile.synthesis}</p>}</section>}
-      {primarySource && <RecallBlock source={primarySource} expression={expression} meaning={vocabulary?.meaning_zh || vocabulary?.text_zh || meanings[0]?.meanings?.[0] || ""} previewOpen={previewOpen} onTogglePreview={() => setPreviewOpen((value) => !value)} onClosePreview={() => setPreviewOpen(false)} onReturnToSource={(source) => onReturnToSource?.({ ...source, expression_en: expression })} onSelectSource={(index) => { setActiveSourceIndex(index); setPreviewOpen(false); }} sources={sources} effectiveSourceIndex={effectiveSourceIndex} otherSourcesOpen={otherSourcesOpen} onToggleOtherSources={() => setOtherSourcesOpen((value) => !value)} />}
+      {primarySource && <RecallBlock source={primarySource} expression={expression} displayExpression={presentation.text} compact={presentation.compact} meaning={vocabulary?.meaning_zh || vocabulary?.text_zh || meanings[0]?.meanings?.[0] || ""} previewOpen={previewOpen} onTogglePreview={() => setPreviewOpen((value) => !value)} onClosePreview={() => setPreviewOpen(false)} onReturnToSource={(source) => onReturnToSource?.({ ...source, expression_en: expression })} onSelectSource={(index) => { setActiveSourceIndex(index); setPreviewOpen(false); }} sources={sources} effectiveSourceIndex={effectiveSourceIndex} otherSourcesOpen={otherSourcesOpen} onToggleOtherSources={() => setOtherSourcesOpen((value) => !value)} />}
       {profileStatus === "error" && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-xs text-amber-200"><span>{error || "详细词条补全失败"}</span><button type="button" onClick={() => { requestedExpression.current = ""; setRetryVersion((value) => value + 1); }} className="underline">重新补全</button><AISettingsButton className="text-copper underline">API 设置</AISettingsButton></div>}
     </div>
   );
@@ -300,20 +307,23 @@ function sourceLabel(source) {
   ].filter(Boolean).join(" · ");
 }
 
-function RecallBlock({ source, expression, meaning, previewOpen, onTogglePreview, onClosePreview, onReturnToSource, onSelectSource, sources, effectiveSourceIndex, otherSourcesOpen, onToggleOtherSources }) {
+function RecallBlock({ source, expression, displayExpression = "", compact = false, meaning, previewOpen, onTogglePreview, onClosePreview, onReturnToSource, onSelectSource, sources, effectiveSourceIndex, otherSourcesOpen, onToggleOtherSources }) {
   const article = ["article", "library_article"].includes(source?.source_type);
-  const focus = focusSourceText(source?.source_sentence_en, expression);
-  const translation = focusedTranslation(source?.source_sentence_en, source?.source_sentence_zh, expression);
-  const showSentence = Boolean(focus.sentence) && !isHeadwordOnly(focus.sentence, expression);
+  const headword = displayExpression || compactExpressionText(expression);
+  const sourceForFocus = compact ? compactExpressionText(source?.source_sentence_en) : source?.source_sentence_en;
+  const focus = focusSourceText(sourceForFocus, headword);
+  const translation = focusedTranslation(sourceForFocus, source?.source_sentence_zh, headword);
+  const showSentence = showRecallSentence(focus.sentence, headword, { compact });
+  const sentenceText = compactExpressionText(focus.sentence);
   const showTranslation = showSentence && shouldShowSentenceTranslation(translation, meaning);
   const showContext = article && showSentence;
   return (
     <section className="rounded-xl border border-border/70 bg-background/45 p-3 sm:p-4">
       <SectionTitle>原句</SectionTitle>
       <p className="truncate text-xs text-muted-foreground">{sourceLabel(source)}</p>
-      {showContext && focus.before && !isHeadwordOnly(focus.before, expression) && <p className="mt-2 text-xs leading-relaxed text-muted-foreground/75">{focus.before}</p>}
-      {showSentence && <p className={`${showContext && focus.before ? "mt-1" : "mt-2"} text-sm leading-relaxed text-foreground`}><HighlightedSentence text={focus.sentence} term={focus.matched ? expression : ""} /></p>}
-      {showContext && focus.after && !isHeadwordOnly(focus.after, expression) && <p className="mt-1 text-xs leading-relaxed text-muted-foreground/75">{focus.after}</p>}
+      {showContext && focus.before && showRecallSentence(focus.before, headword, { compact }) && <p className="mt-2 text-xs leading-relaxed text-muted-foreground/75">{compactExpressionText(focus.before)}</p>}
+      {showSentence && <p className={`${showContext && focus.before ? "mt-1" : "mt-2"} text-sm leading-relaxed text-foreground`}><HighlightedSentence text={sentenceText} term={focus.matched ? headword : ""} /></p>}
+      {showContext && focus.after && showRecallSentence(focus.after, headword, { compact }) && <p className="mt-1 text-xs leading-relaxed text-muted-foreground/75">{compactExpressionText(focus.after)}</p>}
       {showTranslation && <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{translation}</p>}
       {article ? (
         <button type="button" onClick={() => onReturnToSource?.(source)} className="mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><BookOpen size={13} /> 返回文章</button>
@@ -343,13 +353,13 @@ export default function WordDetailDialog({ vocabulary, open, onOpenChange, onRet
     return openVocabularySource(source, navigate, undefined, { returnContext });
   };
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-border bg-background p-0 pt-[env(safe-area-inset-top)] text-foreground [&>button.absolute]:hidden sm:h-auto sm:max-h-[90dvh] sm:w-[calc(100%-2rem)] sm:max-w-3xl sm:rounded-xl sm:p-6">
+    <DialogContent overlayClassName="z-[80]" className="z-[80] flex h-auto max-h-[min(85dvh,760px)] w-[calc(100%-1.5rem)] max-w-3xl flex-col gap-0 overflow-hidden rounded-xl border-border bg-background p-0 text-foreground shadow-2xl [&>button.absolute]:hidden sm:max-h-[90dvh] sm:w-[calc(100%-2rem)] sm:p-6">
       <DialogHeader className="sr-only"><DialogTitle>单词详情</DialogTitle><DialogDescription>词义、语境、例句和原片来源</DialogDescription></DialogHeader>
       <div className="flex h-12 shrink-0 items-center justify-between px-1 sm:px-0">
         <DetailBackButton onClick={() => onOpenChange?.(false)} />
         <DialogClose aria-label="关闭" className="inline-flex h-11 w-11 items-center justify-center rounded-full text-foreground/80 hover:bg-white/5"><X size={18} /></DialogClose>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-5 sm:px-1">{vocabulary && <WordDetailBody vocabulary={vocabulary} onReturnToSource={returnToSource} />}</div>
+      <div className="min-h-0 overflow-y-auto overscroll-contain px-4 pb-5 sm:px-1">{vocabulary && <WordDetailBody vocabulary={vocabulary} onReturnToSource={returnToSource} />}</div>
       <footer className="border-t border-border/70 bg-background/95 px-4 pt-3 backdrop-blur sm:rounded-b-xl" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}><button type="button" onClick={() => onOpenChange?.(false)} className="w-full rounded-full border border-border px-4 py-3 text-sm text-foreground sm:ml-auto sm:w-auto">{footerLabel}</button></footer>
     </DialogContent>
   </Dialog>;
