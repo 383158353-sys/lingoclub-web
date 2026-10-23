@@ -16,6 +16,8 @@ import { inferExpressionType, isCurrentWordProfile, normalizeWordProfile, summar
 import { focusSourceText, focusedTranslation, highlightParts, selectSentenceCue, shouldShowSentenceTranslation } from "@/lib/sourceSentenceFocus";
 import { compactExpressionText, detailExpressionPresentation, detailPosLabel, showRecallSentence } from "@/lib/wordDetailPresentation";
 import { displayLinesFromTimedCues } from "@/lib/captionDisplayCues";
+import { detailBuryControl } from "@/lib/detailActions";
+import { armCuePreviewPlayback } from "@/lib/youtubePlayerConfig";
 
 function isDetailed(profile) {
   return isCurrentWordProfile(profile);
@@ -328,7 +330,7 @@ function RecallBlock({ source, expression, displayExpression = "", compact = fal
       {article ? (
         <button type="button" onClick={() => onReturnToSource?.(source)} className="mt-3 inline-flex min-h-10 items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><BookOpen size={13} /> 返回文章</button>
       ) : <>
-        <button type="button" onClick={onTogglePreview} className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><Volume2 size={13} />{previewOpen ? "关闭预览" : "播放原句"}</button>
+        <button type="button" onClick={() => { if (!previewOpen) armCuePreviewPlayback(); onTogglePreview(); }} className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-copper/30 px-3 py-1.5 text-xs text-copper hover:bg-copper/10"><Volume2 size={13} />{previewOpen ? "关闭预览" : "预览原句"}</button>
         {previewOpen && <SourcePreview source={{ ...source, expression_en: expression }} expression={expression} onClose={onClosePreview} onOpenOriginal={onReturnToSource} />}
       </>}
       {sources.length > 1 && <div className="mt-3">
@@ -346,7 +348,32 @@ function DetailBackButton({ onClick }) {
   return <button type="button" onClick={onClick} aria-label="返回" className="inline-flex h-11 w-11 items-center justify-center rounded-full text-foreground hover:bg-white/5"><ArrowLeft size={22} /></button>;
 }
 
-export default function WordDetailDialog({ vocabulary, open, onOpenChange, onReturnToSource, returnContext = "collection", footerLabel = "关闭" }) {
+export function BuryButton({ card, onBury, onRestore, className }) {
+  const bury = detailBuryControl(card, { onBury, onRestore });
+  if (!bury) return null;
+  return (
+    <button type="button" onClick={() => (bury.action === "restore" ? onRestore?.(card) : onBury?.(card))} className={className}>
+      {bury.label}
+    </button>
+  );
+}
+
+const BURY_BUTTON_CLASS = "inline-flex min-h-11 shrink-0 items-center rounded-full border border-copper/50 px-4 text-sm font-medium text-copper touch-manipulation [-webkit-tap-highlight-color:transparent] hover:bg-copper/10";
+
+function DetailActionFooter({ vocabulary, onPrimary, primaryLabel, tone = "close", onBury, onRestore }) {
+  const bury = detailBuryControl(vocabulary, { onBury, onRestore });
+  const primaryClass = tone === "continue"
+    ? "inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-full bg-mint px-5 py-3.5 text-sm font-semibold text-background touch-manipulation [-webkit-tap-highlight-color:transparent] sm:flex-none sm:min-w-[10.5rem]"
+    : "inline-flex min-h-11 flex-1 items-center justify-center rounded-full border border-border px-4 py-3 text-sm text-foreground touch-manipulation [-webkit-tap-highlight-color:transparent] sm:flex-none sm:min-w-[7.5rem]";
+  return (
+    <div className={`mx-auto flex w-full max-w-2xl items-center gap-3 ${bury ? "justify-between" : "justify-end"}`}>
+      <BuryButton card={vocabulary} onBury={onBury} onRestore={onRestore} className={BURY_BUTTON_CLASS} />
+      <button type="button" onClick={onPrimary} className={bury ? primaryClass : `${primaryClass} w-full sm:w-auto`}>{primaryLabel}{tone === "continue" ? <span aria-hidden="true"> →</span> : null}</button>
+    </div>
+  );
+}
+
+export default function WordDetailDialog({ vocabulary, open, onOpenChange, onReturnToSource, returnContext = "collection", footerLabel = "关闭", onBury, onRestore }) {
   const navigate = useNavigate();
   const returnToSource = (source) => {
     if (onReturnToSource) return onReturnToSource(source);
@@ -360,12 +387,12 @@ export default function WordDetailDialog({ vocabulary, open, onOpenChange, onRet
         <DialogClose aria-label="关闭" className="inline-flex h-11 w-11 items-center justify-center rounded-full text-foreground/80 hover:bg-white/5"><X size={18} /></DialogClose>
       </div>
       <div className="min-h-0 overflow-y-auto overscroll-contain px-4 pb-5 sm:px-1">{vocabulary && <WordDetailBody vocabulary={vocabulary} onReturnToSource={returnToSource} />}</div>
-      <footer className="border-t border-border/70 bg-background/95 px-4 pt-3 backdrop-blur sm:rounded-b-xl" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}><button type="button" onClick={() => onOpenChange?.(false)} className="w-full rounded-full border border-border px-4 py-3 text-sm text-foreground sm:ml-auto sm:w-auto">{footerLabel}</button></footer>
+      <footer className="border-t border-border/70 bg-background/95 px-4 pt-3 backdrop-blur sm:rounded-b-xl" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}><DetailActionFooter vocabulary={vocabulary} onPrimary={() => onOpenChange?.(false)} primaryLabel={footerLabel} tone="close" onBury={onBury} onRestore={onRestore} /></footer>
     </DialogContent>
   </Dialog>;
 }
 
-export function WordDetailOverlay({ vocabulary, onContinue, onBeforeOpenOriginal, returnContext = "review" }) {
+export function WordDetailOverlay({ vocabulary, onContinue, onBeforeOpenOriginal, returnContext = "review", onBury, onRestore }) {
   const navigate = useNavigate();
   const onOpenOriginal = (source) => {
     onBeforeOpenOriginal?.(source);
@@ -378,6 +405,6 @@ export function WordDetailOverlay({ vocabulary, onContinue, onBeforeOpenOriginal
     <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6 sm:px-6">
       <div className="mx-auto max-w-2xl space-y-5 pb-8"><WordDetailBody vocabulary={vocabulary} onReturnToSource={onOpenOriginal} /></div>
     </main>
-    <footer className="sticky bottom-0 border-t border-border/70 bg-background/95 px-4 pt-3 backdrop-blur sm:px-6" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}><div className="mx-auto max-w-2xl"><button type="button" onClick={onContinue} className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-mint px-5 py-3.5 text-sm font-semibold text-background">继续复习 <span aria-hidden="true">→</span></button></div></footer>
+    <footer className="shrink-0 border-t border-border/70 bg-background/95 px-4 pt-3 backdrop-blur sm:px-6" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}><DetailActionFooter vocabulary={vocabulary} onPrimary={onContinue} primaryLabel="继续复习" tone="continue" onBury={onBury} onRestore={onRestore} /></footer>
   </div>;
 }

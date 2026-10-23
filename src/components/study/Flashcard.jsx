@@ -3,7 +3,7 @@ import { ArrowLeft, Check, Volume2, VolumeX } from "lucide-react";
 import { invokeAI } from "@/lib/localApi";
 import { buildReviewQuestion, distractorsForReview, getReviewQuestionPresentation, isCorrectReviewAnswer, prefetchReviewDistractors } from "@/lib/reviewDistractors";
 import { commitReviewAnswer, scheduleReviewAutoAdvance } from "@/lib/reviewFlow";
-import { WordDetailOverlay } from "@/components/vocab/WordDetailDialog";
+import { BuryButton, WordDetailOverlay } from "@/components/vocab/WordDetailDialog";
 import { pronounce } from "@/lib/pronunciation";
 import { answerFeedbackPlan, isReviewSoundEnabled, playReviewSound, setReviewSoundEnabled } from "@/lib/reviewSounds";
 
@@ -11,7 +11,7 @@ function speak(text) {
   pronounce(text, { accent: "en-US" });
 }
 
-export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, onBack, onBury, fontScale = 1 }) {
+export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, onBack, onBury, onRestore, fontScale = 1 }) {
   const [picked, setPicked] = useState(null);
   const [correct, setCorrect] = useState(null);
   const [showAnswer, setShowAnswer] = useState(false);
@@ -146,7 +146,7 @@ export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, o
   };
 
   if (showAnswer && !correct) {
-    return <WordDetailOverlay vocabulary={card} onContinue={continueAfterWrong} returnContext="review" />;
+    return <WordDetailOverlay vocabulary={card} onContinue={continueAfterWrong} returnContext="review" onBury={onBury} onRestore={onRestore} />;
   }
 
   const answerClass = (option, revealed) => {
@@ -177,7 +177,7 @@ export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, o
       </div>
       <div className="mt-3 flex items-center justify-between gap-2 md:mt-5">
         <button type="button" onClick={() => onBack?.()} className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-sm text-muted-foreground touch-manipulation hover:border-mint/40 hover:text-mint"><ArrowLeft size={14} /> 上一张</button>
-        {onBury && <button type="button" onClick={() => onBury(card)} className="inline-flex min-h-11 items-center rounded-full border border-copper/50 px-4 py-2 text-sm font-medium text-copper touch-manipulation [-webkit-tap-highlight-color:transparent] hover:bg-copper/10">斩</button>}
+        <BuryButton card={card} onBury={onBury} onRestore={onRestore} className="inline-flex min-h-11 items-center rounded-full border border-copper/50 px-4 py-2 text-sm font-medium text-copper touch-manipulation [-webkit-tap-highlight-color:transparent] hover:bg-copper/10" />
       </div>
     </div>
   );

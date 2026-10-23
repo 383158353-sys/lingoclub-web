@@ -189,9 +189,11 @@ curl -X POST http://127.0.0.1:5173/api/articles/import \
 
 同一视频提取成功后，服务端实例内存和浏览器 localStorage 都会缓存，重复打开不会再消耗额度。
 
-单词卡「播放原句」在查到原句时间点之后才挂上 YouTube iframe，此时原来的点击已经不是用户手势。内嵌播放器因此用静音、内联、`autoplay=1` 和 `start`（秒）开始循环，开始播放后再取消静音。若浏览器仍拦住有声自动播放，卡片上的「播放原句」会盖住画面，不依赖 YouTube 正中的红色播放钮。普通精读页没有这条请求时仍保持 `autoplay=0`。参数与 [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference) 和 [WebKit 媒体策略](https://webkit.org/blog/6784/) 一致，写法参考 MIT 许可的 [@u-wave/react-youtube](https://github.com/u-wave/react-youtube)（`autoplay`、`startSeconds`、`muted`、`playsInline`）。
+单词详情里的「预览原句」在查到原句时间点之后才挂上 YouTube iframe，此时原来的点击已经不是用户手势。预览因此用静音、内联、`autoplay=1`、`start`（秒）和 `controls=0` 直接循环当前句：不显示「播放原句」，也不把 YouTube 控制条和正中的大红播放钮留给第二次点击。打开预览的那一下会先做一次静音媒体解锁。开始播放后再尝试取消静音；若浏览器拒绝有声播放，预览继续静音循环，而不是盖一层播放按钮。循环的是当前句的起止时间（播到句末 seek 回句首）。没有使用 YouTube 的 `loop=1`，因为那会把整段视频重播，并且必须同时设置 `playlist` 为同一个视频 ID。`controls=0` 只用于这条原句预览。精读、本地文件和文章点播没有这条请求，仍保持 `autoplay=0` 和播放器自己的控件。参数与 [YouTube IFrame Player API 播放器参数](https://developers.google.com/youtube/player_parameters) 和 [WebKit 媒体策略](https://webkit.org/blog/6784/) 一致，写法参考 MIT 许可的 [@u-wave/react-youtube](https://github.com/u-wave/react-youtube)（`autoplay`、`startSeconds`、`muted`、`playsInline`、`controls`）。
 
-复习选项先用本机词库和固定干扰项立刻凑满四选一，下一张的相近干扰项在后台预取；网络慢或失败时当前题不等待。已掌握（斩）的词不再进入每日队列和到期列表。
+斩只出现在单词详情底栏（「关闭」旁）和复习底栏（「继续复习」旁，以及测验卡底栏）。语料库和错词列表的卡片行上没有斩，也没有取消斩。点斩仍写入已有的已掌握状态，复习队列、到期列表和首页待复习不再包含该词；取消斩只在详情和复习底栏。
+
+复习选项先用本机词库和固定干扰项立刻凑满四选一，下一张的相近干扰项在后台预取；网络慢或失败时当前题不等待。
 
 ### 给推荐助手的提示：优先推荐可嵌入的视频
 

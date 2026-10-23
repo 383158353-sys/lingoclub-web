@@ -19,8 +19,12 @@ test("cue recall requests muted inline autoplay at the saved start while study p
   assert.equal(cue.mute, 1);
   assert.equal(cue.playsinline, 1);
   assert.equal(cue.start, 12);
+  assert.equal(cue.controls, 0);
+  assert.equal(cue.loop, undefined);
+  assert.equal(cue.playlist, undefined);
   assert.equal(cue.enablejsapi, 1);
   const plain = createYouTubePlayerVars(origin);
+  assert.equal(plain.controls, undefined);
   assert.equal(plain.autoplay, 0);
   assert.equal(plain.mute, undefined);
   assert.equal(plain.start, undefined);
