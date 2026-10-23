@@ -12,6 +12,7 @@ import WordDetailDialog from "@/components/vocab/WordDetailDialog";
 import { useAuth } from "@/lib/AuthContext";
 import { openVocabularySource } from "@/lib/vocabularySourceNavigation";
 import { advanceReviewQuestion, createAnswerCommitGate, createReviewQuestionToken } from "@/lib/reviewFlow";
+import VocabListCard from "@/components/vocab/VocabListCard";
 
 const REVIEW_FONT_SCALES = [0.85, 1, 1.15];
 const corpusFontStorageKey = (userId) => `lingoclub:corpus-preview-font-scale:${userId || "guest"}`;
@@ -32,13 +33,6 @@ function loadHideSource(userId) {
 function loadDailyGoal(userId) {
   try { return clampDailyReviewGoal(localStorage.getItem(dailyGoalStorageKey(userId))); } catch { return DAILY_REVIEW_GOAL; }
 }
-
-const MASTERY = {
-  new: { label: "未学", className: "text-muted-foreground bg-background-elev" },
-  learning: { label: "学习中", className: "text-amber-300/90 bg-amber-400/10" },
-  familiar: { label: "熟悉", className: "text-sky-300/90 bg-sky-400/10" },
-  mastered: { label: "已掌握", className: "text-emerald-300/90 bg-emerald-400/10" },
-};
 
 const todayISO = () => localDateKey();
 const createSessionId = () => {
@@ -624,13 +618,6 @@ export default function Collection() {
   );
 }
 
-function typeLabel(t) {
-  if (t === "word") return "单词";
-  if (t === "phrase") return "短语";
-  if (t === "sentence") return "句子";
-  return "表达";
-}
-
 function streak(vocab) {
   const days = new Set();
   vocab.forEach((c) => {
@@ -652,24 +639,8 @@ function Seg({ active, onClick, children }) {
   );
 }
 
-function VocabCard({ c, onSelect, hideSource = false, fontScale = 1 }) {
-  const m = MASTERY[c.mastery_level] || MASTERY.new;
-  return (
-    <div className="rounded-lg border border-border/60 bg-card">
-      <button type="button" onClick={() => onSelect?.(c)} className="block w-full rounded-lg p-2 text-left touch-manipulation [-webkit-tap-highlight-color:transparent] active:bg-white/[0.04] md:rounded-xl md:p-4">
-        <p style={{ "--corpus-font-scale": fontScale }} className="font-display text-[calc(1.25rem*var(--corpus-font-scale))] font-semibold leading-snug text-foreground md:text-[calc(1.5rem*var(--corpus-font-scale))]">{c.expression_en || c.text_en}</p>
-        {(c.meaning_zh || c.text_zh) && <p style={{ "--corpus-font-scale": fontScale }} className="mt-1 text-[calc(0.875rem*var(--corpus-font-scale))] leading-snug text-foreground/75 md:text-[calc(1rem*var(--corpus-font-scale))]">{c.meaning_zh || c.text_zh}</p>}
-        <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px] md:mt-2.5 md:gap-1.5 md:text-xs">
-          <span className={`rounded-full px-1.5 py-0.5 md:px-2 ${m.className}`}>{m.label}</span>
-          {c.type && <span className="rounded-full bg-background-elev px-1.5 py-0.5 md:px-2">{typeLabel(c.type)}</span>}
-          {(c.error_count || 0) >= 1 && <span className="rounded-full bg-rose-500/10 px-1.5 py-0.5 text-rose-300/90 md:px-2">错 {c.error_count}</span>}
-          {(c.stage || 0) > 0 && <span className="rounded-full bg-mint/10 px-1.5 py-0.5 text-mint/90 md:px-2">{STAGE_LABELS[c.stage] || ""}</span>}
-          {c.timestamp && <span className="font-mono text-copper/70">{c.timestamp}</span>}
-        </div>
-        {!hideSource && c.source_movie_title && <p className="mt-1 text-[10px] text-muted-foreground/65 md:text-[11px]">— {c.source_movie_title}</p>}
-      </button>
-    </div>
-  );
+function VocabCard(props) {
+  return <VocabListCard {...props} />;
 }
 
 function ReviewHeader({ reviewed, total, phase, stage, errorRate, onExit }) {

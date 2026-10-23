@@ -1,7 +1,7 @@
 import { supabase, supabaseConfigured } from "./supabaseClient";
 
 export const articlesAvailable = () => Boolean(supabaseConfigured && supabase);
-const SUMMARY_COLUMNS = "id,rec_date,source_url,title,author,outlet,level,tags,summary_zh,read_at,favorited,created_at";
+const SUMMARY_COLUMNS = "id,rec_date,source_url,title,author,outlet,level,tags,summary_zh,read_at,favorited,folder,created_at";
 export async function listDailyArticles({ limit = 200 } = {}) {
   if (!articlesAvailable()) return [];
   const { data, error } = await supabase.from("daily_articles").select(SUMMARY_COLUMNS)
@@ -23,3 +23,4 @@ async function updateStatus(id, fields) {
 }
 export const markArticleRead = (id, readAt = new Date().toISOString()) => updateStatus(id, { read_at: readAt });
 export const setArticleFavorite = (id, favorited) => updateStatus(id, { favorited: Boolean(favorited) });
+export const setArticleFolder = (id, folder) => updateStatus(id, { folder: folder || "" });

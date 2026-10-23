@@ -15,7 +15,8 @@
       "type": "string",
       "enum": [
         "videos",
-        "films"
+        "films",
+        "articles"
       ],
       "title": "\u6240\u5c5e\u6807\u7b7e\u9875",
       "default": "videos"

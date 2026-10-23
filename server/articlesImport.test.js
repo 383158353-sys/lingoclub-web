@@ -54,7 +54,7 @@ test("import upserts only content for configured user and preserves status", asy
   assert.equal(res.statusCode, 200); assert.equal(res.body.updated, 1); assert.equal(res.body.inserted, 1); assert.equal(res.body.rejected.length, 1);
   assert.equal(db.calls.table, "daily_articles"); assert.equal(db.calls.options.onConflict, "user_id,rec_date,source_url");
   assert.deepEqual(db.calls.filters, [["user_id", env.RECOMMENDATIONS_IMPORT_USER_ID], ["rec_date", body.date]]);
-  for (const row of db.calls.records) { assert.equal(row.user_id, env.RECOMMENDATIONS_IMPORT_USER_ID); assert.equal("read_at" in row, false); assert.equal("favorited" in row, false); }
+  for (const row of db.calls.records) { assert.equal(row.user_id, env.RECOMMENDATIONS_IMPORT_USER_ID); assert.equal("read_at" in row, false); assert.equal("favorited" in row, false); assert.equal("folder" in row, false); }
 });
 test("invalid-only payload and unavailable database are rejected", async () => {
   let res = response(); await handleArticlesImport(req, res, { ...body, items: [{}] }, env); assert.equal(res.statusCode, 400);

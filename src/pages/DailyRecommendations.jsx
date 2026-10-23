@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import DailyArticleList from "@/components/study/DailyArticleList";
-import { CheckCircle2, Clock, Heart, Loader2, PlayCircle, RotateCw, Sparkles } from "lucide-react";
+import StatusFilterBar from "@/components/study/StatusFilterBar";
+import { CheckCircle2, Clock, Heart, Loader2, PlayCircle, Sparkles } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 import { useToast } from "@/components/ui/use-toast";
 import { localDateKey } from "@/lib/srs";
@@ -17,12 +18,7 @@ import {
   setRecommendationFavorite,
   youtubeThumbnail,
 } from "@/lib/dailyRecommendations";
-
-const FILTERS = [
-  { key: "all", label: "全部" },
-  { key: "unwatched", label: "未看" },
-  { key: "favorites", label: "收藏" },
-];
+import { filterByStatus, nextFavorited } from "@/lib/libraryFilters";
 
 function dateLabel(date, today) {
   if (date === today) return "今天";
@@ -72,7 +68,7 @@ export default function DailyRecommendations() {
   };
 
   const toggleFavorite = async (item) => {
-    const next = !item.favorited;
+    const next = nextFavorited(item);
     patchItem(item.id, { favorited: next });
     try {
       await setRecommendationFavorite(item.id, next);
@@ -82,9 +78,7 @@ export default function DailyRecommendations() {
     }
   };
 
-  const visible = useMemo(() => items.filter((item) => (
-    filter === "unwatched" ? !item.watched_at : filter === "favorites" ? item.favorited : true
-  )), [filter, items]);
+  const visible = useMemo(() => filterByStatus(items, filter, "watched_at"), [filter, items]);
   const groups = useMemo(() => groupRecommendationsByDate(visible, today), [today, visible]);
   const todayCount = items.filter((item) => item.rec_date === today).length;
 
@@ -109,22 +103,7 @@ export default function DailyRecommendations() {
         <EmptyState icon={Sparkles} title="云端服务未配置" description="需要配置 Supabase 后才能接收每日推荐。" />
       ) : tab === "articles" ? <DailyArticleList /> : (
         <>
-          <div className="mt-5 flex flex-wrap items-center gap-2 md:mt-8">
-            {FILTERS.map(({ key, label }) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setFilter(key)}
-                aria-pressed={filter === key}
-                className={`min-h-9 rounded-full border px-4 text-xs transition-colors ${filter === key ? "border-copper/60 bg-copper/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`}
-              >
-                {label}
-              </button>
-            ))}
-            <button type="button" onClick={load} disabled={loading} aria-label="刷新" className="ml-auto inline-flex min-h-9 items-center gap-1.5 rounded-full border border-border px-3 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50">
-              <RotateCw size={13} className={loading ? "animate-spin" : ""} /> 刷新
-            </button>
-          </div>
+          <StatusFilterBar value={filter} onChange={setFilter} onRefresh={load} loading={loading} refreshLabel="刷新" />
 
           {loading && !items.length ? (
             <div className="flex justify-center py-20"><Loader2 className="animate-spin text-muted-foreground" size={22} /></div>

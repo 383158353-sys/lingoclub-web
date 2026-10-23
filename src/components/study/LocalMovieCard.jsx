@@ -2,7 +2,7 @@ import React from "react";
 import { Image as BaseImage } from "@/components/ui/image";
 import LocalPosterImage from "@/components/study/LocalPosterImage";
 import { extractYouTubeId } from "@/lib/youtubeTranscriptClient";
-import { Film, Trash2, Check } from "lucide-react";
+import { Film, Trash2, Check, Heart } from "lucide-react";
 
 function getThumbUrl(meta) {
   if (meta.poster_url) return meta.poster_url;
@@ -13,7 +13,7 @@ function getThumbUrl(meta) {
   return null;
 }
 
-export default function LocalMovieCard({ meta, manageMode, selected, onToggleSelect, onOpen, onDelete, landscape }) {
+export default function LocalMovieCard({ meta, manageMode, selected, onToggleSelect, onOpen, onDelete, onToggleFavorite, landscape }) {
   const thumbUrl = getThumbUrl(meta);
   const aspectClass = landscape ? "aspect-video" : "aspect-[2/3]";
   const titleClass = landscape
@@ -41,6 +41,18 @@ export default function LocalMovieCard({ meta, manageMode, selected, onToggleSel
         </div>
         <h3 className={titleClass}>{meta.name}</h3>
       </button>
+      {onToggleFavorite && !manageMode && (
+        <button
+          type="button"
+          onClick={() => onToggleFavorite(meta)}
+          aria-pressed={Boolean(meta.favorited)}
+          aria-label={meta.favorited ? "取消收藏" : "收藏"}
+          title={meta.favorited ? "取消收藏" : "收藏"}
+          className={`absolute left-1.5 top-1.5 z-20 grid h-7 w-7 place-items-center rounded-full bg-black/55 backdrop-blur-sm ${meta.favorited ? "text-rose-400" : "text-white/85"}`}
+        >
+          <Heart size={14} fill={meta.favorited ? "currentColor" : "none"} />
+        </button>
+      )}
       {!manageMode && (
         <button
           type="button"
