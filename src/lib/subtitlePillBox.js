@@ -82,6 +82,22 @@ export function subtitleCueTop(boxHeight, textHeight) {
 }
 
 /**
+ * Box height for one cue at a fixed font.
+ * `textHeight` is the wrapped block. `frameHeight` is the height from the
+ * last corner drag, or 0 when the user has not set one.
+ * A cue that wraps past the frame grows the box down to the block. The font
+ * stays. A later cue that fits again shrinks the box back to the frame, so
+ * the extra row is not left empty. Shorter text keeps that frame and sits
+ * center-upper inside it.
+ */
+export function subtitleCueBoxHeight(textHeight, frameHeight = 0) {
+  const text = Math.max(SUBTITLE_HEIGHT_MIN, Math.ceil(Number(textHeight) || 0));
+  const frame = Math.max(0, Math.round(Number(frameHeight) || 0));
+  if (!(frame > 0)) return text;
+  return Math.max(frame, text);
+}
+
+/**
  * Fill a fixed box.
  * `measure(fontPx, lineHeight)` returns the text block's scrollHeight.
  * The search first takes the largest font that fits at the tightest leading
