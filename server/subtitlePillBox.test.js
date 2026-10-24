@@ -15,6 +15,7 @@ import {
   nextSubtitleBoxSize,
   nudgeSubtitleFont,
   readManualSubtitleFont,
+  subtitleCueTop,
   readSubtitleBoxAxis,
   subtitleTextPadX,
 } from "../src/lib/subtitlePillBox.js";
@@ -87,6 +88,17 @@ test("frost is a slight step up from the original bar, without a black gradient"
   assert.equal(SUBTITLE_FONT_DEFAULT, 22);
 });
 
+test("a shorter nudged cue sits above center inside the same box", () => {
+  const box = 180;
+  const text = 100;
+  const top = subtitleCueTop(box, text);
+  const textCenter = top + text / 2;
+  assert.ok(top > 12);
+  assert.ok(textCenter < box / 2);
+  assert.ok(box - (top + text) > top);
+  assert.equal(subtitleCueTop(box, box), 0);
+});
+
 test("manual font nudges stay in range and empty storage means auto-fit", () => {
   assert.equal(readManualSubtitleFont(null), null);
   assert.equal(readManualSubtitleFont(""), null);
@@ -103,6 +115,8 @@ test("the pill keeps box resize and font fit, and does not bring back the black 
   assert.equal(source.includes("nextSubtitleBoxSize"), true);
   assert.equal(source.includes("data-font-nudge"), true);
   assert.equal(source.includes("setManualFont(null)"), true);
+  assert.equal(source.includes("setBoxH(nextH)"), false);
+  assert.equal(source.includes("SUBTITLE_NUDGE_SPACE_ABOVE"), true);
   assert.equal(source.includes("PILL_FROST_TAIL"), false);
   assert.equal(source.includes("fontAfterVerticalDrag"), false);
   assert.equal(source.includes("A+"), false);

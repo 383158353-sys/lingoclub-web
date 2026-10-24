@@ -11,8 +11,14 @@ export const SUBTITLE_FONT_DEFAULT = 22;
 export const SUBTITLE_LINE_HEIGHT_MIN = 1.05;
 /** Loosest leading. After the font is chosen, leading opens until the block reaches the box. */
 export const SUBTITLE_LINE_HEIGHT_MAX = 2.2;
-/** Comfortable leading when the user nudges the font and the box hugs the text. */
+/** Comfortable leading when the user has nudged the font inside a fixed box. */
 export const SUBTITLE_LINE_HEIGHT = 1.2;
+/**
+ * Leftover vertical space is split above:below. The cue sits a little above
+ * the box center instead of hugging the top or leaving the whole gap underneath.
+ */
+export const SUBTITLE_NUDGE_SPACE_ABOVE = 2;
+export const SUBTITLE_NUDGE_SPACE_BELOW = 3;
 export const SUBTITLE_TEXT_PAD_Y = 4;
 export const SUBTITLE_FONT_NUDGE = 2;
 
@@ -64,6 +70,15 @@ export function readManualSubtitleFont(raw) {
 
 export function nudgeSubtitleFont(current, delta) {
   return clampSubtitleFont(Number(current) + Number(delta));
+}
+
+/** Top of a shorter cue inside a fixed box. More space stays below than above. */
+export function subtitleCueTop(boxHeight, textHeight) {
+  const box = Math.max(0, Number(boxHeight) || 0);
+  const text = Math.max(0, Math.min(box, Number(textHeight) || 0));
+  const leftover = box - text;
+  const parts = SUBTITLE_NUDGE_SPACE_ABOVE + SUBTITLE_NUDGE_SPACE_BELOW;
+  return leftover * SUBTITLE_NUDGE_SPACE_ABOVE / parts;
 }
 
 /**

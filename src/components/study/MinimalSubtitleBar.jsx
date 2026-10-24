@@ -14,6 +14,8 @@ import {
   SUBTITLE_FONT_NUDGE,
   SUBTITLE_HEIGHT_MIN,
   SUBTITLE_LINE_HEIGHT,
+  SUBTITLE_NUDGE_SPACE_ABOVE,
+  SUBTITLE_NUDGE_SPACE_BELOW,
   SUBTITLE_PILL_BACKGROUND,
   SUBTITLE_PILL_BLUR,
   SUBTITLE_PILL_SHADOW,
@@ -126,11 +128,8 @@ export default function MinimalSubtitleBar({
     };
     try {
       if (manualFont != null) {
-        const height = measure(manualFont, SUBTITLE_LINE_HEIGHT);
-        const nextH = Math.max(SUBTITLE_HEIGHT_MIN, height);
         setFittedFont((prev) => (prev === manualFont ? prev : manualFont));
         setLineHeight((prev) => (prev === SUBTITLE_LINE_HEIGHT ? prev : SUBTITLE_LINE_HEIGHT));
-        if (Math.abs(nextH - boxH) > 2) setBoxH(nextH);
         return;
       }
       if (!(boxH > 0)) {
@@ -319,15 +318,16 @@ export default function MinimalSubtitleBar({
       >
         {/* 台词在方框内水平、垂直居中；字号由宽高二分撑满 */}
         <div
-          className="flex w-full items-center justify-center"
-          style={{ display: "flex", alignItems: "center", justifyContent: "center", height: boxH > 0 ? "100%" : "auto", minHeight: boxH > 0 ? "100%" : 44 }}
+          className="flex w-full flex-col"
+          style={{ display: "flex", flexDirection: "column", width: "100%", height: boxH > 0 ? "100%" : "auto", minHeight: boxH > 0 ? "100%" : 44 }}
         >
+          {boxH > 0 && <div aria-hidden style={{ flex: `${SUBTITLE_NUDGE_SPACE_ABOVE} 1 0px`, minHeight: 0 }} />}
           <span
             ref={textRef}
             className="block min-w-0 text-center"
             style={{
               width: "100%",
-              alignSelf: "center",
+              flex: "0 0 auto",
               height: "auto",
               fontSize: `${shownFont}px`,
               lineHeight,
@@ -353,6 +353,7 @@ export default function MinimalSubtitleBar({
               );
             })}
           </span>
+          {boxH > 0 && <div aria-hidden style={{ flex: `${SUBTITLE_NUDGE_SPACE_BELOW} 1 0px`, minHeight: 0 }} />}
         </div>
 
         {/* 右侧字号微调：默认隐藏，悬停才出现一条细线，不是按钮 */}
