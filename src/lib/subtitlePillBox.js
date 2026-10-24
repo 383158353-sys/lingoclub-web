@@ -11,8 +11,14 @@ export const SUBTITLE_FONT_DEFAULT = 22;
 export const SUBTITLE_LINE_HEIGHT_MIN = 1.05;
 /** Loosest leading. After the font is chosen, leading opens until the block reaches the box. */
 export const SUBTITLE_LINE_HEIGHT_MAX = 2.2;
-/** Comfortable leading when the user nudges the font and the box hugs the text. */
+/** Comfortable leading when the user has nudged the font inside a fixed box. */
 export const SUBTITLE_LINE_HEIGHT = 1.2;
+/**
+ * Leftover vertical space is split above:below. The cue sits a little above
+ * the box center instead of hugging the top or leaving the whole gap underneath.
+ */
+export const SUBTITLE_NUDGE_SPACE_ABOVE = 2;
+export const SUBTITLE_NUDGE_SPACE_BELOW = 3;
 export const SUBTITLE_TEXT_PAD_Y = 4;
 export const SUBTITLE_FONT_NUDGE = 2;
 
@@ -64,6 +70,31 @@ export function readManualSubtitleFont(raw) {
 
 export function nudgeSubtitleFont(current, delta) {
   return clampSubtitleFont(Number(current) + Number(delta));
+}
+
+/** Top of a shorter cue inside a fixed box. More space stays below than above. */
+export function subtitleCueTop(boxHeight, textHeight) {
+  const box = Math.max(0, Number(boxHeight) || 0);
+  const text = Math.max(0, Math.min(box, Number(textHeight) || 0));
+  const leftover = box - text;
+  const parts = SUBTITLE_NUDGE_SPACE_ABOVE + SUBTITLE_NUDGE_SPACE_BELOW;
+  return leftover * SUBTITLE_NUDGE_SPACE_ABOVE / parts;
+}
+
+/**
+ * Box height for one cue at a fixed font.
+ * `textHeight` is the wrapped block. `frameHeight` is the height from the
+ * last corner drag, or 0 when the user has not set one.
+ * A cue that wraps past the frame grows the box down to the block. The font
+ * stays. A later cue that fits again shrinks the box back to the frame, so
+ * the extra row is not left empty. Shorter text keeps that frame and sits
+ * center-upper inside it.
+ */
+export function subtitleCueBoxHeight(textHeight, frameHeight = 0) {
+  const text = Math.max(SUBTITLE_HEIGHT_MIN, Math.ceil(Number(textHeight) || 0));
+  const frame = Math.max(0, Math.round(Number(frameHeight) || 0));
+  if (!(frame > 0)) return text;
+  return Math.max(frame, text);
 }
 
 /**

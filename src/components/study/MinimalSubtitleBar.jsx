@@ -14,6 +14,8 @@ import {
   SUBTITLE_FONT_NUDGE,
   SUBTITLE_HEIGHT_MIN,
   SUBTITLE_LINE_HEIGHT,
+  SUBTITLE_NUDGE_SPACE_ABOVE,
+  SUBTITLE_NUDGE_SPACE_BELOW,
   SUBTITLE_PILL_BACKGROUND,
   SUBTITLE_PILL_BLUR,
   SUBTITLE_PILL_SHADOW,
@@ -23,6 +25,7 @@ import {
   nudgeSubtitleFont,
   readManualSubtitleFont,
   readSubtitleBoxAxis,
+  subtitleCueBoxHeight,
   subtitleTextPadX,
 } from "@/lib/subtitlePillBox";
 
@@ -32,8 +35,10 @@ import {
 //
 // 字幕方框支持：
 //   · 移动：按住字幕背景区域拖拽（非文字、非按钮处），2D 自由移动，松手确认
-//   · 大小长宽：右下角拖拽手柄同时调节宽度和高度，
-//     字号二分查找，使整句撑满这个方框，松手确认
+//   · 大小长宽：右下角拖拽同时调节宽度和高度，字号撑满这个方框，松手确认
+//   · 字号：右侧悬停只改字号，方框宽高不动；字小于方框时文字略偏上居中
+//   · 换句：字号不动。这一句在当前字号下换行放不下时，方框向下增高一行；
+//     后面的句子行数变少时，高度收回拖好的默认高度，不留多出来的空行
 //   · 精读按钮：与字幕列表精读按钮功能相同（study.onStudyClick），半透明风格
 export default function MinimalSubtitleBar({
   study,
@@ -61,18 +66,23 @@ export default function MinimalSubtitleBar({
   const [posY, setPosY] = useState(() => {
     try { const v = parseFloat(localStorage.getItem(`${storageKey}_y`)); return Number.isFinite(v) ? v : 0.62; } catch { return 0.62; }
   });
-  // 方框宽高（px）：右下角拖拽同时调节，字号自动撑满
+  // 方框宽度，和用户拖出的默认高度。显示高度可以在这个默认值上临时长高。
   const [boxW, setBoxW] = useState(() => {
     try { return readSubtitleBoxAxis(localStorage.getItem(`${storageSizeKey}_w`)); } catch { return 0; }
   });
-  const [boxH, setBoxH] = useState(() => {
+  const [frameH, setFrameH] = useState(() => {
     try { return readSubtitleBoxAxis(localStorage.getItem(`${storageSizeKey}_h`)); } catch { return 0; }
   });
+  const [boxH, setBoxH] = useState(frameH);
   const [fittedFont, setFittedFont] = useState(SUBTITLE_FONT_DEFAULT);
   const [lineHeight, setLineHeight] = useState(SUBTITLE_LINE_HEIGHT);
-  // null = 按方框自动撑满；有值 = 右侧微调过的字号，方框高度改去贴合文字
+  // null = 拖框时按方框撑满；有值 = 右侧微调过的字号，微调本身不改方框
   const [manualFont, setManualFont] = useState(() => {
     try { return readManualSubtitleFont(localStorage.getItem(`${storageSizeKey}_manual`)); } catch { return null; }
+  });
+  // 拖框松手后锁住的字号。换句只改高度，不再为了塞进方框去缩小字号。
+  const [lockedFont, setLockedFont] = useState(() => {
+    try { return readManualSubtitleFont(localStorage.getItem(`${storageSizeKey}_fit`)); } catch { return null; }
   });
 
   const [word, setWord] = useState(null);
@@ -81,11 +91,16 @@ export default function MinimalSubtitleBar({
   const { toast } = useToast();
   const pillRef = useRef(null);
   const textRef = useRef(null);
+  const dragging = useRef(false);
+  const pinHeight = useRef(manualFont != null);
+  const seenCue = useRef(null);
+  const fittedRef = useRef(SUBTITLE_FONT_DEFAULT);
+  const leadingRef = useRef(SUBTITLE_LINE_HEIGHT);
 
   useEffect(() => { try { localStorage.setItem(`${storageKey}_x`, String(posX)); } catch { /* noop */ } }, [posX, storageKey]);
   useEffect(() => { try { localStorage.setItem(`${storageKey}_y`, String(posY)); } catch { /* noop */ } }, [posY, storageKey]);
   useEffect(() => { try { localStorage.setItem(`${storageSizeKey}_w`, String(boxW)); } catch { /* noop */ } }, [boxW, storageSizeKey]);
-  useEffect(() => { try { localStorage.setItem(`${storageSizeKey}_h`, String(boxH)); } catch { /* noop */ } }, [boxH, storageSizeKey]);
+  useEffect(() => { try { localStorage.setItem(`${storageSizeKey}_h`, String(frameH)); } catch { /* noop */ } }, [frameH, storageSizeKey]);
   useEffect(() => {
     try {
       const key = `${storageSizeKey}_manual`;
@@ -93,13 +108,23 @@ export default function MinimalSubtitleBar({
       else localStorage.setItem(key, String(manualFont));
     } catch { /* noop */ }
   }, [manualFont, storageSizeKey]);
+  useEffect(() => {
+    try {
+      const key = `${storageSizeKey}_fit`;
+      if (lockedFont == null) localStorage.removeItem(key);
+      else localStorage.setItem(key, String(lockedFont));
+    } catch { /* noop */ }
+  }, [lockedFont, storageSizeKey]);
 
   // 离屏测量，避免方框自身的固定高度把 scrollHeight 卡住。
-  // 先用最紧行距放大字号，再把行距撑到方框底边，底下只留几像素。
+  // 拖框时字号撑满；微调时只改字号；换句时字号不动，高度跟着整句走。
   useLayoutEffect(() => {
     const host = textRef.current;
     if (!host) return;
     const cue = active?.text_en || "";
+    const cueChanged = seenCue.current !== null && seenCue.current !== cue;
+    if (cueChanged) pinHeight.current = false;
+    seenCue.current = cue;
     if (!(boxW > 0) || !cue) {
       setFittedFont((prev) => (prev === SUBTITLE_FONT_DEFAULT ? prev : SUBTITLE_FONT_DEFAULT));
       setLineHeight((prev) => (prev === SUBTITLE_LINE_HEIGHT ? prev : SUBTITLE_LINE_HEIGHT));
@@ -117,6 +142,7 @@ export default function MinimalSubtitleBar({
     probe.style.fontWeight = "400";
     probe.style.wordBreak = "break-word";
     probe.style.fontFamily = getComputedStyle(host).fontFamily;
+    probe.style.textAlign = "center";
     probe.textContent = cue;
     document.body.appendChild(probe);
     const measure = (fontPx, lh) => {
@@ -124,27 +150,42 @@ export default function MinimalSubtitleBar({
       probe.style.lineHeight = String(lh);
       return probe.scrollHeight;
     };
+    const applyFont = (size, leading) => {
+      fittedRef.current = size;
+      leadingRef.current = leading;
+      setFittedFont((prev) => (prev === size ? prev : size));
+      setLineHeight((prev) => (Math.abs(prev - leading) < 0.005 ? prev : leading));
+    };
     try {
-      if (manualFont != null) {
-        const height = measure(manualFont, SUBTITLE_LINE_HEIGHT);
-        const nextH = Math.max(SUBTITLE_HEIGHT_MIN, height);
-        setFittedFont((prev) => (prev === manualFont ? prev : manualFont));
-        setLineHeight((prev) => (prev === SUBTITLE_LINE_HEIGHT ? prev : SUBTITLE_LINE_HEIGHT));
-        if (Math.abs(nextH - boxH) > 2) setBoxH(nextH);
+      if (dragging.current && frameH > 0) {
+        const fit = fitSubtitleBlock(measure, Math.max(SUBTITLE_HEIGHT_MIN, frameH - 2));
+        applyFont(fit.font, fit.lineHeight);
+        pinHeight.current = true;
         return;
       }
-      if (!(boxH > 0)) {
-        setFittedFont((prev) => (prev === SUBTITLE_FONT_DEFAULT ? prev : SUBTITLE_FONT_DEFAULT));
-        setLineHeight((prev) => (prev === SUBTITLE_LINE_HEIGHT ? prev : SUBTITLE_LINE_HEIGHT));
+      if (pinHeight.current && (manualFont != null || lockedFont != null)) {
+        const size = manualFont ?? lockedFont;
+        applyFont(size, manualFont != null ? SUBTITLE_LINE_HEIGHT : leadingRef.current);
         return;
       }
-      const fit = fitSubtitleBlock(measure, Math.max(SUBTITLE_HEIGHT_MIN, boxH - 2));
-      setFittedFont((prev) => (prev === fit.font ? prev : fit.font));
-      setLineHeight((prev) => (Math.abs(prev - fit.lineHeight) < 0.005 ? prev : fit.lineHeight));
+      if (manualFont == null && lockedFont == null && frameH > 0) {
+        const fit = fitSubtitleBlock(measure, Math.max(SUBTITLE_HEIGHT_MIN, frameH - 2));
+        applyFont(fit.font, fit.lineHeight);
+        setLockedFont(fit.font);
+        setBoxH(frameH);
+        pinHeight.current = true;
+        return;
+      }
+      const size = manualFont ?? lockedFont ?? SUBTITLE_FONT_DEFAULT;
+      const leading = SUBTITLE_LINE_HEIGHT;
+      const textH = measure(size, leading);
+      const cueHeight = subtitleCueBoxHeight(textH, frameH);
+      applyFont(size, leading);
+      setBoxH((prev) => (prev === cueHeight ? prev : cueHeight));
     } finally {
       probe.remove();
     }
-  }, [boxW, boxH, manualFont, active?.text_en]);
+  }, [boxW, frameH, manualFont, lockedFont, active?.text_en]);
 
   // 移动：按住字幕背景拖拽（文字/按钮不触发），2D 自由移动，松手确认
   const startMove = (e) => {
@@ -178,13 +219,22 @@ export default function MinimalSubtitleBar({
     const sy = e.clientY;
     const startW = boxW || pillRef.current?.offsetWidth || 320;
     const startH = boxH || pillRef.current?.offsetHeight || 60;
+    dragging.current = true;
+    pinHeight.current = true;
     const move = (ev) => {
       const next = nextSubtitleBoxSize(startW, startH, ev.clientX - sx, ev.clientY - sy);
       setManualFont(null);
       setBoxW(next.width);
+      setFrameH(next.height);
       setBoxH(next.height);
     };
-    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    const up = () => {
+      dragging.current = false;
+      pinHeight.current = true;
+      setLockedFont(fittedRef.current);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
@@ -276,7 +326,10 @@ export default function MinimalSubtitleBar({
   const padX = subtitleTextPadX(boxW);
   const shownFont = manualFont ?? fittedFont;
   const nudgeFont = (delta) => {
-    setManualFont(nudgeSubtitleFont(shownFont, delta));
+    pinHeight.current = true;
+    leadingRef.current = SUBTITLE_LINE_HEIGHT;
+    const from = fittedRef.current || shownFont;
+    setManualFont((prev) => nudgeSubtitleFont(prev ?? from, delta));
   };
   const onFontWheel = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -319,15 +372,16 @@ export default function MinimalSubtitleBar({
       >
         {/* 台词在方框内水平、垂直居中；字号由宽高二分撑满 */}
         <div
-          className="flex w-full items-center justify-center"
-          style={{ display: "flex", alignItems: "center", justifyContent: "center", height: boxH > 0 ? "100%" : "auto", minHeight: boxH > 0 ? "100%" : 44 }}
+          className="flex w-full flex-col"
+          style={{ display: "flex", flexDirection: "column", width: "100%", height: boxH > 0 ? "100%" : "auto", minHeight: boxH > 0 ? "100%" : 44 }}
         >
+          {boxH > 0 && <div aria-hidden style={{ flex: `${SUBTITLE_NUDGE_SPACE_ABOVE} 1 0px`, minHeight: 0 }} />}
           <span
             ref={textRef}
             className="block min-w-0 text-center"
             style={{
               width: "100%",
-              alignSelf: "center",
+              flex: "0 0 auto",
               height: "auto",
               fontSize: `${shownFont}px`,
               lineHeight,
@@ -353,6 +407,7 @@ export default function MinimalSubtitleBar({
               );
             })}
           </span>
+          {boxH > 0 && <div aria-hidden style={{ flex: `${SUBTITLE_NUDGE_SPACE_BELOW} 1 0px`, minHeight: 0 }} />}
         </div>
 
         {/* 右侧字号微调：默认隐藏，悬停才出现一条细线，不是按钮 */}
