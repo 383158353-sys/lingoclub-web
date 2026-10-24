@@ -7,7 +7,14 @@ export const SUBTITLE_FONT_MIN = 10;
 export const SUBTITLE_FONT_MAX = 320;
 /** Used only before the user has dragged a box. A dragged box refits from scratch. */
 export const SUBTITLE_FONT_DEFAULT = 22;
-export const SUBTITLE_LINE_HEIGHT = 1.375;
+/** Tightest leading. The fit starts here so glyphs can grow before an extra wrap overshoots. */
+export const SUBTITLE_LINE_HEIGHT_MIN = 1.05;
+/** Loosest leading. After the font is chosen, leading opens until the block reaches the box. */
+export const SUBTITLE_LINE_HEIGHT_MAX = 2.2;
+/** Comfortable leading when the user nudges the font and the box hugs the text. */
+export const SUBTITLE_LINE_HEIGHT = 1.2;
+export const SUBTITLE_TEXT_PAD_Y = 4;
+export const SUBTITLE_FONT_NUDGE = 2;
 
 /** Original frosted bar, with a small bump so burned-in captions sit a little further back. */
 export const SUBTITLE_PILL_BACKGROUND = "rgba(8,6,4,0.62)";
@@ -42,28 +49,66 @@ export function nextSubtitleBoxSize(startW, startH, dx, dy) {
   };
 }
 
+export function clampSubtitleFont(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return SUBTITLE_FONT_DEFAULT;
+  return Math.max(SUBTITLE_FONT_MIN, Math.min(SUBTITLE_FONT_MAX, n));
+}
+
+/** A saved manual size, or null when the box should auto-fit. Ignores empty values. */
+export function readManualSubtitleFont(raw) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return clampSubtitleFont(n);
+}
+
+export function nudgeSubtitleFont(current, delta) {
+  return clampSubtitleFont(Number(current) + Number(delta));
+}
+
 /**
- * Largest integer font whose measured block still fits in `boxHeight`.
- * `measure(fontPx)` returns the text block's scrollHeight at that size
- * (padding included). A taller box therefore resolves to a larger font.
+ * Fill a fixed box.
+ * `measure(fontPx, lineHeight)` returns the text block's scrollHeight.
+ * The search first takes the largest font that fits at the tightest leading
+ * (so a wrap cliff cannot freeze the type too small), then opens the leading
+ * until the block reaches the bottom of the box.
  */
-export function fitFontSizeToBox(measure, boxHeight, options = {}) {
-  const min = options.min ?? SUBTITLE_FONT_MIN;
-  const max = options.max ?? SUBTITLE_FONT_MAX;
+export function fitSubtitleBlock(measure, boxHeight, options = {}) {
+  const minFont = options.minFont ?? SUBTITLE_FONT_MIN;
+  const maxFont = options.maxFont ?? SUBTITLE_FONT_MAX;
+  const minLh = options.minLineHeight ?? SUBTITLE_LINE_HEIGHT_MIN;
+  const maxLh = options.maxLineHeight ?? SUBTITLE_LINE_HEIGHT_MAX;
   const slack = options.slack ?? 1;
   const height = Number(boxHeight);
-  const limit = Math.max(min, Math.min(max, Math.floor(Number.isFinite(height) ? height : min)));
-  let lo = min;
-  let hi = limit;
-  let best = min;
+  const fontLimit = Math.max(minFont, Math.min(maxFont, Math.floor(Number.isFinite(height) ? height : minFont)));
+  let lo = minFont;
+  let hi = fontLimit;
+  let font = minFont;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (Number(measure(mid)) <= height + slack) {
-      best = mid;
+    if (Number(measure(mid, minLh)) <= height + slack) {
+      font = mid;
       lo = mid + 1;
     } else {
       hi = mid - 1;
     }
   }
-  return best;
+  let lhLo = Math.round(minLh * 100);
+  let lhHi = Math.round(maxLh * 100);
+  let lineHeight = minLh;
+  while (lhLo <= lhHi) {
+    const mid = (lhLo + lhHi) >> 1;
+    const lh = mid / 100;
+    if (Number(measure(font, lh)) <= height + slack) {
+      lineHeight = lh;
+      lhLo = mid + 1;
+    } else {
+      lhHi = mid - 1;
+    }
+  }
+  return {
+    font,
+    lineHeight,
+    height: Number(measure(font, lineHeight)),
+  };
 }

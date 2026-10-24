@@ -11,12 +11,17 @@ import { safeAIErrorMessage } from "@/lib/aiSettings";
 import { normalizeSourceCue } from "@/lib/vocabularySourceCue";
 import {
   SUBTITLE_FONT_DEFAULT,
+  SUBTITLE_FONT_NUDGE,
+  SUBTITLE_HEIGHT_MIN,
   SUBTITLE_LINE_HEIGHT,
   SUBTITLE_PILL_BACKGROUND,
   SUBTITLE_PILL_BLUR,
   SUBTITLE_PILL_SHADOW,
-  fitFontSizeToBox,
+  SUBTITLE_TEXT_PAD_Y,
+  fitSubtitleBlock,
   nextSubtitleBoxSize,
+  nudgeSubtitleFont,
+  readManualSubtitleFont,
   readSubtitleBoxAxis,
   subtitleTextPadX,
 } from "@/lib/subtitlePillBox";
@@ -64,6 +69,11 @@ export default function MinimalSubtitleBar({
     try { return readSubtitleBoxAxis(localStorage.getItem(`${storageSizeKey}_h`)); } catch { return 0; }
   });
   const [fittedFont, setFittedFont] = useState(SUBTITLE_FONT_DEFAULT);
+  const [lineHeight, setLineHeight] = useState(SUBTITLE_LINE_HEIGHT);
+  // null = 按方框自动撑满；有值 = 右侧微调过的字号，方框高度改去贴合文字
+  const [manualFont, setManualFont] = useState(() => {
+    try { return readManualSubtitleFont(localStorage.getItem(`${storageSizeKey}_manual`)); } catch { return null; }
+  });
 
   const [word, setWord] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -76,29 +86,69 @@ export default function MinimalSubtitleBar({
   useEffect(() => { try { localStorage.setItem(`${storageKey}_y`, String(posY)); } catch { /* noop */ } }, [posY, storageKey]);
   useEffect(() => { try { localStorage.setItem(`${storageSizeKey}_w`, String(boxW)); } catch { /* noop */ } }, [boxW, storageSizeKey]);
   useEffect(() => { try { localStorage.setItem(`${storageSizeKey}_h`, String(boxH)); } catch { /* noop */ } }, [boxH, storageSizeKey]);
+  useEffect(() => {
+    try {
+      const key = `${storageSizeKey}_manual`;
+      if (manualFont == null) localStorage.removeItem(key);
+      else localStorage.setItem(key, String(manualFont));
+    } catch { /* noop */ }
+  }, [manualFont, storageSizeKey]);
 
-  // 在给定宽高内二分查找最大字号，让整句的行框撑满方框高度
+  // 离屏测量，避免方框自身的固定高度把 scrollHeight 卡住。
+  // 先用最紧行距放大字号，再把行距撑到方框底边，底下只留几像素。
   useLayoutEffect(() => {
-    const el = textRef.current;
-    if (!el) return;
-    if (!(boxW > 0) || !(boxH > 0)) {
+    const host = textRef.current;
+    if (!host) return;
+    const cue = active?.text_en || "";
+    if (!(boxW > 0) || !cue) {
       setFittedFont((prev) => (prev === SUBTITLE_FONT_DEFAULT ? prev : SUBTITLE_FONT_DEFAULT));
+      setLineHeight((prev) => (prev === SUBTITLE_LINE_HEIGHT ? prev : SUBTITLE_LINE_HEIGHT));
       return;
     }
-    const previousVisibility = el.style.visibility;
-    el.style.visibility = "hidden";
-    const best = fitFontSizeToBox((fontPx) => {
-      el.style.fontSize = `${fontPx}px`;
-      return el.scrollHeight;
-    }, boxH);
-    el.style.fontSize = `${best}px`;
-    el.style.visibility = previousVisibility;
-    setFittedFont((prev) => (prev === best ? prev : best));
-  }, [boxW, boxH, active?.text_en]);
+    const padX = subtitleTextPadX(boxW);
+    const probe = document.createElement("div");
+    probe.style.position = "fixed";
+    probe.style.left = "-10000px";
+    probe.style.top = "0";
+    probe.style.visibility = "hidden";
+    probe.style.boxSizing = "border-box";
+    probe.style.width = `${boxW}px`;
+    probe.style.padding = `${SUBTITLE_TEXT_PAD_Y}px ${padX}px`;
+    probe.style.fontWeight = "400";
+    probe.style.wordBreak = "break-word";
+    probe.style.fontFamily = getComputedStyle(host).fontFamily;
+    probe.textContent = cue;
+    document.body.appendChild(probe);
+    const measure = (fontPx, lh) => {
+      probe.style.fontSize = `${fontPx}px`;
+      probe.style.lineHeight = String(lh);
+      return probe.scrollHeight;
+    };
+    try {
+      if (manualFont != null) {
+        const height = measure(manualFont, SUBTITLE_LINE_HEIGHT);
+        const nextH = Math.max(SUBTITLE_HEIGHT_MIN, height);
+        setFittedFont((prev) => (prev === manualFont ? prev : manualFont));
+        setLineHeight((prev) => (prev === SUBTITLE_LINE_HEIGHT ? prev : SUBTITLE_LINE_HEIGHT));
+        if (Math.abs(nextH - boxH) > 2) setBoxH(nextH);
+        return;
+      }
+      if (!(boxH > 0)) {
+        setFittedFont((prev) => (prev === SUBTITLE_FONT_DEFAULT ? prev : SUBTITLE_FONT_DEFAULT));
+        setLineHeight((prev) => (prev === SUBTITLE_LINE_HEIGHT ? prev : SUBTITLE_LINE_HEIGHT));
+        return;
+      }
+      const fit = fitSubtitleBlock(measure, Math.max(SUBTITLE_HEIGHT_MIN, boxH - 2));
+      setFittedFont((prev) => (prev === fit.font ? prev : fit.font));
+      setLineHeight((prev) => (Math.abs(prev - fit.lineHeight) < 0.005 ? prev : fit.lineHeight));
+    } finally {
+      probe.remove();
+    }
+  }, [boxW, boxH, manualFont, active?.text_en]);
 
   // 移动：按住字幕背景拖拽（文字/按钮不触发），2D 自由移动，松手确认
   const startMove = (e) => {
-    if (e.target.closest("[data-word]") || e.target.closest("button") || e.target.closest("[data-resize]")) return;
+    if (e.target.closest("[data-word]") || e.target.closest("button") || e.target.closest("[data-resize]") || e.target.closest("[data-font-nudge]")) return;
     e.preventDefault();
     e.stopPropagation();
     const parent = pillRef.current?.parentElement;
@@ -130,6 +180,7 @@ export default function MinimalSubtitleBar({
     const startH = boxH || pillRef.current?.offsetHeight || 60;
     const move = (ev) => {
       const next = nextSubtitleBoxSize(startW, startH, ev.clientX - sx, ev.clientY - sy);
+      setManualFont(null);
       setBoxW(next.width);
       setBoxH(next.height);
     };
@@ -223,6 +274,17 @@ export default function MinimalSubtitleBar({
   const words = active.text_en.split(/(\s+)/);
   const popoverBelow = posY < 0.55;
   const padX = subtitleTextPadX(boxW);
+  const shownFont = manualFont ?? fittedFont;
+  const nudgeFont = (delta) => {
+    setManualFont(nudgeSubtitleFont(shownFont, delta));
+  };
+  const onFontWheel = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (e.clientX < rect.right - 64) return;
+    e.preventDefault();
+    e.stopPropagation();
+    nudgeFont(e.deltaY < 0 ? SUBTITLE_FONT_NUDGE : -SUBTITLE_FONT_NUDGE);
+  };
 
   // 精读按钮：与字幕列表精读按钮功能相同——调用 study.onStudyClick(active)
   const handleStudy = (e) => {
@@ -240,7 +302,8 @@ export default function MinimalSubtitleBar({
       <div
         data-bubble
         onPointerDown={startMove}
-        className="relative cursor-move touch-none text-white"
+        onWheel={onFontWheel}
+        className="group relative cursor-move touch-none text-white"
         style={{
           width: boxW > 0 ? `${boxW}px` : "auto",
           height: boxH > 0 ? `${boxH}px` : "auto",
@@ -257,19 +320,21 @@ export default function MinimalSubtitleBar({
         {/* 台词在方框内水平、垂直居中；字号由宽高二分撑满 */}
         <div
           className="flex w-full items-center justify-center"
-          style={{ height: boxH > 0 ? "100%" : "auto", minHeight: boxH > 0 ? "100%" : 44 }}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", height: boxH > 0 ? "100%" : "auto", minHeight: boxH > 0 ? "100%" : 44 }}
         >
           <span
             ref={textRef}
             className="block min-w-0 text-center"
             style={{
               width: "100%",
-              fontSize: `${fittedFont}px`,
-              lineHeight: SUBTITLE_LINE_HEIGHT,
+              alignSelf: "center",
+              height: "auto",
+              fontSize: `${shownFont}px`,
+              lineHeight,
               fontWeight: 400,
               wordBreak: "break-word",
               boxSizing: "border-box",
-              padding: `6px ${padX}px`,
+              padding: `${SUBTITLE_TEXT_PAD_Y}px ${padX}px`,
             }}
           >
             {words.map((seg, i) => {
@@ -288,6 +353,33 @@ export default function MinimalSubtitleBar({
               );
             })}
           </span>
+        </div>
+
+        {/* 右侧字号微调：默认隐藏，悬停才出现一条细线，不是按钮 */}
+        <div
+          data-font-nudge
+          className="pointer-events-none absolute bottom-4 right-1 top-1 z-20 w-11 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100"
+        >
+          <div
+            data-font-nudge
+            onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onClick={(e) => { e.stopPropagation(); nudgeFont(SUBTITLE_FONT_NUDGE); }}
+            className="absolute inset-x-0 top-0 cursor-ns-resize"
+            style={{ height: "calc(50% - 22px)" }}
+            aria-label="放大字幕"
+          >
+            <span data-font-nudge className="absolute left-1/2 top-1/2 h-px w-2.5 -translate-x-1/2 bg-white/40" />
+          </div>
+          <div
+            data-font-nudge
+            onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onClick={(e) => { e.stopPropagation(); nudgeFont(-SUBTITLE_FONT_NUDGE); }}
+            className="absolute inset-x-0 bottom-0 cursor-ns-resize"
+            style={{ height: "calc(50% - 22px)" }}
+            aria-label="缩小字幕"
+          >
+            <span data-font-nudge className="absolute left-1/2 top-1/2 h-px w-2.5 -translate-x-1/2 bg-white/40" />
+          </div>
         </div>
 
         {/* 精读按钮保持原来的 14px 图标和半透明颜色，脱离文档流以免把居中台词挤偏 */}
