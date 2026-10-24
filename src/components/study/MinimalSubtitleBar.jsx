@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { saveVocabularyEntry } from "@/lib/vocabularySources";
 import { invokeAI } from "@/lib/localApi";
 import { Loader2, Bookmark, BookmarkCheck, BookOpen, Repeat } from "lucide-react";
@@ -11,10 +11,19 @@ import { safeAIErrorMessage } from "@/lib/aiSettings";
 import { normalizeSourceCue } from "@/lib/vocabularySourceCue";
 import {
   SUBTITLE_FONT_DEFAULT,
-  SUBTITLE_WIDTH_MIN,
-  fontAfterVerticalDrag,
-  readSubtitleBoxWidth,
-  readSubtitleFontSize,
+  SUBTITLE_FONT_NUDGE,
+  SUBTITLE_HEIGHT_MIN,
+  SUBTITLE_LINE_HEIGHT,
+  SUBTITLE_PILL_BACKGROUND,
+  SUBTITLE_PILL_BLUR,
+  SUBTITLE_PILL_SHADOW,
+  SUBTITLE_TEXT_PAD_Y,
+  fitSubtitleBlock,
+  nextSubtitleBoxSize,
+  nudgeSubtitleFont,
+  readManualSubtitleFont,
+  readSubtitleBoxAxis,
+  subtitleTextPadX,
 } from "@/lib/subtitlePillBox";
 
 // 悬浮字幕：只渲染当前激活的那一句台词（随播放进度自动切换），
@@ -23,10 +32,8 @@ import {
 //
 // 字幕方框支持：
 //   · 移动：按住字幕背景区域拖拽（非文字、非按钮处），2D 自由移动，松手确认
-//   · 宽度：右下角手柄的水平分量设置换行宽度（最小约 120px），写入 `${storageSizeKey}_w`
-//   · 字号：垂直分量调节首选字号（14–48，约每 2px 拖拽 1px 字号），写入 `_font`
-//     没有 `_font` 时，旧的硬裁切高度 `_h` 会换算成字号一次，之后不再用高度裁切
-//   · 高度：按当前宽度和字号自动增高（一行或两行以上都向下长），不缩小字号去塞进短框
+//   · 大小长宽：右下角拖拽手柄同时调节宽度和高度，
+//     字号二分查找，使整句撑满这个方框，松手确认
 //   · 精读按钮：与字幕列表精读按钮功能相同（study.onStudyClick），半透明风格
 export default function MinimalSubtitleBar({
   study,
@@ -54,18 +61,18 @@ export default function MinimalSubtitleBar({
   const [posY, setPosY] = useState(() => {
     try { const v = parseFloat(localStorage.getItem(`${storageKey}_y`)); return Number.isFinite(v) ? v : 0.62; } catch { return 0.62; }
   });
-  // 换行宽度（px）。0 = 尚未拖过，用父容器的 min(80%, 640px)。
+  // 方框宽高（px）：右下角拖拽同时调节，字号自动撑满
   const [boxW, setBoxW] = useState(() => {
-    try { return readSubtitleBoxWidth(localStorage.getItem(`${storageSizeKey}_w`)); } catch { return 0; }
+    try { return readSubtitleBoxAxis(localStorage.getItem(`${storageSizeKey}_w`)); } catch { return 0; }
   });
-  // 首选字号。高度始终随内容，不再把 `_h` 当成裁切高度。
-  const [fontSize, setFontSize] = useState(() => {
-    try {
-      return readSubtitleFontSize(
-        localStorage.getItem(`${storageSizeKey}_font`),
-        localStorage.getItem(`${storageSizeKey}_h`),
-      );
-    } catch { return SUBTITLE_FONT_DEFAULT; }
+  const [boxH, setBoxH] = useState(() => {
+    try { return readSubtitleBoxAxis(localStorage.getItem(`${storageSizeKey}_h`)); } catch { return 0; }
+  });
+  const [fittedFont, setFittedFont] = useState(SUBTITLE_FONT_DEFAULT);
+  const [lineHeight, setLineHeight] = useState(SUBTITLE_LINE_HEIGHT);
+  // null = 按方框自动撑满；有值 = 右侧微调过的字号，方框高度改去贴合文字
+  const [manualFont, setManualFont] = useState(() => {
+    try { return readManualSubtitleFont(localStorage.getItem(`${storageSizeKey}_manual`)); } catch { return null; }
   });
 
   const [word, setWord] = useState(null);
@@ -73,15 +80,75 @@ export default function MinimalSubtitleBar({
   const [detailWord, setDetailWord] = useState(null);
   const { toast } = useToast();
   const pillRef = useRef(null);
+  const textRef = useRef(null);
 
   useEffect(() => { try { localStorage.setItem(`${storageKey}_x`, String(posX)); } catch { /* noop */ } }, [posX, storageKey]);
   useEffect(() => { try { localStorage.setItem(`${storageKey}_y`, String(posY)); } catch { /* noop */ } }, [posY, storageKey]);
   useEffect(() => { try { localStorage.setItem(`${storageSizeKey}_w`, String(boxW)); } catch { /* noop */ } }, [boxW, storageSizeKey]);
-  useEffect(() => { try { localStorage.setItem(`${storageSizeKey}_font`, String(fontSize)); } catch { /* noop */ } }, [fontSize, storageSizeKey]);
+  useEffect(() => { try { localStorage.setItem(`${storageSizeKey}_h`, String(boxH)); } catch { /* noop */ } }, [boxH, storageSizeKey]);
+  useEffect(() => {
+    try {
+      const key = `${storageSizeKey}_manual`;
+      if (manualFont == null) localStorage.removeItem(key);
+      else localStorage.setItem(key, String(manualFont));
+    } catch { /* noop */ }
+  }, [manualFont, storageSizeKey]);
+
+  // 离屏测量，避免方框自身的固定高度把 scrollHeight 卡住。
+  // 先用最紧行距放大字号，再把行距撑到方框底边，底下只留几像素。
+  useLayoutEffect(() => {
+    const host = textRef.current;
+    if (!host) return;
+    const cue = active?.text_en || "";
+    if (!(boxW > 0) || !cue) {
+      setFittedFont((prev) => (prev === SUBTITLE_FONT_DEFAULT ? prev : SUBTITLE_FONT_DEFAULT));
+      setLineHeight((prev) => (prev === SUBTITLE_LINE_HEIGHT ? prev : SUBTITLE_LINE_HEIGHT));
+      return;
+    }
+    const padX = subtitleTextPadX(boxW);
+    const probe = document.createElement("div");
+    probe.style.position = "fixed";
+    probe.style.left = "-10000px";
+    probe.style.top = "0";
+    probe.style.visibility = "hidden";
+    probe.style.boxSizing = "border-box";
+    probe.style.width = `${boxW}px`;
+    probe.style.padding = `${SUBTITLE_TEXT_PAD_Y}px ${padX}px`;
+    probe.style.fontWeight = "400";
+    probe.style.wordBreak = "break-word";
+    probe.style.fontFamily = getComputedStyle(host).fontFamily;
+    probe.textContent = cue;
+    document.body.appendChild(probe);
+    const measure = (fontPx, lh) => {
+      probe.style.fontSize = `${fontPx}px`;
+      probe.style.lineHeight = String(lh);
+      return probe.scrollHeight;
+    };
+    try {
+      if (manualFont != null) {
+        const height = measure(manualFont, SUBTITLE_LINE_HEIGHT);
+        const nextH = Math.max(SUBTITLE_HEIGHT_MIN, height);
+        setFittedFont((prev) => (prev === manualFont ? prev : manualFont));
+        setLineHeight((prev) => (prev === SUBTITLE_LINE_HEIGHT ? prev : SUBTITLE_LINE_HEIGHT));
+        if (Math.abs(nextH - boxH) > 2) setBoxH(nextH);
+        return;
+      }
+      if (!(boxH > 0)) {
+        setFittedFont((prev) => (prev === SUBTITLE_FONT_DEFAULT ? prev : SUBTITLE_FONT_DEFAULT));
+        setLineHeight((prev) => (prev === SUBTITLE_LINE_HEIGHT ? prev : SUBTITLE_LINE_HEIGHT));
+        return;
+      }
+      const fit = fitSubtitleBlock(measure, Math.max(SUBTITLE_HEIGHT_MIN, boxH - 2));
+      setFittedFont((prev) => (prev === fit.font ? prev : fit.font));
+      setLineHeight((prev) => (Math.abs(prev - fit.lineHeight) < 0.005 ? prev : fit.lineHeight));
+    } finally {
+      probe.remove();
+    }
+  }, [boxW, boxH, manualFont, active?.text_en]);
 
   // 移动：按住字幕背景拖拽（文字/按钮不触发），2D 自由移动，松手确认
   const startMove = (e) => {
-    if (e.target.closest("[data-word]") || e.target.closest("button") || e.target.closest("[data-resize]")) return;
+    if (e.target.closest("[data-word]") || e.target.closest("button") || e.target.closest("[data-resize]") || e.target.closest("[data-font-nudge]")) return;
     e.preventDefault();
     e.stopPropagation();
     const parent = pillRef.current?.parentElement;
@@ -103,19 +170,19 @@ export default function MinimalSubtitleBar({
     window.addEventListener("pointerup", up);
   };
 
-  // 右下角拖拽：水平改换行宽度，垂直改字号。高度保持 auto，松手即当前值。
+  // 右下角拖拽：同时调节宽度和高度，字号随后撑满方框，松手确认
   const startResize = (e) => {
     e.preventDefault();
     e.stopPropagation();
     const sx = e.clientX;
     const sy = e.clientY;
     const startW = boxW || pillRef.current?.offsetWidth || 320;
-    const startFont = fontSize;
+    const startH = boxH || pillRef.current?.offsetHeight || 60;
     const move = (ev) => {
-      const dx = ev.clientX - sx;
-      const dy = ev.clientY - sy;
-      setBoxW(Math.max(SUBTITLE_WIDTH_MIN, Math.round(startW + dx)));
-      setFontSize(fontAfterVerticalDrag(startFont, dy));
+      const next = nextSubtitleBoxSize(startW, startH, ev.clientX - sx, ev.clientY - sy);
+      setManualFont(null);
+      setBoxW(next.width);
+      setBoxH(next.height);
     };
     const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
     window.addEventListener("pointermove", move);
@@ -206,6 +273,18 @@ export default function MinimalSubtitleBar({
 
   const words = active.text_en.split(/(\s+)/);
   const popoverBelow = posY < 0.55;
+  const padX = subtitleTextPadX(boxW);
+  const shownFont = manualFont ?? fittedFont;
+  const nudgeFont = (delta) => {
+    setManualFont(nudgeSubtitleFont(shownFont, delta));
+  };
+  const onFontWheel = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (e.clientX < rect.right - 64) return;
+    e.preventDefault();
+    e.stopPropagation();
+    nudgeFont(e.deltaY < 0 ? SUBTITLE_FONT_NUDGE : -SUBTITLE_FONT_NUDGE);
+  };
 
   // 精读按钮：与字幕列表精读按钮功能相同——调用 study.onStudyClick(active)
   const handleStudy = (e) => {
@@ -218,37 +297,44 @@ export default function MinimalSubtitleBar({
     <div
       ref={pillRef}
       className="absolute z-40"
-      style={{
-        position: "absolute",
-        zIndex: 40,
-        left: `${posX * 100}%`,
-        top: `${posY * 100}%`,
-        width: boxW > 0 ? `${boxW}px` : "min(80%, 640px)",
-      }}
+      style={{ left: `${posX * 100}%`, top: `${posY * 100}%` }}
     >
       <div
         data-bubble
         onPointerDown={startMove}
-        className="relative w-full cursor-move touch-none select-none text-white"
-        style={{ position: "relative", width: "100%", height: "auto", color: "#fff", touchAction: "none", userSelect: "none", cursor: "move" }}
+        onWheel={onFontWheel}
+        className="group relative cursor-move touch-none text-white"
+        style={{
+          width: boxW > 0 ? `${boxW}px` : "auto",
+          height: boxH > 0 ? `${boxH}px` : "auto",
+          maxWidth: "94vw",
+          minHeight: boxH > 0 ? undefined : 44,
+          backgroundColor: SUBTITLE_PILL_BACKGROUND,
+          backdropFilter: SUBTITLE_PILL_BLUR,
+          WebkitBackdropFilter: SUBTITLE_PILL_BLUR,
+          boxShadow: SUBTITLE_PILL_SHADOW,
+          borderRadius: "0.75rem",
+          overflow: "hidden",
+        }}
       >
-        {/* 整条磨砂：只模糊方框背后的画面，不波及视频其余区域 */}
-        <div aria-hidden className="pointer-events-none rounded-xl" style={PILL_FROST} />
-        {/* 下沿更重的模糊和压暗，盖住影片烧录的中英字幕 */}
-        <div aria-hidden className="pointer-events-none" style={PILL_FROST_LOWER} />
-        <div aria-hidden className="pointer-events-none" style={PILL_FROST_TAIL} />
-
-        {/* 台词在整条宽度里水平垂直居中；左右留白与右侧按钮等宽，避免文字偏左。
-            字族、字重、字距沿用正文，不另加阴影。 */}
-        <div className="relative z-10 flex min-h-11 items-center justify-center leading-snug" style={{ position: "relative", zIndex: 10, display: "flex", alignItems: "center", justifyContent: "center", minHeight: 44 }}>
+        {/* 台词在方框内水平、垂直居中；字号由宽高二分撑满 */}
+        <div
+          className="flex w-full items-center justify-center"
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", height: boxH > 0 ? "100%" : "auto", minHeight: boxH > 0 ? "100%" : 44 }}
+        >
           <span
-            className="w-full text-center leading-snug"
+            ref={textRef}
+            className="block min-w-0 text-center"
             style={{
               width: "100%",
-              textAlign: "center",
-              fontSize: `${fontSize}px`,
-              padding: "0.45em 52px",
+              alignSelf: "center",
+              height: "auto",
+              fontSize: `${shownFont}px`,
+              lineHeight,
+              fontWeight: 400,
               wordBreak: "break-word",
+              boxSizing: "border-box",
+              padding: `${SUBTITLE_TEXT_PAD_Y}px ${padX}px`,
             }}
           >
             {words.map((seg, i) => {
@@ -269,29 +355,53 @@ export default function MinimalSubtitleBar({
           </span>
         </div>
 
-        {/* 精读按钮与改版前相同，只是脱离文档流，避免把居中台词往左挤 */}
-        <div className="absolute right-1 top-1/2 z-20" style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", zIndex: 20 }}>
-          <div className="relative flex shrink-0 items-center gap-0.5">
-            <button
-              type="button"
-              onClick={handleStudy}
-              title={isLooping ? "再次点击退出循环" : "精读当前这句"}
-              className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-full p-2 touch-manipulation transition-colors [-webkit-tap-highlight-color:transparent] ${
-                isLooping ? "text-mint" : "text-white/45 hover:bg-white/10 hover:text-mint"
-              }`}
-            >
-              {isLooping ? <Repeat size={14} /> : <BookOpen size={14} />}
-            </button>
+        {/* 右侧字号微调：默认隐藏，悬停才出现一条细线，不是按钮 */}
+        <div
+          data-font-nudge
+          className="pointer-events-none absolute bottom-4 right-1 top-1 z-20 w-11 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100"
+        >
+          <div
+            data-font-nudge
+            onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onClick={(e) => { e.stopPropagation(); nudgeFont(SUBTITLE_FONT_NUDGE); }}
+            className="absolute inset-x-0 top-0 cursor-ns-resize"
+            style={{ height: "calc(50% - 22px)" }}
+            aria-label="放大字幕"
+          >
+            <span data-font-nudge className="absolute left-1/2 top-1/2 h-px w-2.5 -translate-x-1/2 bg-white/40" />
+          </div>
+          <div
+            data-font-nudge
+            onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onClick={(e) => { e.stopPropagation(); nudgeFont(-SUBTITLE_FONT_NUDGE); }}
+            className="absolute inset-x-0 bottom-0 cursor-ns-resize"
+            style={{ height: "calc(50% - 22px)" }}
+            aria-label="缩小字幕"
+          >
+            <span data-font-nudge className="absolute left-1/2 top-1/2 h-px w-2.5 -translate-x-1/2 bg-white/40" />
           </div>
         </div>
 
-        {/* 右下角拖拽手柄：左右改宽度，上下改字号 */}
+        {/* 精读按钮保持原来的 14px 图标和半透明颜色，脱离文档流以免把居中台词挤偏 */}
+        <div className="absolute right-1 top-1/2 z-10 -translate-y-1/2">
+          <button
+            type="button"
+            onClick={handleStudy}
+            title={isLooping ? "再次点击退出循环" : "精读当前这句"}
+            className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-full p-2 touch-manipulation transition-colors [-webkit-tap-highlight-color:transparent] ${
+              isLooping ? "text-mint" : "text-white/45 hover:bg-white/10 hover:text-mint"
+            }`}
+          >
+            {isLooping ? <Repeat size={14} /> : <BookOpen size={14} />}
+          </button>
+        </div>
+
+        {/* 右下角拖拽手柄：同时调节宽度和高度 */}
         <span
           data-resize
           onPointerDown={startResize}
-          title="拖拽调节宽度与字号"
-          className="absolute -bottom-1.5 -right-1.5 z-20 flex h-4 w-4 cursor-nwse-resize touch-none items-center justify-center rounded-full border border-white/50 bg-black/70"
-          style={{ position: "absolute", bottom: -6, right: -6, zIndex: 20, width: 16, height: 16 }}
+          title="拖拽调节字幕大小"
+          className="absolute -bottom-1.5 -right-1.5 z-10 flex h-4 w-4 cursor-nwse-resize touch-none items-center justify-center rounded-full border border-white/50 bg-black/70"
         >
           <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className="text-white/60">
             <path d="M7 1L1 7M7 4L4 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
@@ -333,46 +443,5 @@ export default function MinimalSubtitleBar({
     </div>
   );
 }
-
-// 磨砂只画在方框上。下沿再叠一层更重的模糊和压暗，并向下多伸出一截，
-// 用来盖住影片烧录字幕（通常贴在浮动字幕下面的一行中文）。
-const PILL_FROST = {
-  position: "absolute",
-  inset: 0,
-  pointerEvents: "none",
-  borderRadius: "0.75rem",
-  background: "linear-gradient(to bottom, rgba(10,8,6,0.46) 0%, rgba(8,6,4,0.58) 42%, rgba(4,3,2,0.8) 100%)",
-  backdropFilter: "blur(24px) saturate(145%)",
-  WebkitBackdropFilter: "blur(24px) saturate(145%)",
-  boxShadow: "0 2px 16px rgba(0,0,0,0.4)",
-};
-
-const PILL_FROST_LOWER = {
-  position: "absolute",
-  left: 0,
-  right: 0,
-  bottom: 0,
-  height: "72%",
-  pointerEvents: "none",
-  borderRadius: "0 0 0.75rem 0.75rem",
-  backdropFilter: "blur(42px) saturate(120%) brightness(0.7)",
-  WebkitBackdropFilter: "blur(42px) saturate(120%) brightness(0.7)",
-  background: "linear-gradient(to bottom, rgba(5,4,3,0) 0%, rgba(4,3,2,0.5) 42%, rgba(2,2,2,0.92) 100%)",
-  WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, #000 46%)",
-  maskImage: "linear-gradient(to bottom, transparent 0%, #000 46%)",
-};
-
-const PILL_FROST_TAIL = {
-  position: "absolute",
-  left: 8,
-  right: 8,
-  bottom: -56,
-  height: 70,
-  pointerEvents: "none",
-  backdropFilter: "blur(40px) brightness(0.6)",
-  WebkitBackdropFilter: "blur(40px) brightness(0.6)",
-  background: "linear-gradient(to bottom, rgba(3,2,2,0.88) 0%, rgba(3,2,2,0.76) 52%, rgba(3,2,2,0.34) 82%, rgba(3,2,2,0) 100%)",
-  borderRadius: "0 0 20px 20px",
-};
 
 function youtubeIdFromUrl(value) { try { const url = new URL(value); return url.hostname.endsWith("youtu.be") ? url.pathname.slice(1).split("/")[0] : url.searchParams.get("v") || ""; } catch { return ""; } }
