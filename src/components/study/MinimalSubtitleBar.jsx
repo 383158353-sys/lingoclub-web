@@ -238,20 +238,17 @@ export default function MinimalSubtitleBar({
         <div aria-hidden className="pointer-events-none" style={PILL_FROST_LOWER} />
         <div aria-hidden className="pointer-events-none" style={PILL_FROST_TAIL} />
 
-        {/* 台词在整条宽度里水平垂直居中；左右留白与右侧按钮等宽，避免文字偏左 */}
-        <div className="relative z-10 flex min-h-11 items-center justify-center" style={{ position: "relative", zIndex: 10, display: "flex", alignItems: "center", justifyContent: "center", minHeight: 44 }}>
-          <p
-            className="w-full text-center font-medium"
+        {/* 台词在整条宽度里水平垂直居中；左右留白与右侧按钮等宽，避免文字偏左。
+            字族、字重、字距沿用正文，不另加阴影。 */}
+        <div className="relative z-10 flex min-h-11 items-center justify-center leading-snug" style={{ position: "relative", zIndex: 10, display: "flex", alignItems: "center", justifyContent: "center", minHeight: 44 }}>
+          <span
+            className="w-full text-center leading-snug"
             style={{
               width: "100%",
               textAlign: "center",
-              fontWeight: 500,
               fontSize: `${fontSize}px`,
-              lineHeight: 1.4,
-              margin: 0,
               padding: "0.45em 52px",
               wordBreak: "break-word",
-              textShadow: "0 1px 2px rgba(0,0,0,0.92), 0 0 10px rgba(0,0,0,0.55)",
             }}
           >
             {words.map((seg, i) => {
@@ -269,21 +266,23 @@ export default function MinimalSubtitleBar({
                 </span>
               );
             })}
-          </p>
+          </span>
         </div>
 
-        {/* 右侧按钮脱离文档流，不把居中台词往左挤 */}
-        <div className="absolute right-1 top-1/2 z-20 flex -translate-y-1/2 items-center" style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", zIndex: 20 }}>
-          <button
-            type="button"
-            onClick={handleStudy}
-            title={isLooping ? "再次点击退出循环" : "精读当前这句"}
-            className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-full p-2 touch-manipulation transition-colors [-webkit-tap-highlight-color:transparent] ${
-              isLooping ? "text-mint" : "text-white/70 hover:bg-white/10 hover:text-mint"
-            }`}
-          >
-            {isLooping ? <Repeat size={14} /> : <BookOpen size={14} />}
-          </button>
+        {/* 精读按钮与改版前相同，只是脱离文档流，避免把居中台词往左挤 */}
+        <div className="absolute right-1 top-1/2 z-20" style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", zIndex: 20 }}>
+          <div className="relative flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={handleStudy}
+              title={isLooping ? "再次点击退出循环" : "精读当前这句"}
+              className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-full p-2 touch-manipulation transition-colors [-webkit-tap-highlight-color:transparent] ${
+                isLooping ? "text-mint" : "text-white/45 hover:bg-white/10 hover:text-mint"
+              }`}
+            >
+              {isLooping ? <Repeat size={14} /> : <BookOpen size={14} />}
+            </button>
+          </div>
         </div>
 
         {/* 右下角拖拽手柄：左右改宽度，上下改字号 */}
