@@ -4,6 +4,7 @@ import { describeCloseReadingError, requestCloseReading } from "@/lib/closeReadi
 import { getCueContext, getSubtitleProcessingCache, isTranslationStalled, translationSetupMessage, processSubtitleEpisode, processSubtitleLearningWindow, recordSubtitleAICall, subtitleHash, CLOSE_READING_VERSION } from "@/lib/subtitleAiProcessing";
 import { useToast } from "@/components/ui/use-toast";
 import { toSec, fromSecPrecise } from "@/lib/timecode";
+import { activeCueForLocalStudy, shiftPlaybackSeconds, subtitleLookupTime } from "@/lib/subtitleOffset";
 import { displayLinesFromTimedCues } from "@/lib/captionDisplayCues";
 import { mergeCompleteAnalysis, partialAnalysisForCue } from "@/lib/studyLearningCache";
 
@@ -104,7 +105,7 @@ function presentStudySubtitles(list) {
   return ensureIds(normalizeTimestamps(displayLinesFromTimedCues(list || [])));
 }
 
-export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSeek, onStudyEnter, onStudyExit, onPlayOnly, onAnalysisCached, onSubtitlesProcessed, onSubtitleLearningProcessed }) {
+export function useLocalStudy({ subtitles, currentTime, videoId = "local", offsetMs = 0, onSeek, onStudyEnter, onStudyExit, onPlayOnly, onAnalysisCached, onSubtitlesProcessed, onSubtitleLearningProcessed }) {
   const [subs, setSubs] = useState(() => presentStudySubtitles(subtitles));
   const [activeId, setActiveId] = useState(null);
   const [selectedCueId, setSelectedCueId] = useState(null);
@@ -126,7 +127,7 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
   const learningJobRef = useRef("");
   const learningAbortRef = useRef(null);
   const [processingRetry, setProcessingRetry] = useState(0);
-  currentTimeRef.current = currentTime || 0;
+  currentTimeRef.current = subtitleLookupTime(currentTime || 0, offsetMs);
   // 字幕变化时处理：用 ID 签名判断是「同一批字幕的内容更新」还是「换了新影片」。
     // 同一批字幕（ID 相同）仅更新 subs 内容并合并新的 ai_analysis，不重置精读状态/analyses，
   // 避免 onAnalysisCached 写回 materials.subtitles 后触发重置导致精读面板闪现后消失。
@@ -390,19 +391,13 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
   // 归一化后每行都有唯一且递增的 time_start，逐行高亮不会遗漏。
   useEffect(() => {
     if (currentTime == null || subs.length === 0) return;
-    const t = currentTime;
-    let best = null;
-    for (const s of subs) {
-      const a = toSec(s.time_start);
-      if (Number.isNaN(a)) continue;
-      if (a <= t && (!best || a > toSec(best.time_start))) best = s;
-    }
+    const best = activeCueForLocalStudy(subs, currentTime, offsetMs);
     if (best) {
       if (best.id !== activeId) setActiveId(best.id);
     } else if (activeId !== null) {
       setActiveId(null);
     }
-  }, [currentTime, subs, activeId]);
+  }, [currentTime, subs, activeId, offsetMs]);
 
   const generate = async (sub, { silent = false } = {}) => {
     if (!sub?.text_en || !String(sub.text_en).trim()) return;
@@ -476,7 +471,7 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", onSee
       setActiveId(s.id);
       return;
     }
-    onSeek?.(sec);
+    onSeek?.(shiftPlaybackSeconds(sec, offsetMs));
     setActiveId(s.id);
   };
 

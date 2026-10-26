@@ -6,6 +6,7 @@ import StudyAnalysisColumn from "@/components/study/StudyAnalysisColumn";
 import SubtitleWorkbench from "@/components/study/SubtitleWorkbench";
 import BilibiliScrubber from "@/components/study/BilibiliScrubber";
 import { useToast } from "@/components/ui/use-toast";
+import { useSubtitleOffset } from "@/hooks/useSubtitleOffset";
 import { Loader2, ExternalLink, BookOpen, Sparkles, Tv, Pencil, X, Check, Info } from "lucide-react";
 
 /**
@@ -180,9 +181,15 @@ export default function BilibiliStudy() {
     setIframeKey((k) => k + 1);
   }, []);
 
+  const subtitleVideoKey = record?.id || (bv ? `bilibili:${bv}` : "");
+  const [subtitleOffsetMs, setSubtitleOffsetMs] = useSubtitleOffset(subtitleVideoKey, {
+    aliasKeys: record?.id && bv ? [`bilibili:${bv}`] : [],
+    movieOffsetMs: record?.subtitle_offset_ms,
+  });
   const study = useLocalStudy({
     subtitles: record?.subtitles || [],
     currentTime: simTime,
+    offsetMs: subtitleOffsetMs,
     onSeek: (sec) => { seekToBili(sec); setSimRunning(false); },
     onPlay: (sec) => { seekToBili(sec); setSimRunning(true); },
     onPauseOnly: () => setSimRunning(false),
@@ -277,6 +284,8 @@ export default function BilibiliStudy() {
             onChanged={onSubsChanged}
             onSeek={onSeekRelease}
             canPlay={true}
+            offsetMs={subtitleOffsetMs}
+            onOffsetChange={setSubtitleOffsetMs}
           />
         </div>
       ) : (
@@ -355,7 +364,7 @@ export default function BilibiliStudy() {
             {/* Subtitle list */}
             <div ref={subAreaRef} className="min-h-0 flex-1">
               {hasSubs ? (
-                <SubtitleScrubber study={study} editable={false} listHeight={listH} />
+                <SubtitleScrubber study={study} editable={false} listHeight={listH} offsetMs={subtitleOffsetMs} getCurrentTime={() => simTime} />
               ) : (
                 <div className="flex h-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-background-elev/30 p-6 text-center">
                   <BookOpen size={20} className="text-muted-foreground/60" />

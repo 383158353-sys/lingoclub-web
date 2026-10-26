@@ -19,6 +19,9 @@ import BilibiliScrubber from "@/components/study/BilibiliScrubber";
 
 import { toSec, fromSec } from "@/lib/timecode";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
+import { shiftLoopRange, shiftPlaybackSeconds } from "@/lib/subtitleOffset";
+import { useShiftedCloseReadingLoop, useSubtitleOffset } from "@/hooks/useSubtitleOffset";
+import SubtitleOffsetControl from "@/components/study/SubtitleOffsetControl";
 import { useToast } from "@/components/ui/use-toast";
 import { ArrowRight, Clock, Play, Pause, Loader2, Pencil, Check, X as XIcon, Send, EyeOff, ExternalLink, Info, Maximize2 } from "lucide-react";
 import PageBackButton from "@/components/common/PageBackButton";
@@ -237,8 +240,12 @@ export default function EpisodePage() {
     return () => clearInterval(id);
   }, [isBilibili, clockRunning]);
   const studyTime = isBilibili ? simTime : currentTime;
+  const [subtitleOffsetMs, setSubtitleOffsetMs] = useSubtitleOffset(episode?.id ? `episode:${episode.id}` : "");
+  const subtitleOffsetRef = useRef(0);
+  subtitleOffsetRef.current = subtitleOffsetMs;
+  const closeReadingCueIdRef = useRef(null);
   const onStudyEnter = useCallback((sub) => {
-    const nextLoop = getStudyCueLoopRange(sub, studySubsRef.current);
+    const nextLoop = shiftLoopRange(getStudyCueLoopRange(sub, studySubsRef.current), subtitleOffsetRef.current);
     if (!nextLoop) return;
     loopRangeRef.current = nextLoop;
     setLoopRange(nextLoop);
@@ -248,19 +255,29 @@ export default function EpisodePage() {
     loopRangeRef.current = null;
     setLoopRange(null);
   }, []);
-  const study = useEpisodeStudy({ episodeId: episode?.id, movieTitle: movie?.title, currentTime: studyTime, reloadKey: subsReloadKey, onSeek: seekAndPlayLine, onPlayOnly: playOnly, onStudyEnter, onStudyExit });
+  const study = useEpisodeStudy({ episodeId: episode?.id, movieTitle: movie?.title, currentTime: studyTime, offsetMs: subtitleOffsetMs, reloadKey: subsReloadKey, onSeek: seekAndPlayLine, onPlayOnly: playOnly, onStudyEnter, onStudyExit });
   const onExternalSeek = useCallback((time) => {
     const activeLoop = loopRangeRef.current;
     if (activeLoop && (time < activeLoop.start - 0.05 || time > activeLoop.end + 0.35)) study.exitCloseReading();
   }, [study.exitCloseReading]);
   const studySubsRef = useRef(study.subs);
   studySubsRef.current = study.subs;
+  closeReadingCueIdRef.current = study.activeCloseReadingCueId;
+  const readCloseReadingCue = useCallback(() => studySubsRef.current.find((cue) => cue.id === closeReadingCueIdRef.current), []);
+  const readStudySubs = useCallback(() => studySubsRef.current, []);
+  useShiftedCloseReadingLoop({
+    offsetMs: subtitleOffsetMs,
+    loopRangeRef,
+    setLoopRange,
+    getCue: readCloseReadingCue,
+    getSubs: readStudySubs,
+  });
   const sourceDeepLinkHandledRef = useRef("");
   useEffect(() => {
     const activeLoop = loopRangeRef.current;
     if (activeLoop && loopRange && studyTime != null && studyTime >= activeLoop.end) playFromLine(activeLoop.start);
   }, [loopRange, playFromLine, studyTime]);
-  const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, setActiveId: study.setActiveId, setSelectedCueId: study.setSelectedCueId });
+  const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, offsetMs: subtitleOffsetMs, setActiveId: study.setActiveId, setSelectedCueId: study.setSelectedCueId });
   useEffect(() => {
     const at = Number(searchParams.get("t") ?? searchParams.get("at"));
     if (!episode?.id || !Number.isFinite(at) || !study.subs?.length) return;
@@ -269,9 +286,10 @@ export default function EpisodePage() {
     const cue = transcriptFocus.focusTranscriptCueByIdOrTime(searchParams.get("cue"), at);
     if (!cue) return;
     sourceDeepLinkHandledRef.current = marker;
-    const cueStart = cue?.time_start == null ? at : toSec(cue.time_start);
+    const rawStart = cue?.time_start == null ? at : toSec(cue.time_start);
+    const cueStart = shiftPlaybackSeconds(Number.isFinite(rawStart) ? rawStart : at, subtitleOffsetRef.current);
     if (searchParams.get("closeReading") === "1") study.toggleCloseReading(cue);
-    else playFromLine(Number.isFinite(cueStart) ? cueStart : at);
+    else playFromLine(cueStart);
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete("at"); nextParams.delete("t"); nextParams.delete("cue"); nextParams.delete("closeReading");
     setSearchParams(nextParams, { replace: true });
@@ -286,7 +304,7 @@ export default function EpisodePage() {
     const start = toSec(cue.time_start);
     if (!Number.isFinite(start)) return;
     if (study.isCloseReadingLoop) study.toggleCloseReading(cue);
-    else playFromLine(start);
+    else playFromLine(shiftPlaybackSeconds(start, subtitleOffsetRef.current));
   }, [playFromLine, study.isCloseReadingLoop, study.toggleCloseReading, transcriptFocus.focusAdjacentTranscriptCue]);
   useGlobalVideoSpace({
     togglePlayback: toggleClock,
@@ -598,7 +616,8 @@ export default function EpisodePage() {
                 onRelease={(v) => { study.exitCloseReading(); if (clockRunning) playFromLine(v); else seekAndPause(v); }}
               />
             )}
-            <SubtitleScrubber study={study} movieId={movie?.id} sourceRecordId={episode?.id} sourceUrl={episode?.video_url || movie?.video_url} movieTitle={movie?.title} episodeId={episode?.id} episodeTitle={episode?.title} sourceType="episode" editable={canEdit} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} />
+            {!canEdit && <SubtitleOffsetControl offsetMs={subtitleOffsetMs} onChange={setSubtitleOffsetMs} />}
+            <SubtitleScrubber study={study} movieId={movie?.id} sourceRecordId={episode?.id} sourceUrl={episode?.video_url || movie?.video_url} movieTitle={movie?.title} episodeId={episode?.id} episodeTitle={episode?.title} sourceType="episode" editable={canEdit} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} offsetMs={subtitleOffsetMs} />
             <SubListResizer height={subHeight} onChange={setSubHeight} />
           </div>
         ) : null;
@@ -660,6 +679,8 @@ export default function EpisodePage() {
               onSeek={(sec) => { study.exitCloseReading(); seekAndPause(sec); }}
               reloadKey={subsReloadKey}
               onSubsChanged={() => setSubsReloadKey((k) => k + 1)}
+              offsetMs={subtitleOffsetMs}
+              onOffsetChange={setSubtitleOffsetMs}
             />
           </div>
         </div>

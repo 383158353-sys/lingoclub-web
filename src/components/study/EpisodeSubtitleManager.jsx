@@ -16,6 +16,8 @@ export default function EpisodeSubtitleManager({
   onSeek,
   reloadKey = 0,
   onSubsChanged,
+  offsetMs = 0,
+  onOffsetChange,
 }) {
   const { toast } = useToast();
   const [subs, setSubs] = useState([]);
@@ -136,6 +138,8 @@ export default function EpisodeSubtitleManager({
       onChanged={onChanged}
       onSeek={onSeek}
       canPlay={canPlay}
+      offsetMs={offsetMs}
+      onOffsetChange={onOffsetChange}
     />
   );
 }

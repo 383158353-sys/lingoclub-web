@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { Loader2, Pencil, Check, X, BookOpen, Repeat, ArrowUp, Languages } from "lucide-react";
 
 import { toSec } from "@/lib/timecode";
+import { shiftPlaybackSeconds, subtitleLookupTime } from "@/lib/subtitleOffset";
 import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
 import { AISettingsButton } from "@/components/AISettingsPanel";
 import { resolveSubtitleTranslationState, subtitleHash } from "@/lib/subtitleAiProcessing";
@@ -22,7 +23,7 @@ import { toSec as toSecForArrow } from "@/lib/timecode";
 // It does NOT check visibility or trigger scrolls. All scrolling happens in the
 // activeId useEffect, guarded by programmaticRef so our own scrolls don't
 // trigger the listener.
-export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest, getCurrentTime }) {
+export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest, getCurrentTime, offsetMs = 0 }) {
   const { loading, subs, activeId, analyzingId, hasAnyTs, onLineClick, onStudyClick, loopingId, updateSub, processingStatus = {}, retrySubtitleProcessing } = study;
   const listRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
@@ -220,17 +221,18 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
     let live;
     try { live = getCurrentTime?.(); } catch { live = undefined; }
     const activeCue = activeId ? subs.find((cue) => cue.id === activeId) : null;
-    const t = resolvePlaybackTime(live, (lastTimeRef.current > 0.5 ? lastTimeRef.current : null) ?? toSecForArrow(activeCue?.time_start));
+    const cuePlayback = shiftPlaybackSeconds(toSecForArrow(activeCue?.time_start), offsetMs);
+    const t = resolvePlaybackTime(live, (lastTimeRef.current > 0.5 ? lastTimeRef.current : null) ?? (Number.isFinite(cuePlayback) ? cuePlayback : null));
     if (Number.isFinite(t) && t >= 0) {
       const starts = subs.map((cue) => toSecForArrow(cue.time_start));
       const ordered = starts.every((v, i) => i === 0 || !Number.isFinite(v) || !Number.isFinite(starts[i - 1]) || v >= starts[i - 1]);
       if (ordered) {
-        const idx = cueIndexAtTime(starts, t);
+        const idx = cueIndexAtTime(starts, subtitleLookupTime(t, offsetMs));
         if (idx >= 0) return subs[idx].id;
       }
     }
     return activeId || null;
-  }, [getCurrentTime, subs, activeId]);
+  }, [getCurrentTime, subs, activeId, offsetMs]);
   const backToCurrent = useCallback(() => {
     const container = listRef.current;
     if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);

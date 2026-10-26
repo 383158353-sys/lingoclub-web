@@ -6,6 +6,7 @@ import { clearLocalVideoSource, clearTemporaryLocalVideoFile, getLocalVideoSourc
 import { displayLinesFromTimedCues } from "@/lib/captionDisplayCues";
 import { narrowLoopToSentence, selectSentenceCue } from "@/lib/sourceSentenceFocus";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
+import { peekSubtitleOffsetMs, shiftLoopRange } from "@/lib/subtitleOffset";
 import { matchYouTubeSourceMovie, normalizeSourceCue, resolveVocabularySourceCue, youtubePlaybackUrl } from "@/lib/vocabularySourceCue";
 import { shouldRestartCueLoop } from "@/lib/youtubePlayerConfig";
 
@@ -113,10 +114,14 @@ export default function SourcePreview({ source, expression = "", onClose, onOpen
     const fallback = normalizeSourceCue(source);
     return { id: fallback.id, time_start: fallback.start, time_end: fallback.end, text_en: fallback.textEn, text_zh: fallback.textZh };
   })();
+  const offsetMs = peekSubtitleOffsetMs(recordId, {
+    aliasKeys: recordId ? [`episode:${recordId}`] : [],
+    movieOffsetMs: resolved.movie?.subtitle_offset_ms,
+  });
   const loop = useMemo(() => {
     if (!cue) return null;
-    return narrowLoopToSentence(getStudyCueLoopRange(cue, resolved.subtitles), cue.text_en || source?.source_sentence_en, expression);
-  }, [cue, expression, resolved.subtitles, source?.source_sentence_en]);
+    return shiftLoopRange(narrowLoopToSentence(getStudyCueLoopRange(cue, resolved.subtitles), cue.text_en || source?.source_sentence_en, expression), offsetMs);
+  }, [cue, expression, offsetMs, resolved.subtitles, source?.source_sentence_en]);
   const start = loop?.start ?? (Number.isFinite(Number(cue?.time_start)) ? Number(cue.time_start) : 0);
 
   const onTimeUpdate = (time) => {

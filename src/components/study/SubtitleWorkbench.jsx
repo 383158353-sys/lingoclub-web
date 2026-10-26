@@ -2,6 +2,8 @@ import React, { useState, useRef, useCallback } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import { parseTranscript } from "@/lib/transcriptParser";
 import { toSec } from "@/lib/timecode";
+import { shiftPlaybackSeconds } from "@/lib/subtitleOffset";
+import SubtitleOffsetControl from "@/components/study/SubtitleOffsetControl";
 import { formatEpisodeCode } from "@/lib/localSeason";
 import { applySubtitleImport, subtitleEpisodeMismatch } from "@/lib/localSubtitleWorkflow";
 import {
@@ -16,7 +18,7 @@ function genSubId() {
 // 统一字幕工作台：粘贴·文件导入 / 手动逐句
 // 两个 Tab 集成在一个面板里。结果统一追加到外部传入的 subs 数组，
 // onChanged 将替换或明确追加后的 cue 列表同步给父组件持久化。
-export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], onChanged, onSeek, canPlay = false, initialTab = "paste", targetTitle = "当前影片", targetSeasonNumber, targetEpisodeNumber, subtitleSourceName = "" }) {
+export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], onChanged, onSeek, canPlay = false, initialTab = "paste", targetTitle = "当前影片", targetSeasonNumber, targetEpisodeNumber, subtitleSourceName = "", offsetMs = 0, onOffsetChange }) {
   const { toast } = useToast();
   const [tab, setTab] = useState(initialTab);
   const [pastedText, setPastedText] = useState("");
@@ -264,6 +266,7 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
       <p className="mt-1 text-xs text-muted-foreground">
         拖拽 / 上传 SRT·VTT·TXT 文件自动解析，或直接粘贴带时间码的文本；也可手动逐句添加。抓不到时直接把带时间码的文本粘贴进来也能解析。
       </p>
+      {onOffsetChange && <SubtitleOffsetControl offsetMs={offsetMs} onChange={onOffsetChange} />}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {tabs.map((t) => (
@@ -472,7 +475,7 @@ export default function SubtitleWorkbench({ videoRef, videoUrl = "", subs = [], 
                         {selectedIds.has(s.id) && <Check size={12} />}
                       </button>
                     )}
-                    <button type="button" onClick={() => onSeek?.(toSec(s.time_start))} disabled={!onSeek} title={s.time_start ? "定位到视频此处" : ""} className="flex min-w-0 flex-1 items-start gap-3 rounded-lg text-left transition-colors hover:bg-white/5 disabled:cursor-default disabled:hover:bg-transparent">
+                    <button type="button" onClick={() => { const start = toSec(s.time_start); if (Number.isFinite(start)) onSeek?.(shiftPlaybackSeconds(start, offsetMs)); }} disabled={!onSeek} title={s.time_start ? "定位到视频此处" : ""} className="flex min-w-0 flex-1 items-start gap-3 rounded-lg text-left transition-colors hover:bg-white/5 disabled:cursor-default disabled:hover:bg-transparent">
                       <span className="mt-0.5 font-mono text-[11px] text-copper/80">{s.time_start || "—"}</span>
                       <span className="block min-w-0 flex-1">
                         {s.speaker && <span className="text-[11px] uppercase tracking-luxe text-muted-foreground">{s.speaker}</span>}
