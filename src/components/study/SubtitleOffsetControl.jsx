@@ -39,6 +39,7 @@ export default function SubtitleOffsetControl({ offsetMs = 0, onChange, assist =
   const inputRef = useRef(null);
   const draftRef = useRef(draft);
   const focusedRef = useRef(false);
+  const publishedRef = useRef(offsetMs);
   draftRef.current = draft;
 
   const writeDraft = (value) => {
@@ -47,23 +48,29 @@ export default function SubtitleOffsetControl({ offsetMs = 0, onChange, assist =
   };
 
   useEffect(() => {
+    publishedRef.current = offsetMs;
     if (focusedRef.current) return;
     writeDraft(formatOffsetInputSeconds(offsetMs));
     setInputError("");
   }, [offsetMs]);
 
-  const commit = (event) => {
-    event?.preventDefault?.();
-    const raw = inputRef.current?.value ?? draftRef.current;
-    const parsed = parseSubtitleOffsetInput(raw);
-    if (parsed == null) {
-      setInputError("请输入秒数，例如 1.2、-0.5，或毫秒 800ms");
-      return;
-    }
+  const publish = (parsed, { format = false } = {}) => {
     setInputError("");
-    writeDraft(formatOffsetInputSeconds(parsed));
+    if (format) writeDraft(formatOffsetInputSeconds(parsed));
+    if (publishedRef.current === parsed) return;
+    publishedRef.current = parsed;
     setLocalNotice(`已设为 ${formatSubtitleOffset(parsed)}`);
     onChange?.(parsed);
+  };
+
+  const commitRaw = (raw) => {
+    const text = String(raw ?? "");
+    const trimmed = text.trim();
+    if (!trimmed || trimmed === "-" || trimmed === "+" || trimmed === "." || trimmed === "-." || /[.mM毫]$/.test(trimmed)) return false;
+    const parsed = parseSubtitleOffsetInput(trimmed);
+    if (parsed == null) return false;
+    publish(parsed);
+    return true;
   };
 
   const direction = offsetMs > 0 ? "字幕延后" : offsetMs < 0 ? "字幕提前" : "与字幕文件一致";
@@ -74,18 +81,18 @@ export default function SubtitleOffsetControl({ offsetMs = 0, onChange, assist =
     <section data-testid="subtitle-offset" className="relative z-10 mt-4 rounded-xl border border-border bg-background-elev/40 p-3" aria-label="字幕时间轴偏移">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h4 className="text-sm font-medium text-foreground">时间轴偏移</h4>
-        <p className="text-[11px] text-muted-foreground">正数延后，负数提前</p>
+        <p className="text-[11px] text-muted-foreground">正数延后，负数提前 · 改完即生效</p>
       </div>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-        下载的字幕如果整体比画面早或晚，在这里统一平移。画面字幕、台词高亮、点击跳转和精读循环都会跟着移动。视频仍按原速度播放。
+        下载的字幕如果整体比画面早或晚，在这里统一平移。快捷钮和输入框一改就写入，并自动从对上的那句开头播放一小段（整句，或大约 2 秒），方便听口型和声音是否对上。画面字幕和台词高亮会跟着移动。视频仍按原速度播放。
       </p>
       <p className="mt-1 text-xs leading-relaxed text-copper">
-        先点要对的那句 → 把视频停到真正说这句的地方 → 点对齐到此处
+        先点要对的那句 → 把视频停到真正说这句的地方 → 点对齐到此处。对齐后会自动播放这句。
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {SUBTITLE_OFFSET_STEPS_MS.map((step) => (
-          <button key={`minus-${step}`} type="button" className={buttonClass} onClick={() => onChange?.(nudgeSubtitleOffsetMs(offsetMs, -step), "nudge")}>
+          <button key={`minus-${step}`} type="button" data-testid={`subtitle-offset-nudge-minus-${step}`} className={buttonClass} onClick={() => onChange?.(nudgeSubtitleOffsetMs(offsetMs, -step), "nudge")}>
             -{step / 1000}s
           </button>
         ))}
@@ -94,7 +101,7 @@ export default function SubtitleOffsetControl({ offsetMs = 0, onChange, assist =
           <span data-testid="subtitle-offset-value" className="font-mono text-sm font-medium text-copper" aria-live="polite">{formatSubtitleOffset(offsetMs)}</span>
         </span>
         {[...SUBTITLE_OFFSET_STEPS_MS].reverse().map((step) => (
-          <button key={`plus-${step}`} type="button" className={buttonClass} onClick={() => onChange?.(nudgeSubtitleOffsetMs(offsetMs, step), "nudge")}>
+          <button key={`plus-${step}`} type="button" data-testid={`subtitle-offset-nudge-plus-${step}`} className={buttonClass} onClick={() => onChange?.(nudgeSubtitleOffsetMs(offsetMs, step), "nudge")}>
             +{step / 1000}s
           </button>
         ))}
@@ -104,49 +111,44 @@ export default function SubtitleOffsetControl({ offsetMs = 0, onChange, assist =
       </div>
       <p className="mt-2 text-[11px] text-muted-foreground">{direction}</p>
 
-      <form
-        className="mt-3 flex flex-wrap items-center gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          commit(event);
-        }}
-      >
-        <label className="text-[11px] text-muted-foreground" htmlFor="subtitle-offset-input">精确偏移</label>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <label className="text-[11px] text-muted-foreground" htmlFor="subtitle-offset-input">精确偏移（秒）</label>
         <input
           ref={inputRef}
           id="subtitle-offset-input"
           data-testid="subtitle-offset-input"
+          type="text"
+          inputMode="decimal"
           value={draft}
-          inputMode="text"
           autoComplete="off"
           enterKeyHint="done"
           onFocus={() => { focusedRef.current = true; }}
-          onBlur={() => { focusedRef.current = false; }}
+          onBlur={() => {
+            focusedRef.current = false;
+            const raw = inputRef.current?.value ?? draftRef.current;
+            const parsed = parseSubtitleOffsetInput(raw);
+            if (parsed == null) {
+              writeDraft(formatOffsetInputSeconds(offsetMs));
+              if (String(raw).trim()) setInputError("请输入秒数，例如 1.2、-0.5，或毫秒 800ms");
+              return;
+            }
+            publish(parsed, { format: true });
+          }}
           onKeyDown={(event) => {
             if (event.key !== "Enter") return;
             event.preventDefault();
-            commit(event);
+            event.currentTarget.blur();
           }}
           onChange={(event) => {
             writeDraft(event.target.value);
             if (inputError) setInputError("");
+            commitRaw(event.target.value);
           }}
           placeholder="1.2、-0.5 或 800ms"
           className="h-9 w-36 rounded-lg border border-border bg-background px-2.5 text-sm text-foreground focus:border-copper/50 focus:outline-none"
         />
-        <button
-          type="button"
-          data-testid="subtitle-offset-commit"
-          onPointerDown={(event) => {
-            if (event.pointerType === "mouse") event.preventDefault();
-          }}
-          onClick={commit}
-          className="relative z-10 inline-flex min-h-9 items-center rounded-full bg-copper px-3.5 py-1.5 text-xs font-medium text-copper-foreground"
-        >
-          确定
-        </button>
-        <span className="text-[11px] text-muted-foreground">单位默认是秒</span>
-      </form>
+        <span className="text-[11px] text-muted-foreground">输入后立刻生效</span>
+      </div>
       {inputError && <p className="mt-2 text-xs text-rose-300">{inputError}</p>}
 
       {assist && (

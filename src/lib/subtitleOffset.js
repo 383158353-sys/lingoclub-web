@@ -119,6 +119,67 @@ export function snapSampleTime(live, parked, windowSec = SUBTITLE_OFFSET_PREVIEW
   return parkedTime;
 }
 
+// Short listen after an offset change: the whole cue when it is this short, otherwise this many seconds from the cue start.
+export const SUBTITLE_OFFSET_PREVIEW_MAX_SEC = 2;
+
+export function cueOriginalStartSeconds(cue) {
+  const start = toSec(cue?.time_start ?? cue?.startSec);
+  return Number.isFinite(start) ? start : null;
+}
+
+// The line that should be heard for this offset. The snap anchor wins.
+// Otherwise the cue on screen at videoTime, then the nearest timed cue.
+export function cueForOffsetPreview(subtitles, videoTime, offsetMs, preferredCue) {
+  if (preferredCue && cueOriginalStartSeconds(preferredCue) != null) return preferredCue;
+  const list = Array.isArray(subtitles) ? subtitles : [];
+  const active = activeCueForLocalStudy(list, videoTime, offsetMs);
+  if (active) return active;
+  const lookup = subtitleLookupTime(videoTime, offsetMs);
+  const target = Number.isFinite(lookup) ? lookup : 0;
+  let best = null;
+  let bestDist = Infinity;
+  for (const cue of list) {
+    const start = cueOriginalStartSeconds(cue);
+    if (start == null) continue;
+    const dist = Math.abs(start - target);
+    if (dist < bestDist) {
+      best = cue;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+// Video-clock window for the preview. Does not rewrite the cue.
+export function subtitleOffsetPreviewSpan(cue, offsetMs, { maxSec = SUBTITLE_OFFSET_PREVIEW_MAX_SEC } = {}) {
+  const startOrig = cueOriginalStartSeconds(cue);
+  if (startOrig == null) return null;
+  const cap = Number.isFinite(maxSec) && maxSec > 0 ? maxSec : SUBTITLE_OFFSET_PREVIEW_MAX_SEC;
+  const endOrig = toSec(cue?.time_end ?? cue?.endSec);
+  const start = shiftPlaybackSeconds(startOrig, offsetMs);
+  let length = Math.min(1.5, cap);
+  if (Number.isFinite(endOrig) && endOrig > startOrig) {
+    const duration = endOrig - startOrig;
+    length = duration <= cap ? duration : cap;
+  }
+  if (!(length > 0)) return null;
+  const end = Math.round((start + length) * 1000) / 1000;
+  return { cue, start, end };
+}
+
+// Preview seeks away from the parked frame. Keep nudges on that frame while playback
+// is still inside the preview, and follow a real scrub once it leaves both.
+export function previewStillOnParkedFrame(live, parked, span) {
+  const parkedTime = Number(parked);
+  if (!Number.isFinite(parkedTime)) return false;
+  const time = Number(live);
+  if (!Number.isFinite(time)) return true;
+  if (span && Number.isFinite(span.start) && Number.isFinite(span.end)) {
+    if (time >= span.start - 0.45 && time <= span.end + 0.45) return true;
+  }
+  return snapSampleTime(time, parkedTime) === parkedTime;
+}
+
 function memoryStore(storage) {
   if (storage) return storage;
   try {

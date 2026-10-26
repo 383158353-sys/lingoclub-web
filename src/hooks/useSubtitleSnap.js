@@ -4,12 +4,13 @@ import {
   activeCueForLocalStudy,
   alignSubtitleOffsetMs,
   clampSubtitleOffsetMs,
+  cueForOffsetPreview,
   formatSubtitleOffset,
-  snapSampleTime,
+  previewStillOnParkedFrame,
+  subtitleOffsetPreviewSpan,
 } from "@/lib/subtitleOffset";
 
-const PREVIEW_LEAD_MS = 280;
-const PREVIEW_PLAY_MS = 1600;
+const PREVIEW_LEAD_MS = 80;
 
 function oneLine(text, max = 48) {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
@@ -83,6 +84,7 @@ export function useSubtitleSnap({
   const [notice, setNotice] = useState("");
   const [previewToken, setPreviewToken] = useState(0);
   const parkedRef = useRef(null);
+  const previewSpanRef = useRef(null);
   const timersRef = useRef([]);
   const subsRef = useRef(subtitles);
   const offsetRef = useRef(offsetMs);
@@ -112,49 +114,43 @@ export function useSubtitleSnap({
 
   const sampleTime = useCallback(() => {
     const live = readClock(getCurrentTimeRef.current);
-    const sampled = snapSampleTime(live, parkedRef.current);
-    if (sampled == null) return null;
-    if (sampled !== parkedRef.current) parkedRef.current = null;
-    return sampled;
+    const parked = parkedRef.current;
+    if (previewStillOnParkedFrame(live, parked, previewSpanRef.current)) return parked;
+    parkedRef.current = null;
+    previewSpanRef.current = null;
+    return Number.isFinite(live) ? live : null;
   }, []);
 
-  const reveal = useCallback((nextOffset, time) => {
-    const cue = Number.isFinite(time) ? activeCueForLocalStudy(subsRef.current, time, nextOffset) : null;
-    if (cue) focusCueRef.current?.(cue);
-    else setActiveIdRef.current?.(null);
-    return cue;
-  }, []);
-
-  const preview = useCallback((time) => {
-    if (!Number.isFinite(time)) return;
-    if (parkedRef.current == null) parkedRef.current = time;
-    const start = parkedRef.current;
+  const preview = useCallback((time, cue, offset) => {
+    const span = cue ? subtitleOffsetPreviewSpan(cue, offset) : null;
+    const start = span?.start ?? time;
+    const end = span?.end ?? (Number.isFinite(time) ? Math.round((time + 1.6) * 1000) / 1000 : null);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+    if (parkedRef.current == null && Number.isFinite(time)) parkedRef.current = time;
+    previewSpanRef.current = { start, end };
     clearTimers();
-    pauseRef.current?.(start);
     const playId = setTimeout(() => {
       playRef.current?.(start);
-      const stopId = setTimeout(() => {
-        pauseRef.current?.();
-        parkedRef.current = null;
-      }, PREVIEW_PLAY_MS);
+      const stopId = setTimeout(() => pauseRef.current?.(), Math.max(400, (end - start) * 1000));
       timersRef.current.push(stopId);
     }, PREVIEW_LEAD_MS);
     timersRef.current.push(playId);
   }, [clearTimers]);
 
-  const applyOffset = useCallback((nextMs, source = "set", explicitTime = null) => {
-    if (source !== "nudge") parkedRef.current = null;
+  const applyOffset = useCallback((nextMs, source = "set", explicitTime = null, preferredCue = null) => {
     const value = clampSubtitleOffsetMs(nextMs);
     setOffsetMsRef.current?.(value);
     const time = Number.isFinite(explicitTime) ? explicitTime : sampleTime();
-    const cue = reveal(value, time);
+    const cue = cueForOffsetPreview(subsRef.current, time ?? 0, value, preferredCue);
+    if (cue) focusCueRef.current?.(cue);
+    else setActiveIdRef.current?.(null);
     const label = formatSubtitleOffset(value);
-    const line = cue ? `此刻应对：${oneLine(cue.text_en || cue.text_zh)}` : "此刻没有对上的台词";
+    const line = cue ? `正在播放：${oneLine(cue.text_en || cue.text_zh)}` : "此刻没有对上的台词";
     setNotice(source === "align" ? `已对齐为 ${label}。${line}` : `已设为 ${label}。${line}`);
     setPreviewToken((current) => current + 1);
-    if (time != null) preview(time);
+    if (time != null || cue) preview(time, cue, value);
     return value;
-  }, [preview, reveal, sampleTime]);
+  }, [preview, sampleTime]);
 
   const pickCue = useCallback((cue) => {
     const next = cueAnchorFromSubtitle(cue);
@@ -184,6 +180,7 @@ export function useSubtitleSnap({
       return null;
     }
     parkedRef.current = null;
+    previewSpanRef.current = null;
     clearTimers();
     const time = readClock(getCurrentTimeRef.current);
     if (time == null) {
@@ -193,7 +190,9 @@ export function useSubtitleSnap({
     pauseRef.current?.(time);
     const value = alignSubtitleOffsetMs(time, anchor.startSec);
     if (value == null) return null;
-    return applyOffset(value, "align", time);
+    const cue = subsRef.current.find((item) => anchor.id != null && String(item.id) === String(anchor.id))
+      || { id: anchor.id, time_start: anchor.startSec, text_en: anchor.text };
+    return applyOffset(value, "align", time, cue);
   }, [anchor, applyOffset, clearTimers]);
 
   const liveTime = readClock(getCurrentTime);
