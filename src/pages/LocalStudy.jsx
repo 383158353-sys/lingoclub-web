@@ -27,6 +27,8 @@ import BilibiliScrubber from "@/components/study/BilibiliScrubber";
 import YoutubeSubtitleHelper from "@/components/study/YoutubeSubtitleHelper";
 import { toSec } from "@/lib/timecode";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
+import { shiftLoopRange, shiftPlaybackSeconds } from "@/lib/subtitleOffset";
+import { useShiftedCloseReadingLoop, useSubtitleOffset } from "@/hooks/useSubtitleOffset";
 import { extractYouTubeId } from "@/lib/youtubeTranscriptClient";
 import { fetchYouTubeMeta } from "@/lib/localApi";
 import { cleanVideoTitle, isPlaceholderVideoTitle, needsTitleCleanup } from "@/lib/videoTitle";
@@ -244,10 +246,26 @@ export default function LocalStudy() {
   }, [isBilibili, clockRunning]);
 
   const studyTime = isBilibili ? simTime : currentTime;
+  const materialsRecordRef = useRef(materials?.recordId || "");
+  materialsRecordRef.current = materials?.recordId || "";
+  const persistSubtitleOffset = useCallback((nextMs) => {
+    const id = materialsRecordRef.current;
+    if (!id) return;
+    setMaterials((current) => (current?.recordId === id ? { ...current, subtitleOffsetMs: nextMs } : current));
+    setMetas((list) => list.map((item) => (item.id === id ? { ...item, subtitle_offset_ms: nextMs } : item)));
+    localMovies.update(id, { subtitle_offset_ms: nextMs }).catch(() => {});
+  }, []);
+  const [subtitleOffsetMs, setSubtitleOffsetMs] = useSubtitleOffset(materials?.recordId || "", {
+    movieOffsetMs: materials?.subtitleOffsetMs,
+    onPersist: persistSubtitleOffset,
+  });
+  const subtitleOffsetRef = useRef(0);
+  subtitleOffsetRef.current = subtitleOffsetMs;
+  const closeReadingCueIdRef = useRef(null);
 
   // 精读：进入单句循环——跳到台词开头播放，到达末尾自动跳回开头
   const onStudyEnter = useCallback((sub) => {
-    const nextLoop = getStudyCueLoopRange(sub, studySubsRef.current);
+    const nextLoop = shiftLoopRange(getStudyCueLoopRange(sub, studySubsRef.current), subtitleOffsetRef.current);
     if (!nextLoop) return;
     loopRangeRef.current = nextLoop;
     setLoopRange(nextLoop);
@@ -341,6 +359,7 @@ export default function LocalStudy() {
     subtitles: materials?.subtitles,
     videoId: extractYouTubeId(materials?.videoUrl) || materials?.recordId || "local",
     currentTime: studyTime,
+    offsetMs: subtitleOffsetMs,
     onSeek: (sec) => { setLoopRange(null); playFromLine(sec); },
     onPlay: playFromLine,
     onPlayOnly: playPlayback,
@@ -351,11 +370,21 @@ export default function LocalStudy() {
     onSubtitleLearningProcessed,
   });
   studySubsRef.current = study.subs;
+  closeReadingCueIdRef.current = study.activeCloseReadingCueId;
+  const readCloseReadingCue = useCallback(() => studySubsRef.current.find((cue) => cue.id === closeReadingCueIdRef.current), []);
+  const readStudySubs = useCallback(() => studySubsRef.current, []);
+  useShiftedCloseReadingLoop({
+    offsetMs: subtitleOffsetMs,
+    loopRangeRef,
+    setLoopRange,
+    getCue: readCloseReadingCue,
+    getSubs: readStudySubs,
+  });
   const onExternalSeek = useCallback((time) => {
     const activeLoop = loopRangeRef.current;
     if (activeLoop && (time < activeLoop.start - 0.05 || time > activeLoop.end + 0.35)) study.exitCloseReading();
   }, [study.exitCloseReading]);
-  const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, setActiveId: study.setActiveId, setSelectedCueId: study.setSelectedCueId });
+  const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, offsetMs: subtitleOffsetMs, setActiveId: study.setActiveId, setSelectedCueId: study.setSelectedCueId });
   const startCloseReadingFromKeyboard = useCallback(() => {
     const cue = transcriptFocus.focusCurrentTranscriptCue();
     if (cue) study.toggleCloseReading(cue);
@@ -366,7 +395,7 @@ export default function LocalStudy() {
     const start = toSec(cue.time_start);
     if (!Number.isFinite(start)) return;
     if (study.isCloseReadingLoop) study.toggleCloseReading(cue);
-    else playFromLine(start);
+    else playFromLine(shiftPlaybackSeconds(start, subtitleOffsetRef.current));
   }, [playFromLine, study.isCloseReadingLoop, study.toggleCloseReading, transcriptFocus.focusAdjacentTranscriptCue]);
   useGlobalVideoSpace({
     togglePlayback: toggleClock,
@@ -475,6 +504,7 @@ export default function LocalStudy() {
       videoName: meta.name,
       originalTitle: meta.original_title || "",
       subtitles: meta.subtitles || [],
+      subtitleOffsetMs: meta.subtitle_offset_ms == null || meta.subtitle_offset_ms === "" || !Number.isFinite(Number(meta.subtitle_offset_ms)) ? null : Number(meta.subtitle_offset_ms),
       subtitleSourceName: meta.subtitle_source_name || "",
       subtitleImportedAt: meta.subtitle_imported_at || "",
       subtitleCount: Number(meta.subtitle_count) || (meta.subtitles || []).length,
@@ -533,12 +563,13 @@ export default function LocalStudy() {
     const cue = transcriptFocus.focusTranscriptCueByIdOrTime(searchParams.get("cue"), at);
     if (!cue) return;
     sourceDeepLinkFocusedRef.current = marker;
-    const cueStart = cue?.time_start == null ? at : toSec(cue.time_start);
+    const rawStart = cue?.time_start == null ? at : toSec(cue.time_start);
+    const cueStart = shiftPlaybackSeconds(Number.isFinite(rawStart) ? rawStart : at, subtitleOffsetRef.current);
     if (searchParams.get("closeReading") === "1") {
       study.toggleCloseReading(cue);
       if (!materials.videoUrl) setMaterials((current) => current ? { ...current, pendingSourceStart: cueStart } : current);
     }
-    else playFromLine(Number.isFinite(cueStart) ? cueStart : at);
+    else playFromLine(cueStart);
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete("open"); nextParams.delete("at"); nextParams.delete("t"); nextParams.delete("cue"); nextParams.delete("closeReading");
     setSearchParams(nextParams, { replace: true });
@@ -1295,7 +1326,7 @@ export default function LocalStudy() {
     <div>
       <SubListResizer height={subHeight} onChange={setSubHeight} />
       {canPlay && hasSubs ? (
-        <SubtitleScrubber study={study} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} movieTitle={materials.videoName} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} sourceType={extractYouTubeId(materials.videoUrl) ? "youtube" : "local"} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} />
+        <SubtitleScrubber study={study} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} movieTitle={materials.videoName} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} sourceType={extractYouTubeId(materials.videoUrl) ? "youtube" : "local"} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} offsetMs={subtitleOffsetMs} />
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-background-elev/30 p-8 text-center text-sm text-muted-foreground">
           {canPlay ? "本集暂无台词——到下方「字幕管理」添加字幕即可进入逐句精读。" : "本机无视频时无法跳转台词；下方「字幕管理」仍可提前维护字幕内容。"}
@@ -1404,6 +1435,8 @@ export default function LocalStudy() {
             targetSeasonNumber={metas.find((meta) => meta.id === materials.recordId)?.season_number}
             targetEpisodeNumber={metas.find((meta) => meta.id === materials.recordId)?.episode_number}
             subtitleSourceName={materials.subtitleSourceName || ""}
+            offsetMs={subtitleOffsetMs}
+            onOffsetChange={setSubtitleOffsetMs}
           />
         </div>
       </div>

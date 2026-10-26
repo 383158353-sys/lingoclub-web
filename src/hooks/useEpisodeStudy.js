@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
 import { toSec } from "@/lib/timecode";
+import { shiftPlaybackSeconds, subtitleLookupTime } from "@/lib/subtitleOffset";
 
 // A subtitle is "active" up to GAP_TOLERANCE_S past its explicit end (or past
 // its start when no end is given). Without this tolerance, frames between two
@@ -14,7 +15,7 @@ const GAP_TOLERANCE_S = 1.2;
 // onSeek(sec) 把视频定位到某秒并暂停在那里（用于点击台词行 + 「精读」按钮的
 // 第一次点击）；onPlay(sec) 从某秒开始播放视频（用于「精读」按钮的第二次点击 —
 // 用户已确认要看精读后再 auto-play）。
-export function useEpisodeStudy({ episodeId, movieTitle, currentTime, reloadKey, onSeek, onPlayOnly, onStudyEnter, onStudyExit }) {
+export function useEpisodeStudy({ episodeId, movieTitle, currentTime, offsetMs = 0, reloadKey, onSeek, onPlayOnly, onStudyEnter, onStudyExit }) {
   const [subs, setSubs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState(null);
@@ -64,7 +65,7 @@ export function useEpisodeStudy({ episodeId, movieTitle, currentTime, reloadKey,
   // as "between subtitles" and clears the highlight.
   useEffect(() => {
     if (currentTime == null || subs.length === 0) return;
-    const t = currentTime;
+    const t = subtitleLookupTime(currentTime, offsetMs);
     let best = null;       // most recent subtitle with start ≤ t
     let nextStart = NaN;   // earliest start strictly > current best's start
     for (const s of subs) {
@@ -95,7 +96,7 @@ export function useEpisodeStudy({ episodeId, movieTitle, currentTime, reloadKey,
     }
     // clear only if we had an active line before (so manual selection still works)
     if (activeId !== null && best === null) setActiveId(null);
-  }, [currentTime, subs, activeId]);
+  }, [currentTime, subs, activeId, offsetMs]);
 
   // silent=true（自动跟随触发的）静默失败，不弹 toast；显式 retry 时弹 toast。
   // 只在自己仍为当前 analyzing 行时清空 analyzingId，避免并发把别的行的
@@ -163,7 +164,7 @@ export function useEpisodeStudy({ episodeId, movieTitle, currentTime, reloadKey,
       setActiveId(s.id);
       return;
     }
-    onSeek?.(sec);
+    onSeek?.(shiftPlaybackSeconds(sec, offsetMs));
     setActiveId(s.id);
   };
 

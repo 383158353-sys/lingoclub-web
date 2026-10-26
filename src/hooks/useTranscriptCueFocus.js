@@ -1,17 +1,18 @@
 import { useCallback, useRef, useState } from "react";
 import { findCueAtTime } from "@/lib/timecode";
 import { getAdjacentTranscriptCue } from "@/lib/studyCueNavigation";
+import { subtitleLookupTime } from "@/lib/subtitleOffset";
 
 /** Resolve keyboard actions from the player clock and request the shared transcript list to focus that cue. */
-export function useTranscriptCueFocus({ subtitles, videoRef, fallbackTime, setActiveId, setSelectedCueId }) {
+export function useTranscriptCueFocus({ subtitles, videoRef, fallbackTime, offsetMs = 0, setActiveId, setSelectedCueId }) {
   const requestSequenceRef = useRef(0);
   const [focusRequest, setFocusRequest] = useState(null);
 
   const resolvePlaybackCue = useCallback(() => {
     const playerTime = videoRef.current?.getCurrentTime?.();
     const time = Number.isFinite(playerTime) ? playerTime : fallbackTime;
-    return findCueAtTime(subtitles, time);
-  }, [fallbackTime, subtitles, videoRef]);
+    return findCueAtTime(subtitles, subtitleLookupTime(time, offsetMs));
+  }, [fallbackTime, offsetMs, subtitles, videoRef]);
 
   const focusTranscriptCue = useCallback((cue) => {
     if (!cue) return null;
@@ -35,8 +36,8 @@ export function useTranscriptCueFocus({ subtitles, videoRef, fallbackTime, setAc
   const focusAdjacentTranscriptCue = useCallback((direction) => {
     const playerTime = videoRef.current?.getCurrentTime?.();
     const time = Number.isFinite(playerTime) ? playerTime : fallbackTime;
-    return focusTranscriptCue(getAdjacentTranscriptCue(subtitles, time, direction));
-  }, [fallbackTime, focusTranscriptCue, subtitles, videoRef]);
+    return focusTranscriptCue(getAdjacentTranscriptCue(subtitles, subtitleLookupTime(time, offsetMs), direction));
+  }, [fallbackTime, focusTranscriptCue, offsetMs, subtitles, videoRef]);
 
   return { focusRequest, focusTranscriptCue, focusTranscriptCueByIdOrTime, focusCurrentTranscriptCue, focusAdjacentTranscriptCue, resolvePlaybackCue };
 }
