@@ -7,6 +7,9 @@ import SubtitleWorkbench from "@/components/study/SubtitleWorkbench";
 import BilibiliScrubber from "@/components/study/BilibiliScrubber";
 import { useToast } from "@/components/ui/use-toast";
 import { useSubtitleOffset } from "@/hooks/useSubtitleOffset";
+import { offsetPreviewControls, useSubtitleSnap } from "@/hooks/useSubtitleSnap";
+import { SubtitleOffsetCaption } from "@/components/study/SubtitleOffsetControl";
+import { useTranscriptCueFocus } from "@/hooks/useTranscriptCueFocus";
 import { Loader2, ExternalLink, BookOpen, Sparkles, Tv, Pencil, X, Check, Info } from "lucide-react";
 
 /**
@@ -195,6 +198,30 @@ export default function BilibiliStudy() {
     onPauseOnly: () => setSimRunning(false),
     onPlayOnly: () => { setSeekT(simTime); setIframeKey((k) => k + 1); setSimRunning(true); },
   });
+  const simTimeRef = useRef(simTime);
+  simTimeRef.current = simTime;
+  const biliClockRef = useRef({ getCurrentTime: () => simTimeRef.current });
+  const transcriptFocus = useTranscriptCueFocus({
+    subtitles: study.subs,
+    videoRef: biliClockRef,
+    fallbackTime: simTime,
+    offsetMs: subtitleOffsetMs,
+    setActiveId: study.setActiveId,
+    setSelectedCueId: study.setSelectedCueId,
+  });
+  const readOffsetClock = useCallback(() => simTimeRef.current, []);
+  const offsetPreview = offsetPreviewControls({ simulated: true, setSimTime, setClockRunning: setSimRunning });
+  const subtitleSnap = useSubtitleSnap({
+    subtitles: study.subs,
+    offsetMs: subtitleOffsetMs,
+    setOffsetMs: setSubtitleOffsetMs,
+    getCurrentTime: readOffsetClock,
+    getActiveCue: () => study.subs.find((cue) => cue.id === study.activeId) || null,
+    focusCue: transcriptFocus.focusTranscriptCue,
+    setActiveId: study.setActiveId,
+    play: offsetPreview.play,
+    pause: offsetPreview.pause,
+  });
 
   const onSubsChanged = useCallback(async (newSubs) => {
     setRecord((r) => (r ? { ...r, subtitles: newSubs } : r));
@@ -285,7 +312,8 @@ export default function BilibiliStudy() {
             onSeek={onSeekRelease}
             canPlay={true}
             offsetMs={subtitleOffsetMs}
-            onOffsetChange={setSubtitleOffsetMs}
+            onOffsetChange={subtitleSnap.applyOffset}
+            offsetAssist={subtitleSnap}
           />
         </div>
       ) : (
@@ -310,6 +338,7 @@ export default function BilibiliStudy() {
                   allowFullScreen
                   allow="autoplay; fullscreen; picture-in-picture"
                 />
+                <SubtitleOffsetCaption cue={subtitleSnap.matchedCue} pulse={subtitleSnap.previewToken} />
               </div>
             </div>
 
@@ -364,7 +393,7 @@ export default function BilibiliStudy() {
             {/* Subtitle list */}
             <div ref={subAreaRef} className="min-h-0 flex-1">
               {hasSubs ? (
-                <SubtitleScrubber study={study} editable={false} listHeight={listH} offsetMs={subtitleOffsetMs} getCurrentTime={() => simTime} />
+                <SubtitleScrubber study={study} editable={false} listHeight={listH} offsetMs={subtitleOffsetMs} getCurrentTime={() => simTime} focusRequest={transcriptFocus.focusRequest} onPickAnchor={subtitleSnap.pickCue} anchorCueId={subtitleSnap.anchor?.id} />
               ) : (
                 <div className="flex h-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-background-elev/30 p-6 text-center">
                   <BookOpen size={20} className="text-muted-foreground/60" />

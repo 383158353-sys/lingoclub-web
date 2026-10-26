@@ -23,7 +23,7 @@ import { toSec as toSecForArrow } from "@/lib/timecode";
 // It does NOT check visibility or trigger scrolls. All scrolling happens in the
 // activeId useEffect, guarded by programmaticRef so our own scrolls don't
 // trigger the listener.
-export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest, getCurrentTime, offsetMs = 0 }) {
+export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId, episodeTitle, sourceType, sourceUrl, sourceRecordId, videoId = movieId, editable, listHeight, focusRequest, getCurrentTime, offsetMs = 0, onPickAnchor, anchorCueId = null }) {
   const { loading, subs, activeId, analyzingId, hasAnyTs, onLineClick, onStudyClick, loopingId, updateSub, processingStatus = {}, retrySubtitleProcessing } = study;
   const listRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
@@ -302,6 +302,7 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
           <ul className="space-y-2">
             {subs.map((s) => {
               const isActive = s.id === activeId;
+              const isAnchor = anchorCueId != null && String(s.id) === String(anchorCueId);
               const isEditing = editingId === s.id;
               const translationState = resolveSubtitleTranslationState(s, processingStatus.phase, failedTranslationIds);
               return (
@@ -328,17 +329,24 @@ export default function SubtitleScrubber({ study, movieId, movieTitle, episodeId
                     <div className={`relative flex items-stretch rounded-md transition-colors ${isActive ? "bg-copper/20 ring-1 ring-copper/30" : "hover:bg-white/[0.03]"}`}>
                       {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-[4px] rounded-full bg-copper-soft" />}
                       <div
-                        onClick={() => {
-                          // A tap that ends/stops a scroll on mobile must never seek the video.
-                          if (!intentRef.current.consumeClick()) return;
+                        onClickCapture={(event) => {
+                          // Word taps stopPropagation, so the anchor has to be recorded on the way down.
+                          // A scroll-ending tap is consumed once here and must not seek.
+                          const allow = intentRef.current.consumeClick();
+                          event.nativeEvent.__cueClick = allow;
+                          if (allow) onPickAnchor?.(s);
+                        }}
+                        onClick={(event) => {
+                          if (!event.nativeEvent.__cueClick) return;
                           onLineClick(s);
                         }}
-                        title={hasAnyTs ? "点击单词查释义，点击空白处定位视频" : "点击单词查释义"}
+                        title={hasAnyTs ? "点击单词查释义，点击空白处定位并把这句记为卡点" : "点击单词查释义"}
                         className="min-w-0 flex-1 cursor-pointer px-3 py-3 text-left"
                       >
                         {analyzingId === s.id && (
                           <div className="mb-0.5"><Loader2 size={11} className="animate-spin text-copper/70" /></div>
                         )}
+                        {isAnchor && <span className="mb-1 flex w-fit rounded-full bg-mint/15 px-1.5 py-0.5 text-[10px] font-medium text-mint">卡点</span>}
                         <SubtitleWordLookup
                           text={s.text_en}
                           movieId={movieId}

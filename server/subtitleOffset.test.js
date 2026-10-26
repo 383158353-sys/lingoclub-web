@@ -1,13 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findCueAtTime } from "../src/lib/timecode.js";
+import { findCueAtTime, toSec } from "../src/lib/timecode.js";
 import { getStudyCueLoopRange } from "../src/lib/studyCueNavigation.js";
 import {
   activeCueForLocalStudy,
   formatSubtitleOffset,
+  alignSubtitleOffsetMs,
   nudgeSubtitleOffsetMs,
   parseSubtitleOffsetInput,
   peekSubtitleOffsetMs,
+  snapSampleTime,
   shiftLoopRange,
   shiftPlaybackSeconds,
   subtitleLookupTime,
@@ -83,6 +85,21 @@ test("offset is stored per video and survives a fresh read", () => {
   assert.equal(peekSubtitleOffsetMs("movie-a", { storage, movieOffsetMs: 1200 }), 0);
   assert.equal(peekSubtitleOffsetMs("movie-c", { storage, movieOffsetMs: -800 }), -800);
   assert.equal(peekSubtitleOffsetMs("movie-d", { storage, aliasKeys: ["movie-b"] }), -500);
+});
+
+test("snap alignment is video time minus the cue's original start", () => {
+  assert.equal(alignSubtitleOffsetMs(12.5, 10), 2500);
+  assert.equal(alignSubtitleOffsetMs(8, 10), -2000);
+  assert.equal(alignSubtitleOffsetMs(10, 10), 0);
+  assert.equal(alignSubtitleOffsetMs(Number.NaN, 10), null);
+  assert.equal(alignSubtitleOffsetMs(12, Number.NaN), null);
+  const offset = alignSubtitleOffsetMs(14.2, 10);
+  assert.ok(Math.abs(subtitleLookupTime(14.2, offset) - 10) < 0.002);
+  assert.equal(alignSubtitleOffsetMs(12, toSec("0:10.000")), 2000);
+  assert.equal(snapSampleTime(11.2, 10), 10);
+  assert.equal(snapSampleTime(14, 10), 14);
+  assert.equal(snapSampleTime(8, null), 8);
+  assert.equal(snapSampleTime(Number.NaN, 10), null);
 });
 
 test("stored cue timestamps are not rewritten by the offset", () => {

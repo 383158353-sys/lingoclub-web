@@ -21,7 +21,8 @@ import { toSec, fromSec } from "@/lib/timecode";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { shiftLoopRange, shiftPlaybackSeconds } from "@/lib/subtitleOffset";
 import { useShiftedCloseReadingLoop, useSubtitleOffset } from "@/hooks/useSubtitleOffset";
-import SubtitleOffsetControl from "@/components/study/SubtitleOffsetControl";
+import { offsetPreviewControls, useSubtitleSnap } from "@/hooks/useSubtitleSnap";
+import SubtitleOffsetControl, { SubtitleOffsetCaption } from "@/components/study/SubtitleOffsetControl";
 import { useToast } from "@/components/ui/use-toast";
 import { ArrowRight, Clock, Play, Pause, Loader2, Pencil, Check, X as XIcon, Send, EyeOff, ExternalLink, Info, Maximize2 } from "lucide-react";
 import PageBackButton from "@/components/common/PageBackButton";
@@ -278,6 +279,25 @@ export default function EpisodePage() {
     if (activeLoop && loopRange && studyTime != null && studyTime >= activeLoop.end) playFromLine(activeLoop.start);
   }, [loopRange, playFromLine, studyTime]);
   const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, offsetMs: subtitleOffsetMs, setActiveId: study.setActiveId, setSelectedCueId: study.setSelectedCueId });
+  const offsetClockRef = useRef(studyTime);
+  offsetClockRef.current = studyTime;
+  const readOffsetClock = useCallback(() => {
+    if (isBilibili) return offsetClockRef.current;
+    const live = Number(videoRef.current?.getCurrentTime?.());
+    return Number.isFinite(live) ? live : offsetClockRef.current;
+  }, [isBilibili]);
+  const offsetPreview = offsetPreviewControls({ simulated: isBilibili, videoRef, setSimTime, setClockRunning });
+  const subtitleSnap = useSubtitleSnap({
+    subtitles: study.subs,
+    offsetMs: subtitleOffsetMs,
+    setOffsetMs: setSubtitleOffsetMs,
+    getCurrentTime: readOffsetClock,
+    getActiveCue: () => study.subs.find((cue) => cue.id === study.activeId) || null,
+    focusCue: transcriptFocus.focusTranscriptCue,
+    setActiveId: study.setActiveId,
+    play: offsetPreview.play,
+    pause: offsetPreview.pause,
+  });
   useEffect(() => {
     const at = Number(searchParams.get("t") ?? searchParams.get("at"));
     if (!episode?.id || !Number.isFinite(at) || !study.subs?.length) return;
@@ -554,6 +574,7 @@ export default function EpisodePage() {
                 </button>
               )}
               {maskOn && <SubtitleMask />}
+              <SubtitleOffsetCaption cue={subtitleSnap.matchedCue} pulse={subtitleSnap.previewToken} />
               <button
                 type="button"
                 onClick={() => setMaskOn((v) => !v)}
@@ -616,8 +637,8 @@ export default function EpisodePage() {
                 onRelease={(v) => { study.exitCloseReading(); if (clockRunning) playFromLine(v); else seekAndPause(v); }}
               />
             )}
-            {!canEdit && <SubtitleOffsetControl offsetMs={subtitleOffsetMs} onChange={setSubtitleOffsetMs} />}
-            <SubtitleScrubber study={study} movieId={movie?.id} sourceRecordId={episode?.id} sourceUrl={episode?.video_url || movie?.video_url} movieTitle={movie?.title} episodeId={episode?.id} episodeTitle={episode?.title} sourceType="episode" editable={canEdit} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} offsetMs={subtitleOffsetMs} />
+            {!canEdit && <SubtitleOffsetControl offsetMs={subtitleOffsetMs} onChange={subtitleSnap.applyOffset} assist={subtitleSnap} />}
+            <SubtitleScrubber study={study} movieId={movie?.id} sourceRecordId={episode?.id} sourceUrl={episode?.video_url || movie?.video_url} movieTitle={movie?.title} episodeId={episode?.id} episodeTitle={episode?.title} sourceType="episode" editable={canEdit} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} offsetMs={subtitleOffsetMs} onPickAnchor={subtitleSnap.pickCue} anchorCueId={subtitleSnap.anchor?.id} />
             <SubListResizer height={subHeight} onChange={setSubHeight} />
           </div>
         ) : null;
@@ -680,7 +701,8 @@ export default function EpisodePage() {
               reloadKey={subsReloadKey}
               onSubsChanged={() => setSubsReloadKey((k) => k + 1)}
               offsetMs={subtitleOffsetMs}
-              onOffsetChange={setSubtitleOffsetMs}
+              onOffsetChange={subtitleSnap.applyOffset}
+              offsetAssist={subtitleSnap}
             />
           </div>
         </div>
