@@ -9,8 +9,11 @@ import {
   nudgeSubtitleOffsetMs,
   parseSubtitleOffsetInput,
   peekSubtitleOffsetMs,
+  cueForOffsetPreview,
+  previewStillOnParkedFrame,
   snapSampleTime,
   shiftLoopRange,
+  subtitleOffsetPreviewSpan,
   shiftPlaybackSeconds,
   subtitleLookupTime,
   writeSubtitleOffsetMs,
@@ -100,6 +103,23 @@ test("snap alignment is video time minus the cue's original start", () => {
   assert.equal(snapSampleTime(14, 10), 14);
   assert.equal(snapSampleTime(8, null), 8);
   assert.equal(snapSampleTime(Number.NaN, 10), null);
+});
+
+test("offset preview starts at the shifted cue and stays a short listen", () => {
+  const cue = { id: "fan", time_start: "0:04.000", time_end: "0:06.000", text_en: "I'm actually a really big fan." };
+  const span = subtitleOffsetPreviewSpan(cue, 2000);
+  assert.deepEqual({ start: span.start, end: span.end }, { start: 6, end: 8 });
+  const longCue = { id: "long", time_start: "0:01.000", time_end: "0:08.000", text_en: "A longer line." };
+  const capped = subtitleOffsetPreviewSpan(longCue, -500);
+  assert.equal(capped.start, 0.5);
+  assert.equal(capped.end, 2.5);
+  assert.equal(cueForOffsetPreview([cue, longCue], 6, 2000, cue).id, "fan");
+  assert.equal(previewStillOnParkedFrame(6.4, 10, span), true);
+  assert.equal(previewStillOnParkedFrame(14, 10, span), false);
+  assert.equal(previewStillOnParkedFrame(Number.NaN, 10, span), true);
+  const before = cue.time_start;
+  subtitleOffsetPreviewSpan(cue, 2000);
+  assert.equal(cue.time_start, before);
 });
 
 test("stored cue timestamps are not rewritten by the offset", () => {
