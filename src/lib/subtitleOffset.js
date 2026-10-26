@@ -97,6 +97,28 @@ export function nudgeSubtitleOffsetMs(offsetMs, deltaMs) {
   return clampSubtitleOffsetMs(clampSubtitleOffsetMs(offsetMs) + Number(deltaMs));
 }
 
+// Snap one original cue start onto the frame where that line is actually spoken.
+// offsetMs = videoTime - cueStart. Positive delays every cue; negative advances them.
+export function alignSubtitleOffsetMs(videoTimeSec, cueStartSec) {
+  const video = Number(videoTimeSec);
+  const cue = Number(cueStartSec);
+  if (!Number.isFinite(video) || !Number.isFinite(cue)) return null;
+  return clampSubtitleOffsetMs((video - cue) * 1000);
+}
+
+// While a short preview is playing, keep later nudges on the frame the user parked.
+// A jump larger than the preview window means they scrubbed to a new spot.
+export const SUBTITLE_OFFSET_PREVIEW_WINDOW_SEC = 2.5;
+
+export function snapSampleTime(live, parked, windowSec = SUBTITLE_OFFSET_PREVIEW_WINDOW_SEC) {
+  const time = Number(live);
+  if (!Number.isFinite(time)) return null;
+  const parkedTime = Number(parked);
+  if (!Number.isFinite(parkedTime)) return time;
+  if (Math.abs(time - parkedTime) > windowSec) return time;
+  return parkedTime;
+}
+
 function memoryStore(storage) {
   if (storage) return storage;
   try {

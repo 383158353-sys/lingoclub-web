@@ -28,6 +28,8 @@ import { toSec } from "@/lib/timecode";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { shiftLoopRange, shiftPlaybackSeconds } from "@/lib/subtitleOffset";
 import { useShiftedCloseReadingLoop, useSubtitleOffset } from "@/hooks/useSubtitleOffset";
+import { offsetPreviewControls, useSubtitleSnap } from "@/hooks/useSubtitleSnap";
+import { SubtitleOffsetCaption } from "@/components/study/SubtitleOffsetControl";
 import { useTranscriptCueFocus } from "@/hooks/useTranscriptCueFocus";
 
 // 快速导入学习页：由浏览器扩展跳转进入。
@@ -383,6 +385,25 @@ export default function QuickStudy() {
   }, [loopRange, playFromLine, studyTime]);
 
   const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, offsetMs: subtitleOffsetMs, setActiveId: study.setActiveId, setSelectedCueId: study.setSelectedCueId });
+  const offsetClockRef = useRef(studyTime);
+  offsetClockRef.current = studyTime;
+  const readOffsetClock = useCallback(() => {
+    if (isBili) return offsetClockRef.current;
+    const live = Number(videoRef.current?.getCurrentTime?.());
+    return Number.isFinite(live) ? live : offsetClockRef.current;
+  }, [isBili]);
+  const offsetPreview = offsetPreviewControls({ simulated: isBili, videoRef, setSimTime, setClockRunning });
+  const subtitleSnap = useSubtitleSnap({
+    subtitles: study.subs,
+    offsetMs: subtitleOffsetMs,
+    setOffsetMs: setSubtitleOffsetMs,
+    getCurrentTime: readOffsetClock,
+    getActiveCue: () => study.subs.find((cue) => cue.id === study.activeId) || null,
+    focusCue: transcriptFocus.focusTranscriptCue,
+    setActiveId: study.setActiveId,
+    play: offsetPreview.play,
+    pause: offsetPreview.pause,
+  });
   useEffect(() => {
     if (recallHandledRef.current || searchParams.get("closeReading") !== "1") return;
     const at = Number(searchParams.get("t"));
@@ -515,6 +536,7 @@ export default function QuickStudy() {
           </button>
         )}
         {maskOn && <SubtitleMask />}
+        <SubtitleOffsetCaption cue={subtitleSnap.matchedCue} pulse={subtitleSnap.previewToken} />
         <button
           type="button"
           onClick={() => setMaskOn((v) => !v)}
@@ -557,7 +579,7 @@ export default function QuickStudy() {
         />
       )}
       {hasSubs ? (
-        <SubtitleScrubber study={study} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} movieTitle={materials.videoName} videoId={studyVideoId} sourceType={studySourceType} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} offsetMs={subtitleOffsetMs} />
+        <SubtitleScrubber study={study} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} movieTitle={materials.videoName} videoId={studyVideoId} sourceType={studySourceType} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} offsetMs={subtitleOffsetMs} onPickAnchor={subtitleSnap.pickCue} anchorCueId={subtitleSnap.anchor?.id} />
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-background-elev/30 p-6 text-sm leading-relaxed text-muted-foreground">
           {fetchError ? (
@@ -648,7 +670,8 @@ export default function QuickStudy() {
             canPlay={canPlay}
             initialTab={needsOcr ? "ocr" : "link"}
             offsetMs={subtitleOffsetMs}
-            onOffsetChange={setSubtitleOffsetMs}
+            onOffsetChange={subtitleSnap.applyOffset}
+            offsetAssist={subtitleSnap}
           />
         </div>
       </div>

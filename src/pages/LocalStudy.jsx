@@ -29,6 +29,8 @@ import { toSec } from "@/lib/timecode";
 import { getStudyCueLoopRange } from "@/lib/studyCueNavigation";
 import { shiftLoopRange, shiftPlaybackSeconds } from "@/lib/subtitleOffset";
 import { useShiftedCloseReadingLoop, useSubtitleOffset } from "@/hooks/useSubtitleOffset";
+import { offsetPreviewControls, useSubtitleSnap } from "@/hooks/useSubtitleSnap";
+import { SubtitleOffsetCaption } from "@/components/study/SubtitleOffsetControl";
 import { extractYouTubeId } from "@/lib/youtubeTranscriptClient";
 import { fetchYouTubeMeta } from "@/lib/localApi";
 import { cleanVideoTitle, isPlaceholderVideoTitle, needsTitleCleanup } from "@/lib/videoTitle";
@@ -385,6 +387,25 @@ export default function LocalStudy() {
     if (activeLoop && (time < activeLoop.start - 0.05 || time > activeLoop.end + 0.35)) study.exitCloseReading();
   }, [study.exitCloseReading]);
   const transcriptFocus = useTranscriptCueFocus({ subtitles: study.subs, videoRef, fallbackTime: studyTime, offsetMs: subtitleOffsetMs, setActiveId: study.setActiveId, setSelectedCueId: study.setSelectedCueId });
+  const offsetClockRef = useRef(studyTime);
+  offsetClockRef.current = studyTime;
+  const readOffsetClock = useCallback(() => {
+    if (isBilibili) return offsetClockRef.current;
+    const live = Number(videoRef.current?.getCurrentTime?.());
+    return Number.isFinite(live) ? live : offsetClockRef.current;
+  }, [isBilibili]);
+  const offsetPreview = offsetPreviewControls({ simulated: isBilibili, videoRef, setSimTime, setClockRunning });
+  const subtitleSnap = useSubtitleSnap({
+    subtitles: study.subs,
+    offsetMs: subtitleOffsetMs,
+    setOffsetMs: setSubtitleOffsetMs,
+    getCurrentTime: readOffsetClock,
+    getActiveCue: () => study.subs.find((cue) => cue.id === study.activeId) || null,
+    focusCue: transcriptFocus.focusTranscriptCue,
+    setActiveId: study.setActiveId,
+    play: offsetPreview.play,
+    pause: offsetPreview.pause,
+  });
   const startCloseReadingFromKeyboard = useCallback(() => {
     const cue = transcriptFocus.focusCurrentTranscriptCue();
     if (cue) study.toggleCloseReading(cue);
@@ -1268,6 +1289,7 @@ export default function LocalStudy() {
               </button>
             )}
             {maskOn && <SubtitleMask />}
+            <SubtitleOffsetCaption cue={subtitleSnap.matchedCue} pulse={subtitleSnap.previewToken} />
             <button
               type="button"
               onClick={() => setMaskOn((v) => !v)}
@@ -1326,7 +1348,7 @@ export default function LocalStudy() {
     <div>
       <SubListResizer height={subHeight} onChange={setSubHeight} />
       {canPlay && hasSubs ? (
-        <SubtitleScrubber study={study} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} movieTitle={materials.videoName} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} sourceType={extractYouTubeId(materials.videoUrl) ? "youtube" : "local"} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} offsetMs={subtitleOffsetMs} />
+        <SubtitleScrubber study={study} movieId={materials.recordId} sourceRecordId={materials.recordId} sourceUrl={materials.videoUrl} movieTitle={materials.videoName} videoId={extractYouTubeId(materials.videoUrl) || materials.recordId || "local"} sourceType={extractYouTubeId(materials.videoUrl) ? "youtube" : "local"} editable={false} listHeight={subHeight} focusRequest={transcriptFocus.focusRequest} getCurrentTime={() => videoRef.current?.getCurrentTime?.()} offsetMs={subtitleOffsetMs} onPickAnchor={subtitleSnap.pickCue} anchorCueId={subtitleSnap.anchor?.id} />
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-background-elev/30 p-8 text-center text-sm text-muted-foreground">
           {canPlay ? "本集暂无台词——到下方「字幕管理」添加字幕即可进入逐句精读。" : "本机无视频时无法跳转台词；下方「字幕管理」仍可提前维护字幕内容。"}
@@ -1436,7 +1458,8 @@ export default function LocalStudy() {
             targetEpisodeNumber={metas.find((meta) => meta.id === materials.recordId)?.episode_number}
             subtitleSourceName={materials.subtitleSourceName || ""}
             offsetMs={subtitleOffsetMs}
-            onOffsetChange={setSubtitleOffsetMs}
+            onOffsetChange={subtitleSnap.applyOffset}
+            offsetAssist={subtitleSnap}
           />
         </div>
       </div>
