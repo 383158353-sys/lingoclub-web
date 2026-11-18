@@ -65,6 +65,9 @@ test("sentence preview has no 播放原句 and autoplay/loop config stays on the
   assert.match(preview, /正在循环当前原句/);
   assert.match(preview, /关闭原句预览/);
   assert.match(player, /createYouTubeCueEmbedUrl/);
+  assert.match(player, /referrerPolicy="strict-origin-when-cross-origin"[\s\S]{0,240}src=\{src\}/);
+  assert.doesNotMatch(player, /iframe_api/);
+  assert.doesNotMatch(player, /new window\.YT\.Player/);
   assert.doesNotMatch(player, /播放原句/);
   assert.match(videoPlayer, /<YouTubePlayer[^>]*cueAutoplay=\{cueAutoplay\}/);
   assert.doesNotMatch(videoPlayer, /<BilibiliPlayer[^>]*cueAutoplay/);

@@ -41,11 +41,21 @@ export function createYouTubeCueAutoplayVars(origin, startSeconds) {
   });
 }
 
-export function createYouTubeCueEmbedUrl(videoId, origin, startSeconds) {
+// www.youtube.com/embed asks for a Google session. With third-party cookies
+// blocked, or when the first iframe request has no Referer, YouTube shows
+// "Sign in to confirm you're not a bot" on every network, not one bad VPN node.
+// The privacy-enhanced host is the supported embed that plays without that login.
+const YOUTUBE_EMBED_ORIGIN = "https://www.youtube-nocookie.com";
+
+function youTubeEmbedUrl(videoId, vars) {
   const params = new URLSearchParams({
-    ...Object.fromEntries(Object.entries(createYouTubeCueAutoplayVars(origin, startSeconds)).map(([key, value]) => [key, String(value)])),
+    ...Object.fromEntries(Object.entries(vars).map(([key, value]) => [key, String(value)])),
   });
-  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params}`;
+  return `${YOUTUBE_EMBED_ORIGIN}/embed/${encodeURIComponent(videoId)}?${params}`;
+}
+
+export function createYouTubeCueEmbedUrl(videoId, origin, startSeconds) {
+  return youTubeEmbedUrl(videoId, createYouTubeCueAutoplayVars(origin, startSeconds));
 }
 
 /** Opening the sentence preview is the playback gesture. Study pages do not call this. */
@@ -95,26 +105,30 @@ export function shouldRestartCueLoop(time, loop) {
 }
 
 export function createYouTubeEmbedUrl(videoId, origin, options) {
-  const params = new URLSearchParams({
-    ...Object.fromEntries(Object.entries(createYouTubePlayerVars(origin, options)).map(([key, value]) => [key, String(value)])),
-  });
-  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params}`;
+  return youTubeEmbedUrl(videoId, createYouTubePlayerVars(origin, options));
 }
 
-// YouTube reports 101/150 both for "owner disabled embedding" and when the
-// embed is replaced by its "请登录，以便我们确认你不是聊天机器人" bot check
-// (typically a flagged VPN/proxy IP). `embeddable` comes from oEmbed via
-// /api/youtube-meta: true / false / null (unknown).
+// No JS API on this request. Used only after the API embed is replaced by
+// YouTube's bot check, so the player can still start without a second handshake.
+export function createYouTubePlainEmbedUrl(videoId) {
+  const params = new URLSearchParams({ rel: "0", modestbranding: "1", playsinline: "1" });
+  return `${YOUTUBE_EMBED_ORIGIN}/embed/${encodeURIComponent(videoId)}?${params}`;
+}
+
+// 101/150 means the owner disabled embedding, or YouTube replaced the player
+// before it could start. `embeddable` comes from oEmbed via /api/youtube-meta:
+// true / false / null (unknown). Do not tell the viewer to switch VPN nodes:
+// the same screen appears on every network when the embed request is wrong.
 export function describeYouTubeEmbedError(code, embeddable = null) {
   if (code === 153) return "YouTube 未收到来源识别信息（153），这不是 LingoClub 登录失败。";
   if (code === 101 || code === 150) {
-    if (embeddable === true) return "这个视频允许嵌入，是 YouTube 要求验证当前网络，请换个 VPN 节点后刷新。";
+    if (embeddable === true) return "这个视频允许嵌入，但 YouTube 没有在这里开始播放。请直接打开原视频。这不是 LingoClub 登录问题。";
     if (embeddable === false) return "该视频不允许嵌入播放。";
-    return "YouTube 无法在此播放：可能是当前网络/VPN 节点被 YouTube 要求验证（换个节点刷新试试），也可能是该视频不允许嵌入。";
+    return "YouTube 无法在此播放。请直接打开原视频；也可能是该视频不允许嵌入。这不是 LingoClub 登录问题。";
   }
   if (code === 100) return "该视频可能已删除或设为私密。";
   if (code !== null && code !== undefined) return `YouTube 嵌入播放器无法播放（${code}）。`;
-  return "YouTube 内嵌播放暂不可用：可能是当前网络/VPN 节点被 YouTube 要求验证，换个节点刷新试试。这不是 LingoClub 登录问题。";
+  return "YouTube 内嵌播放没有开始。请直接打开原视频。这不是 LingoClub 登录问题。";
 }
 
 export async function checkYouTubeEmbeddable(videoId, { timeoutMs = 8000 } = {}) {
