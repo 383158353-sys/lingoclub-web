@@ -104,6 +104,7 @@ export default function LocalStudy() {
   const relinkFileInputRef = useRef(null);
   const bookmarkletHandledRef = useRef(false);
   const sourceDeepLinkOpenedRef = useRef("");
+  const watchPreviewRef = useRef("");
   const sourceDeepLinkFocusedRef = useRef("");
   const openRequestRef = useRef(createLatestRequestGate());
   const lastCloudSyncNoticeRef = useRef(0);
@@ -585,6 +586,31 @@ export default function LocalStudy() {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, [materials, revokeCurrent]);
+
+  useEffect(() => {
+    const watch = searchParams.get("watch");
+    if (!watch || watchPreviewRef.current === watch) return;
+    const url = /^[\w-]{6,}$/.test(watch) ? `https://www.youtube.com/watch?v=${watch}` : watch;
+    if (!/youtube\.com|youtu\.be/i.test(url)) return;
+    watchPreviewRef.current = watch;
+    setMaterials({
+      videoUrl: url,
+      videoName: "播放测试",
+      originalTitle: "",
+      subtitles: [],
+      subtitleOffsetMs: null,
+      subtitleSourceName: "",
+      subtitleImportedAt: "",
+      subtitleCount: 0,
+      posterUrl: "",
+      recordId: "watch-preview",
+      hasLocalVideo: false,
+      mediaAccess: null,
+      legacyVideoCopy: false,
+      temporaryLocalFile: false,
+      pendingSourceStart: null,
+    });
+  }, [searchParams]);
 
   useEffect(() => {
     const id = searchParams.get("open");
