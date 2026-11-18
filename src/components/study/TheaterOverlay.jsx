@@ -1,8 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { BookOpen, ListVideo, Captions, X as XIcon } from "lucide-react";
 import StudyWorkspace from "./StudyWorkspace";
+import { theaterToolbarVisible } from "@/lib/theaterToolbar";
 
-// 全屏沉浸模式：所有悬浮控制统一在右侧竖条（靠近右侧边缘出现）：
+const BAR_KEEP_MARGIN_PX = 8;
+
+// 全屏沉浸模式：所有悬浮控制统一在右侧竖条（鼠标碰到最右侧边缘才出现）：
 //   · 精读开关
 //   · 台词列表开关
 //   · 字幕开关（与台词列表可同时开启或关闭）
@@ -23,25 +26,29 @@ export default function TheaterOverlay({
   const [showScrubber, setShowScrubber] = useState(true);
   const [showMinimalSub, setShowMinimalSub] = useState(false);
   const [hoverZone, setHoverZone] = useState(false);
-  const hideTimerRef = useRef(null);
   const zoneRef = useRef(false);
+  const barRef = useRef(null);
+  const pointerTypeRef = useRef("mouse");
 
-  // 鼠标位置判定：靠近右侧边缘时显示控制条
+  // A tap also fires a compatibility mousemove; the pointer event just before
+  // it says whether a real mouse or a finger caused it.
+  const notePointerType = useCallback((e) => { pointerTypeRef.current = e.pointerType || "mouse"; }, []);
+
+  // 鼠标碰到最右侧边缘才显示控制条；显示后移到按钮上不会消失，移开即收起。
+  // 也挂在 mouseleave 上：快速甩出窗口右侧时，边缘那一条可能收不到 mousemove。
   const onMouseMove = useCallback((e) => {
-    const x = e.clientX / window.innerWidth;
-    const near = x > 0.82;
+    const bar = barRef.current;
+    const near = theaterToolbarVisible({
+      visible: zoneRef.current,
+      distanceFromRight: window.innerWidth - e.clientX,
+      viewportWidth: window.innerWidth,
+      barReach: bar ? window.innerWidth - bar.offsetLeft + BAR_KEEP_MARGIN_PX : 0,
+      finePointer: pointerTypeRef.current === "mouse",
+    });
     if (near !== zoneRef.current) {
       zoneRef.current = near;
       setHoverZone(near);
     }
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    if (!near) {
-      hideTimerRef.current = setTimeout(() => setHoverZone(false), 800);
-    }
-  }, []);
-
-  useEffect(() => {
-    return () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current); };
   }, []);
 
   const minSubOn = showMinimalSub && canPlay && hasSubs;
@@ -69,7 +76,7 @@ export default function TheaterOverlay({
   );
 
   return (
-    <div className="fixed inset-0 z-[300] bg-background" onMouseMove={onMouseMove}>
+    <div className="fixed inset-0 z-[300] bg-background" onPointerDown={notePointerType} onPointerMove={notePointerType} onMouseMove={onMouseMove} onMouseLeave={onMouseMove}>
       {/* 主体布局：始终用 StudyWorkspace，切换精读/台词时不卸载 VideoPlayer */}
       <div className="absolute inset-0 p-3">
         <StudyWorkspace
@@ -82,6 +89,7 @@ export default function TheaterOverlay({
 
       {/* 右侧统一控制条：所有按钮集中于此 */}
       <div
+        ref={barRef}
         className={`absolute right-3 top-1/2 z-[325] flex -translate-y-1/2 flex-col items-stretch gap-2 rounded-2xl glass px-2.5 py-3 transition-all duration-300 ${
           hoverZone ? "opacity-100" : "pointer-events-none translate-x-4 opacity-0"
         }`}
