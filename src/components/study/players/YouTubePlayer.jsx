@@ -1,27 +1,11 @@
-import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle, useMemo } from "react";
-import { checkYouTubeEmbeddable, createYouTubeCueEmbedUrl, createYouTubeEmbedUrl, describeYouTubeEmbedError } from "@/lib/youtubePlayerConfig";
+import React, { useRef, useEffect, forwardRef, useImperativeHandle, useMemo } from "react";
+import { createYouTubeCueEmbedUrl, createYouTubeEmbedUrl } from "@/lib/youtubePlayerConfig";
 
 /**
- * YouTube 播放器：通过 IFrame Player API 嵌入。
- * 完全独立，不依赖 B站 / 原生视频逻辑。
- *
- * 进度同步：轮询 getCurrentTime() 喂给 onTimeUpdate，使页面字幕绑定真实进度条。
- * 播放/暂停/跳转：通过 YT API 的 playVideo / pauseVideo / seekTo 实现。
+ * YouTube 播放器。只放一个 nocookie iframe，不加载 YouTube 的播放器脚本。
+ * 那份脚本会把播放器换成 youtube.com 的嵌入页，从而出现登录验证，视频就无法在页面里播放。
+ * 进度和跳转通过嵌入页自己的 postMessage 完成。
  */
-
-let ytApiPromise = null;
-function loadYTApi() {
-  if (typeof window !== "undefined" && window.YT && window.YT.Player) return Promise.resolve();
-  if (ytApiPromise) return ytApiPromise;
-  ytApiPromise = new Promise((resolve) => {
-    const prev = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => { if (prev) prev(); resolve(); };
-    const s = document.createElement("script");
-    s.src = "https://www.youtube.com/iframe_api";
-    document.head.appendChild(s);
-  });
-  return ytApiPromise;
-}
 
 function parseYouTube(url) {
   try {
@@ -45,25 +29,20 @@ function parseYouTube(url) {
   }
 }
 
+function postToPlayer(iframe, payload) {
+  if (!iframe?.contentWindow) return;
+  iframe.contentWindow.postMessage(JSON.stringify({
+    ...payload,
+    id: iframe.id,
+    channel: "widget",
+  }), "*");
+}
+
 const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", onTimeUpdate, onUserSeek, autoPlayFrom, cueAutoplay = false }, ref) {
   const embed = useMemo(() => parseYouTube(url), [url]);
-  const [playerErrorCode, setPlayerErrorCode] = useState(null);
-  const [embedUnavailable, setEmbedUnavailable] = useState(false);
-  const [embeddable, setEmbeddable] = useState(null);
-  const [embedBlocked, setEmbedBlocked] = useState(false);
-  const [playerLive, setPlayerLive] = useState(false);
-
-  // Host container React owns but renders NO JSX children into — so React never
-  // tries to reconcile the iframe the YT API injects/destroys inside it.
-  const ytHostRef = useRef(null);
-  const ytPlayerRef = useRef(null);
-  const ytTickRef = useRef(null);
-  const ytPendingSeek = useRef(null);
-  const ytPendingPlay = useRef(false);
-  const lastEmittedRef = useRef(-1);
-
-  // 用 ref 保存 onTimeUpdate，避免它出现在 useEffect 依赖数组中导致
-  // YouTube 播放器被反复销毁重建（黑屏）。
+  const iframeRef = useRef(null);
+  const timeRef = useRef(0);
+  const stateRef = useRef(-1);
   const onTimeUpdateRef = useRef(onTimeUpdate);
   onTimeUpdateRef.current = onTimeUpdate;
   const onUserSeekRef = useRef(onUserSeek);
@@ -72,287 +51,107 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
   autoPlayFromRef.current = autoPlayFrom;
   const cueAutoplayRef = useRef(cueAutoplay);
   cueAutoplayRef.current = cueAutoplay;
-  const unmutedRef = useRef(false);
-  const lastClockRef = useRef({ time: null, at: 0 });
-  const suppressSeekDetectionUntilRef = useRef(0);
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const src = useMemo(() => {
+    if (!embed) return "";
+    if (cueAutoplay && Number.isFinite(Number(autoPlayFrom))) return createYouTubeCueEmbedUrl(embed.videoId, origin, autoPlayFrom);
+    return createYouTubeEmbedUrl(embed.videoId, origin);
+  }, [embed, cueAutoplay, autoPlayFrom, origin]);
 
   useEffect(() => {
-    if (!embed?.videoId) return;
-    setPlayerErrorCode(null);
-    setEmbedUnavailable(false);
-    setEmbeddable(null);
-    setEmbedBlocked(false);
-    setPlayerLive(false);
-    let cancelled = false;
-    const host = ytHostRef.current;
-    if (!host) return;
-
-    const origin = typeof window !== "undefined" ? window.location.origin : undefined;
-    const cueStart = autoPlayFromRef.current;
-    const cuePlayback = cueAutoplayRef.current && Number.isFinite(cueStart);
-    unmutedRef.current = false;
-    let cuePlayAttempts = 0;
-    let cueStarted = false;
-    let unmuteAttemptedAt = 0;
-
-    const kickCuePlayback = (player, { restart = false } = {}) => {
-      if (!cuePlayback || !player || cancelled) return;
-      if (cuePlayAttempts >= 8) return;
-      cuePlayAttempts += 1;
-      try { player.mute?.(); } catch { /* noop */ }
-      if (!cueStarted || restart) {
-        if (Number.isFinite(cueStart)) {
-          try { player.seekTo?.(cueStart, true); } catch { /* noop */ }
-        }
-      }
-      try { player.playVideo?.(); } catch { /* autoplay may still be blocked */ }
-    };
-
-    const paintIframe = (src) => {
-      host.innerHTML = "";
-      const iframe = document.createElement("iframe");
-      iframe.style.cssText = "width:100%;height:100%;border:0";
-      iframe.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
-      // Set before src. The first embed request must already include Referer,
-      // or YouTube answers with the bot-check screen on every network.
-      iframe.referrerPolicy = "strict-origin-when-cross-origin";
-      iframe.dataset.lcReferrer = "1";
-      iframe.title = "YouTube video player";
-      iframe.setAttribute("allowfullscreen", "");
-      iframe.src = src;
-      host.appendChild(iframe);
-      return iframe;
-    };
-
-    const enforceReferrer = (iframe) => {
-      if (!iframe || iframe.dataset.lcReferrer === "1") return;
-      iframe.referrerPolicy = "strict-origin-when-cross-origin";
-      iframe.dataset.lcReferrer = "1";
-    };
-
-    // Own the iframe so the IFrame API cannot insert one that navigates before
-    // referrerPolicy is set. Study playback stays paused; sentence preview autoplays.
-    const embedSrc = cuePlayback
-      ? createYouTubeCueEmbedUrl(embed.videoId, origin, cueStart)
-      : createYouTubeEmbedUrl(embed.videoId, origin);
-    let playerFrame = paintIframe(embedSrc);
-    const frameObserver = new MutationObserver(() => {
-      host.querySelectorAll("iframe").forEach(enforceReferrer);
-    });
-    frameObserver.observe(host, { childList: true, subtree: true });
-    let playerReady = false;
-    const blockEmbed = () => {
-      if (cancelled || playerReady) return;
-      playerReady = true;
-      setEmbedBlocked(true);
-      setPlayerLive(false);
-      setEmbedUnavailable(false);
-      setPlayerErrorCode(null);
-      try { ytPlayerRef.current?.destroy?.(); } catch { /* noop */ }
-      ytPlayerRef.current = null;
-      host.innerHTML = "";
-    };
-    const availabilityTimer = setTimeout(() => {
-      if (!cancelled && !playerReady) blockEmbed();
-    }, 4000);
-
+    const iframe = iframeRef.current;
+    if (!iframe) return undefined;
+    let lastEmitted = -1;
+    let lastTime = null;
     const emit = (t) => {
       if (typeof t !== "number" || Number.isNaN(t)) return;
-      const r = Math.round(t * 10) / 10;
-      if (r !== lastEmittedRef.current) {
-        lastEmittedRef.current = r;
-        if (onTimeUpdateRef.current) onTimeUpdateRef.current(t);
+      timeRef.current = t;
+      const rounded = Math.round(t * 10) / 10;
+      if (rounded === lastEmitted) return;
+      if (lastTime != null && Math.abs(t - lastTime) > 1.5) onUserSeekRef.current?.(t);
+      lastTime = t;
+      lastEmitted = rounded;
+      onTimeUpdateRef.current?.(t);
+    };
+    const listen = () => {
+      postToPlayer(iframe, { event: "listening" });
+      postToPlayer(iframe, { event: "command", func: "addEventListener", args: ["onReady"] });
+      postToPlayer(iframe, { event: "command", func: "addEventListener", args: ["onStateChange"] });
+    };
+    const onMessage = (event) => {
+      if (event.source !== iframe.contentWindow) return;
+      let data = event.data;
+      if (typeof data === "string") {
+        try { data = JSON.parse(data); } catch { return; }
       }
-    };
-
-    loadYTApi().then(() => {
-      if (cancelled) return;
-      try { ytPlayerRef.current?.destroy?.(); } catch { /* noop */ }
-      const target = playerFrame.isConnected ? playerFrame : paintIframe(embedSrc);
-      playerFrame = target;
-      enforceReferrer(target);
-      ytPlayerRef.current = new window.YT.Player(target, {
-        events: {
-          onReady: (e) => {
-            if (cancelled) return;
-            playerReady = true;
-            setPlayerLive(true);
-            setEmbedBlocked(false);
-            try {
-              const frame = e.target.getIframe?.();
-              enforceReferrer(frame);
-              if (frame) frame.setAttribute("allow", "autoplay; fullscreen; encrypted-media; picture-in-picture");
-            } catch { /* noop */ }
-            if (cuePlayback) {
-              kickCuePlayback(e.target, { restart: true });
-              ytPendingPlay.current = false;
-              return;
-            }
-            if (Number.isFinite(autoPlayFromRef.current)) {
-              try { e.target.seekTo(autoPlayFromRef.current, true); } catch { /* noop */ }
-              try { e.target.playVideo(); } catch { /* autoplay may be blocked by the browser */ }
-              ytPendingPlay.current = false;
-              return;
-            }
-            if (Number.isFinite(ytPendingSeek.current)) {
-              try { e.target.seekTo(ytPendingSeek.current, true); } catch { /* noop */ }
-              ytPendingSeek.current = null;
-            }
-            if (ytPendingPlay.current) {
-              try { e.target.playVideo(); } catch { /* autoplay may be blocked by the browser */ }
-              ytPendingPlay.current = false;
-            }
-          },
-          onStateChange: (e) => {
-            if (e.data === 1 || e.data === 3) { setEmbedUnavailable(false); setPlayerErrorCode(null); }
-            if (cuePlayback && e.data === 1) {
-              cueStarted = true;
-              if (!unmutedRef.current) {
-                unmutedRef.current = true;
-                unmuteAttemptedAt = Date.now();
-                try { e.target.unMute?.(); e.target.setVolume?.(100); } catch { /* iOS may ignore unmute until a tap */ }
-              }
-            }
-            if (cuePlayback && (e.data === -1 || e.data === 5)) kickCuePlayback(e.target);
-            if (cuePlayback && e.data === 0) kickCuePlayback(e.target, { restart: true });
-            if (cuePlayback && e.data === 2 && (!cueStarted || (unmuteAttemptedAt && Date.now() - unmuteAttemptedAt < 800))) {
-              if (unmuteAttemptedAt && Date.now() - unmuteAttemptedAt < 800) {
-                try { e.target.mute?.(); } catch { /* keep the sentence looping */ }
-              }
-              kickCuePlayback(e.target);
-            }
-            // 1=playing, 2=paused, 3=buffering → emit time for snappy scrub feedback
-            if (e.data === 1 || e.data === 2 || e.data === 3) {
-              try { emit(e.target.getCurrentTime()); } catch { /* noop */ }
-            }
-          },
-          onAutoplayBlocked: (e) => kickCuePlayback(e?.target || ytPlayerRef.current),
-          onError: (e) => {
-            const code = Number(e?.data) || 0;
-            if (playerReady) return;
-            if (host) host.dataset.ytError = String(code);
-            console.info("[YouTubePlayer] embedded playback error", { code, videoId: embed.videoId, origin });
-            if (code === 101 || code === 150 || code === 153) {
-              blockEmbed();
-              return;
-            }
-            setPlayerErrorCode(code);
-          },
-        },
-      });
-    });
-
-    ytTickRef.current = setInterval(() => {
-      const p = ytPlayerRef.current;
-      if (!p || typeof p.getCurrentTime !== "function") return;
-      try {
-        const time = p.getCurrentTime();
-        const now = Date.now();
-        const previous = lastClockRef.current;
-        const elapsed = previous.at ? (now - previous.at) / 1000 : 0;
-        const jumpThreshold = Math.max(1.5, elapsed * 4 + 0.75);
-        if (previous.time != null && Math.abs(time - previous.time) > jumpThreshold && now >= suppressSeekDetectionUntilRef.current) {
-          onUserSeekRef.current?.(time);
+      const info = data?.info;
+      if (typeof info?.playerState === "number") {
+        stateRef.current = info.playerState;
+        if (cueAutoplayRef.current && info.playerState === 0 && Number.isFinite(Number(autoPlayFromRef.current))) {
+          postToPlayer(iframe, { event: "command", func: "seekTo", args: [Number(autoPlayFromRef.current), true] });
+          postToPlayer(iframe, { event: "command", func: "playVideo", args: [] });
         }
-        // Time is advancing → the embed is really playing; drop any stale "unavailable" warning.
-        if (previous.time != null && time > previous.time + 0.05) { setEmbedUnavailable(false); setPlayerErrorCode(null); }
-        lastClockRef.current = { time, at: now };
-        emit(time);
-      } catch { /* not ready */ }
-    }, 250);
-
-    return () => {
-      cancelled = true;
-      frameObserver.disconnect();
-      clearTimeout(availabilityTimer);
-      if (ytTickRef.current) { clearInterval(ytTickRef.current); ytTickRef.current = null; }
-      try { ytPlayerRef.current?.destroy?.(); } catch { /* noop */ }
-      ytPlayerRef.current = null;
-      lastEmittedRef.current = -1;
-      lastClockRef.current = { time: null, at: 0 };
-      if (host) host.innerHTML = "";
+      }
+      if (typeof info?.currentTime === "number") emit(info.currentTime);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [embed?.videoId]);
-
-  // 101/150 is ambiguous (embedding disabled vs. YouTube bot check on this
-  // network); ask oEmbed once so the message says which one it is.
-  useEffect(() => {
-    if (!embed?.videoId || (playerErrorCode !== 101 && playerErrorCode !== 150)) return undefined;
-    let active = true;
-    checkYouTubeEmbeddable(embed.videoId).then((value) => { if (active) setEmbeddable(value); });
-    return () => { active = false; };
-  }, [embed?.videoId, playerErrorCode]);
+    iframe.addEventListener("load", listen);
+    window.addEventListener("message", onMessage);
+    return () => {
+      iframe.removeEventListener("load", listen);
+      window.removeEventListener("message", onMessage);
+    };
+  }, [src]);
 
   useImperativeHandle(ref, () => ({
     getVideoElement() { return null; },
-    getCurrentTime() { try { return ytPlayerRef.current?.getCurrentTime?.() ?? null; } catch { return null; } },
-    isPlaying() { try { const state = ytPlayerRef.current?.getPlayerState?.(); return state === 1 || state === 3; } catch { return false; } },
+    getCurrentTime() { return timeRef.current; },
+    isPlaying() { return stateRef.current === 1 || stateRef.current === 3; },
     seek(sec) {
       if (!Number.isFinite(sec)) return;
-      suppressSeekDetectionUntilRef.current = Date.now() + 900;
-      const p = ytPlayerRef.current;
-      if (p && typeof p.seekTo === "function") {
-        try { p.seekTo(sec, true); if (onTimeUpdateRef.current) onTimeUpdateRef.current(sec); } catch { /* noop */ }
-      } else {
-        ytPendingSeek.current = sec;
-      }
+      timeRef.current = sec;
+      postToPlayer(iframeRef.current, { event: "command", func: "seekTo", args: [sec, true] });
+      onTimeUpdateRef.current?.(sec);
     },
     play(sec) {
-      if (Number.isFinite(sec)) suppressSeekDetectionUntilRef.current = Date.now() + 900;
-      const player = ytPlayerRef.current;
-      if (!player) {
-        if (Number.isFinite(sec)) ytPendingSeek.current = sec;
-        ytPendingPlay.current = true;
-        return;
+      if (Number.isFinite(sec)) {
+        timeRef.current = sec;
+        postToPlayer(iframeRef.current, { event: "command", func: "seekTo", args: [sec, true] });
+        onTimeUpdateRef.current?.(sec);
       }
-      try {
-        if (Number.isFinite(sec)) player.seekTo?.(sec, true);
-        player.playVideo?.();
-      } catch { /* noop */ }
+      postToPlayer(iframeRef.current, { event: "command", func: "playVideo", args: [] });
     },
     pause(sec) {
-      const t = Number.isFinite(sec) ? sec : 0;
-      if (Number.isFinite(sec)) suppressSeekDetectionUntilRef.current = Date.now() + 900;
-      try { ytPlayerRef.current?.seekTo?.(t, true); } catch { /* noop */ }
-      try { ytPlayerRef.current?.pauseVideo?.(); } catch { /* noop */ }
+      if (Number.isFinite(sec)) {
+        timeRef.current = sec;
+        postToPlayer(iframeRef.current, { event: "command", func: "seekTo", args: [sec, true] });
+      }
+      postToPlayer(iframeRef.current, { event: "command", func: "pauseVideo", args: [] });
     },
     pauseOnly() {
-      try { ytPlayerRef.current?.pauseVideo?.(); } catch { /* noop */ }
+      postToPlayer(iframeRef.current, { event: "command", func: "pauseVideo", args: [] });
     },
     playOnly() {
-      try { ytPlayerRef.current?.playVideo?.(); } catch { /* noop */ }
+      postToPlayer(iframeRef.current, { event: "command", func: "playVideo", args: [] });
     },
   }), [embed]);
 
   if (!embed) return null;
-  const watchUrl = `https://www.youtube.com/watch?v=${embed.videoId}`;
-  const poster = `https://i.ytimg.com/vi/${embed.videoId}/hqdefault.jpg`;
 
   return (
     <div className={className}>
       <div className="relative w-full overflow-hidden rounded-2xl border border-border bg-black" style={{ aspectRatio: "16 / 9" }}>
-        <div ref={ytHostRef} className={`absolute inset-0 h-full w-full ${playerLive && !embedBlocked ? "" : "invisible"}`} />
-        {(!playerLive || embedBlocked) && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black px-6 text-center">
-            <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-40" />
-            <div className="relative max-w-md">
-              {embedBlocked ? (
-                <>
-                  <p className="text-sm leading-6 text-white">YouTube 拒绝把这个视频嵌在网页里。打开原视频就可以播放。</p>
-                  <a href={watchUrl} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex min-h-11 items-center justify-center rounded-full bg-mint px-5 text-sm font-semibold text-background">在 YouTube 播放</a>
-                </>
-              ) : (
-                <p className="text-sm text-white/80">正在连接 YouTube…</p>
-              )}
-            </div>
-          </div>
-        )}
+        <iframe
+          key={src}
+          id={`lc-yt-${embed.videoId}`}
+          ref={iframeRef}
+          title="YouTube video player"
+          className="absolute inset-0 h-full w-full border-0"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          src={src}
+        />
       </div>
-      {(playerErrorCode !== null || embedUnavailable) && !embedBlocked && <p role="status" className="mt-2 text-xs text-amber-300/90">
-        {describeYouTubeEmbedError(playerErrorCode, embeddable)}
-        {" "}<a href={watchUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">在 YouTube 打开</a>
-      </p>}
     </div>
   );
 });
