@@ -95,6 +95,7 @@ test("correct answers advance through 1/3/7/14/30/60 day intervals", () => {
   assert.equal(card.reviewCount, expected.length);
   assert.equal(card.correctCount, expected.length);
   assert.equal(card.status, "mastered");
+  assert.equal(card.review_history.length, expected.length);
 });
 
 test("wrong answers downgrade intervals without resetting history and each same-day answer counts", () => {

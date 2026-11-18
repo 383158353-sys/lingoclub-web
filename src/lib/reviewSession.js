@@ -2,7 +2,6 @@
 // 用户退出后再次进入「开始复习」时自动恢复到上次中断的位置。
 import { advanceReviewQuestion } from "./reviewFlow.js";
 import { notifyLocalStateChanged, scopedStorageKey } from "./userStorage.js";
-import { localDateKey } from "./srs.js";
 
 const KEY = "lingoclub_review_session_v1";
 
@@ -27,10 +26,10 @@ export function clearSession() {
   try { localStorage.removeItem(scopedStorageKey(KEY)); notifyLocalStateChanged(); } catch { /* noop */ }
 }
 
-// 会话是否仍可恢复：同一天 + 队列 id 仍存在于当前词库（避免删除/迁移后恢复到无效卡片）。
-export function isResumable(session, vocabIds, now = Date.now()) {
+// A checkpoint remains resumable until it is completed or its cards disappear.
+export function isResumable(session, vocabIds) {
   if (!session || session.completed || session.phase === "done" || !Array.isArray(session.queue) || !session.queue.length) return false;
-  if (session.date !== localDateKey(now) || Number(session.idx || 0) >= session.queue.length) return false;
+  if (Number(session.idx || 0) >= session.queue.length) return false;
   const idSet = new Set(vocabIds);
   return session.queue.every((id) => idSet.has(id));
 }

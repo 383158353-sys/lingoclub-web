@@ -19,13 +19,13 @@ function session(overrides = {}) {
   };
 }
 
-test("same-day resume rules stay intact", () => {
+test("unfinished review sessions remain resumable across dates", () => {
   const current = session();
-  assert.equal(isResumable(current, ["a", "b", "c"], now), true);
-  assert.equal(isResumable(current, ["a", "b", "c"], new Date(2026, 0, 6, 12, 0, 0)), false);
-  assert.equal(isResumable(session({ phase: "done" }), ["a", "b", "c"], now), false);
-  assert.equal(isResumable(session({ completed: true }), ["a", "b", "c"], now), false);
-  assert.equal(isResumable(session({ queue: ["a", "missing"], idx: 0 }), ["a"], now), false);
+  assert.equal(isResumable(current, ["a", "b", "c"]), true);
+  assert.equal(isResumable(session({ date: "2026-01-04" }), ["a", "b", "c"]), true);
+  assert.equal(isResumable(session({ phase: "done" }), ["a", "b", "c"]), false);
+  assert.equal(isResumable(session({ completed: true }), ["a", "b", "c"]), false);
+  assert.equal(isResumable(session({ queue: ["a", "missing"], idx: 0 }), ["a"]), false);
 });
 
 test("斩 removes the current card from the saved queue without restarting at the first card", () => {
@@ -36,11 +36,11 @@ test("斩 removes the current card from the saved queue without restarting at th
   assert.equal(buried.phase, "r1");
   assert.ok(buried.completedIds.includes("b"));
   assert.deepEqual(buried.dailyQueue.ids, ["a", "c"]);
-  assert.equal(isResumable(buried, ["a", "b", "c"], now), true);
+  assert.equal(isResumable(buried, ["a", "b", "c"]), true);
 
   const finishedPhase = buryCardInSession(session({ idx: 2 }), "c");
   assert.equal(finishedPhase.phase, "r2");
   assert.equal(finishedPhase.idx, 0);
   assert.deepEqual(finishedPhase.queue, ["a", "b"]);
-  assert.equal(isResumable(finishedPhase, ["a", "b", "c"], now), true);
+  assert.equal(isResumable(finishedPhase, ["a", "b", "c"]), true);
 });

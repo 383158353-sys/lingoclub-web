@@ -170,38 +170,53 @@ export default function Collection() {
   const dailyQ = useMemo(() => {
     const restored = restoreDailyQueue(savedSession?.dailyQueue, vocab);
     const snapshotGoal = Number(savedSession?.dailyQueue?.goal) || DAILY_REVIEW_GOAL;
-    const finishedToday = savedSession?.date === todayISO() && (savedSession.completed || savedSession.phase === "done");
-    if (restored && (resumable || finishedToday || snapshotGoal === dailyGoal)) return restored;
+    const snapshotIsToday = savedSession?.dailyQueue?.date === todayISO();
+    const finishedToday = snapshotIsToday && savedSession.reviewMode === "daily"
+      && (savedSession.completed || savedSession.phase === "done");
+    if (restored && snapshotIsToday && (resumable || finishedToday || snapshotGoal === dailyGoal)) return restored;
     return buildDailyQueue(vocab, Date.now(), dailyGoal);
   }, [dailyGoal, resumable, savedSession, vocab]);
 
   useEffect(() => {
     if (loading || !vocab.length || savedSession?.dailyQueue?.date === todayISO()) return;
-    const next = saveSession({ date: todayISO(), dailyQueue: dailyQueueSnapshot(dailyQ), completedIds: [] });
+    const dailyQueue = dailyQueueSnapshot(dailyQ);
+    const next = saveSession(isResumable(savedSession, vocabIds)
+      ? { ...savedSession, date: todayISO(), dailyQueue, completedIds: [] }
+      : { date: todayISO(), dailyQueue, completedIds: [] });
     if (next) setSavedSession(next);
-  }, [dailyQ, loading, savedSession?.dailyQueue?.date, vocab.length]);
+  }, [dailyQ, loading, savedSession, vocab.length, vocabIds]);
 
-  // 保存同一天的队列快照和当前断点。完成后保留快照，避免当天再次抽题。
+  const saveReviewCheckpoint = (completed = phase === "done") => {
+    if (tab !== "review" || !queue.length) return;
+    const snapshot = savedSession?.dailyQueue?.date === todayISO()
+      ? savedSession.dailyQueue
+      : dailyQueueSnapshot(dailyQ);
+    const dailyCompletedIds = reviewMode === "daily"
+      ? [...new Set([...(snapshot.completedIds || []), ...completedIds, ...(completed ? originalQueue : [])])]
+      : snapshot.completedIds || [];
+    const next = saveSession({
+      date: todayISO(),
+      dailyQueue: { ...snapshot, completedIds: dailyCompletedIds },
+      reviewMode,
+      sessionId: reviewSessionId,
+      originalQueue,
+      queue,
+      idx,
+      reviewed,
+      phase,
+      r1Res,
+      r2Res,
+      r3Res,
+      retried,
+      completedIds: dailyCompletedIds,
+      completed,
+    });
+    if (next) setSavedSession(next);
+  };
+
+  // Save every review mode so leaving and returning resumes the active question.
   useEffect(() => {
-    if (tab === "review" && phase !== "done" && queue.length) {
-      if (reviewMode !== "daily") {
-        // Autonomous practice is intentionally not written over the daily queue snapshot.
-        return;
-      }
-      const snapshot = savedSession?.dailyQueue?.date === todayISO()
-        ? savedSession.dailyQueue
-        : dailyQueueSnapshot(dailyQ);
-      const completed = [...new Set([...(snapshot.completedIds || []), ...completedIds])];
-      setSavedSession(saveSession({ date: todayISO(), dailyQueue: { ...snapshot, completedIds: completed }, reviewMode, sessionId: reviewSessionId, originalQueue, queue, idx, reviewed, phase, r1Res, r2Res, r3Res, retried, completedIds: completed }) || null);
-    }
-    if (tab === "review" && phase === "done") {
-      if (reviewMode !== "daily") {
-        return;
-      }
-      const snapshot = savedSession?.dailyQueue?.date === todayISO() ? savedSession.dailyQueue : dailyQueueSnapshot(dailyQ);
-      const completed = [...new Set([...(snapshot.completedIds || []), ...originalQueue])];
-      setSavedSession(saveSession({ date: todayISO(), dailyQueue: { ...snapshot, completedIds: completed }, reviewMode, sessionId: reviewSessionId, originalQueue, queue, idx, reviewed, phase, r1Res, r2Res, r3Res, retried, completedIds: completed, completed: true }) || null);
-    }
+    if (tab === "review" && queue.length) saveReviewCheckpoint(phase === "done");
   // savedSession is deliberately omitted: saveSession emits a local-state event.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, queue, idx, reviewed, phase, r1Res, r2Res, r3Res, retried, originalQueue, completedIds, reviewMode, reviewSessionId]);
@@ -232,9 +247,10 @@ export default function Collection() {
   const sourceGroups = [...new Set(vocab.flatMap((card) => [card.source_movie_title, ...(card.sources || []).map((source) => source.source_movie_title)]).filter(Boolean))];
 
   const startReview = (mode = "daily") => {
-    // 断点续学：同一天且队列 id 仍存在 → 恢复上次中断的进度
+    // Restore the active checkpoint before starting a new queue.
     const session = loadSession();
-    if (mode === "daily" && isResumable(session, vocab.map((c) => c.id)) && session.reviewMode !== "manual") {
+    if (isResumable(session, vocab.map((c) => c.id))
+      && (mode === "daily" || mode === session.reviewMode)) {
       setOriginalQueue(session.originalQueue || session.queue);
       setQueue([...session.queue]);
       setIdx(session.idx || 0);
@@ -252,12 +268,12 @@ export default function Collection() {
       return;
     }
     const existingSnapshot = restoreDailyQueue(session?.dailyQueue, vocab);
-    if (mode === "daily" && session?.dailyQueue?.date === todayISO() && (session.completed || session.phase === "done")) {
+    if (mode === "daily" && session?.reviewMode === "daily" && session?.dailyQueue?.date === todayISO() && (session.completed || session.phase === "done")) {
       toast({ title: "今日复习已完成", description: "明天会生成新的每日队列。" });
       return;
     }
     const snapshotGoal = Number(session?.dailyQueue?.goal) || DAILY_REVIEW_GOAL;
-    const reuseSnapshot = Boolean(existingSnapshot) && snapshotGoal === dailyGoal;
+    const reuseSnapshot = Boolean(existingSnapshot) && session?.dailyQueue?.date === todayISO() && snapshotGoal === dailyGoal;
     const generated = reuseSnapshot ? existingSnapshot : buildDailyQueue(vocab, Date.now(), dailyGoal);
     const snapshot = reuseSnapshot ? session.dailyQueue : dailyQueueSnapshot(generated);
     const finishedIds = new Set(snapshot.completedIds || session?.completedIds || []);
@@ -470,7 +486,7 @@ export default function Collection() {
     const errorRate = totalReviews ? Math.round((totalErrors / totalReviews) * 100) : 0;
     return (
       <div className="mx-auto flex min-h-[100dvh] max-w-7xl flex-col px-3 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+4.75rem)] sm:px-5 md:min-h-0 md:px-8 md:pb-20 md:pt-28">
-        <ReviewHeader reviewed={reviewed} total={originalQueue.length} phase={phase} stage={stageOf(activeCard)} errorRate={errorRate} onExit={() => { setTab("list"); }} />
+        <ReviewHeader reviewed={reviewed} total={originalQueue.length} phase={phase} stage={stageOf(activeCard)} errorRate={errorRate} onExit={() => { saveReviewCheckpoint(false); setTab("list"); }} />
         {sessionMeta && (sessionMeta.newCount > 0 || sessionMeta.reviewCount > 0) && (
           <p className="mt-2 text-[11px] text-muted-foreground/70">今日队列：复习 {sessionMeta.reviewCount} · 新词 {sessionMeta.newCount}{sessionMeta.deferred > 0 ? ` · 顺延 ${sessionMeta.deferred} 至明日` : ""}</p>
         )}
@@ -530,7 +546,7 @@ export default function Collection() {
       <div className="mt-5 space-y-2 md:mt-8 md:space-y-3">
         <div className="flex min-h-10 flex-wrap items-center gap-2 md:gap-3">
           <button onClick={() => startReview(tab === "list" ? "daily" : "mistakes")} disabled={tab === "errors" && !errorWords.length} className="inline-flex min-h-10 items-center gap-1.5 rounded-full bg-copper px-4 py-2 text-xs font-medium text-copper-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 md:px-6 md:py-2.5 md:text-sm">
-            <RotateCw size={13} className="md:size-[15px]" /> {tab === "list" ? (remainingDailyCount ? (resumable ? "继续今日复习" : "开始今日复习") : "今日复习已完成") + (remainingDailyCount > 0 ? ` (${remainingDailyCount})` : "") : `复习错词 (${errorWords.length})`}
+            <RotateCw size={13} className="md:size-[15px]" /> {tab === "list" ? (resumable ? "继续复习" : remainingDailyCount ? "开始今日复习" : "今日复习已完成") + (remainingDailyCount > 0 ? ` (${remainingDailyCount})` : "") : `复习错词 (${errorWords.length})`}
           </button>
           <button type="button" aria-expanded={otherReviewOpen} onClick={() => setOtherReviewOpen((value) => !value)} className="min-h-10 rounded-full border border-border px-4 py-2 text-xs text-muted-foreground">复习方式 {otherReviewOpen ? "▴" : "▾"}</button>
           <div role="group" aria-label="每日题量" title="进行中的复习不会改题量。新题量在下次生成新队列时生效。" className="inline-flex min-h-10 items-center gap-0.5 rounded-full border border-border px-1.5 text-xs text-muted-foreground">
