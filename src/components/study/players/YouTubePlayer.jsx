@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle, useMemo } from "react";
-import { checkYouTubeEmbeddable, createYouTubeCueEmbedUrl, createYouTubeEmbedUrl, describeYouTubeEmbedError } from "@/lib/youtubePlayerConfig";
+import { checkYouTubeEmbeddable, createYouTubeCueEmbedUrl, createYouTubeEmbedUrl, createYouTubePlainEmbedUrl, describeYouTubeEmbedError } from "@/lib/youtubePlayerConfig";
 
 /**
  * YouTube 播放器：通过 IFrame Player API 嵌入。
@@ -22,6 +22,8 @@ function loadYTApi() {
   });
   return ytApiPromise;
 }
+
+if (typeof window !== "undefined") loadYTApi();
 
 function parseYouTube(url) {
   try {
@@ -122,13 +124,8 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
 
     const enforceReferrer = (iframe) => {
       if (!iframe || iframe.dataset.lcReferrer === "1") return;
-      const missingPolicy = iframe.referrerPolicy !== "strict-origin-when-cross-origin";
       iframe.referrerPolicy = "strict-origin-when-cross-origin";
       iframe.dataset.lcReferrer = "1";
-      if (missingPolicy && iframe.src) {
-        const src = iframe.src;
-        iframe.src = src;
-      }
     };
 
     // Own the iframe so the IFrame API cannot insert one that navigates before
@@ -142,9 +139,19 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     });
     frameObserver.observe(host, { childList: true, subtree: true });
     let playerReady = false;
+    let usedPlainEmbed = false;
+    const showPlainEmbed = () => {
+      if (usedPlainEmbed || cancelled) return;
+      usedPlainEmbed = true;
+      playerReady = true;
+      setPlayerErrorCode(null);
+      setEmbedUnavailable(false);
+      playerFrame = paintIframe(createYouTubePlainEmbedUrl(embed.videoId));
+    };
     const availabilityTimer = setTimeout(() => {
-      if (!cancelled && !playerReady) setEmbedUnavailable(true);
-    }, 12000);
+      if (cancelled || playerReady) return;
+      showPlainEmbed();
+    }, 4000);
 
     const emit = (t) => {
       if (typeof t !== "number" || Number.isNaN(t)) return;
@@ -218,9 +225,14 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
           onAutoplayBlocked: (e) => kickCuePlayback(e?.target || ytPlayerRef.current),
           onError: (e) => {
             const code = Number(e?.data) || 0;
-            setPlayerErrorCode(code);
+            if (usedPlainEmbed) return;
             if (host) host.dataset.ytError = String(code);
             console.info("[YouTubePlayer] embedded playback error", { code, videoId: embed.videoId, origin });
+            if (code === 101 || code === 150 || code === 153) {
+              showPlainEmbed();
+              return;
+            }
+            setPlayerErrorCode(code);
           },
         },
       });

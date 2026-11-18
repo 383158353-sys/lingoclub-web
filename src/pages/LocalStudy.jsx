@@ -468,6 +468,26 @@ export default function LocalStudy() {
   // video Blob. New selections are never persisted as video bytes.
   const openMeta = useCallback(async (sourceMeta, markLearned = false, transientFile = null, returnView = null) => {
     const requestId = openRequestRef.current.begin();
+    const hintedUrl = sourceMeta?.video_url || (sourceMeta?.youtube_video_id ? `https://www.youtube.com/watch?v=${sourceMeta.youtube_video_id}` : "");
+    if (/youtube\.com|youtu\.be/i.test(hintedUrl)) {
+      setMaterials({
+        videoUrl: hintedUrl,
+        videoName: sourceMeta.name || "",
+        originalTitle: sourceMeta.original_title || "",
+        subtitles: sourceMeta.subtitles || [],
+        subtitleOffsetMs: sourceMeta.subtitle_offset_ms == null || sourceMeta.subtitle_offset_ms === "" || !Number.isFinite(Number(sourceMeta.subtitle_offset_ms)) ? null : Number(sourceMeta.subtitle_offset_ms),
+        subtitleSourceName: sourceMeta.subtitle_source_name || "",
+        subtitleImportedAt: sourceMeta.subtitle_imported_at || "",
+        subtitleCount: Number(sourceMeta.subtitle_count) || (sourceMeta.subtitles || []).length,
+        posterUrl: sourceMeta.poster_url || "",
+        recordId: sourceMeta.id,
+        hasLocalVideo: false,
+        mediaAccess: null,
+        legacyVideoCopy: false,
+        temporaryLocalFile: Boolean(sourceMeta.local_video_temporary),
+        pendingSourceStart: null,
+      });
+    }
     let meta = await localMovies.get(sourceMeta.id).catch(() => null) || sourceMeta;
     if (!meta.subtitles?.length && Number(meta.subtitle_count) > 0 && user?.id) {
       try {

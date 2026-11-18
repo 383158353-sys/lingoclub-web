@@ -108,6 +108,13 @@ export function createYouTubeEmbedUrl(videoId, origin, options) {
   return youTubeEmbedUrl(videoId, createYouTubePlayerVars(origin, options));
 }
 
+// No JS API on this request. Used only after the API embed is replaced by
+// YouTube's bot check, so the player can still start without a second handshake.
+export function createYouTubePlainEmbedUrl(videoId) {
+  const params = new URLSearchParams({ rel: "0", modestbranding: "1", playsinline: "1" });
+  return `${YOUTUBE_EMBED_ORIGIN}/embed/${encodeURIComponent(videoId)}?${params}`;
+}
+
 // 101/150 means the owner disabled embedding, or YouTube replaced the player
 // before it could start. `embeddable` comes from oEmbed via /api/youtube-meta:
 // true / false / null (unknown). Do not tell the viewer to switch VPN nodes:

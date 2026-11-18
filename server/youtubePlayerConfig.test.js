@@ -1,12 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createYouTubeCueAutoplayVars, createYouTubeEmbedUrl, createYouTubePlayerVars } from "../src/lib/youtubePlayerConfig.js";
+import { createYouTubeCueAutoplayVars, createYouTubeEmbedUrl, createYouTubePlainEmbedUrl, createYouTubePlayerVars } from "../src/lib/youtubePlayerConfig.js";
 
 test("YouTube API and iframe fallback use matching origin and playback parameters", () => {
   const origin = "https://lingoclub.vercel.app";
   const playerVars = createYouTubePlayerVars(origin);
   const embed = new URL(createYouTubeEmbedUrl("7zUI6Ko9qsU", origin));
   assert.equal(embed.origin, "https://www.youtube-nocookie.com");
+  const plain = new URL(createYouTubePlainEmbedUrl("7zUI6Ko9qsU"));
+  assert.equal(plain.origin, "https://www.youtube-nocookie.com");
+  assert.equal(plain.searchParams.get("enablejsapi"), null);
   assert.equal(embed.searchParams.get("origin"), origin);
   for (const [key, value] of Object.entries(playerVars)) assert.equal(embed.searchParams.get(key), String(value));
   assert.equal(playerVars.enablejsapi, 1);
