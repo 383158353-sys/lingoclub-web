@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle, useMemo } from "react";
-import { checkYouTubeEmbeddable, createYouTubeCueAutoplayVars, createYouTubeCueEmbedUrl, createYouTubeEmbedUrl, createYouTubePlayerVars, describeYouTubeEmbedError } from "@/lib/youtubePlayerConfig";
+import { checkYouTubeEmbeddable, createYouTubeCueEmbedUrl, createYouTubeEmbedUrl, describeYouTubeEmbedError } from "@/lib/youtubePlayerConfig";
 
 /**
  * YouTube 播放器：通过 IFrame Player API 嵌入。
@@ -86,7 +86,6 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     const origin = typeof window !== "undefined" ? window.location.origin : undefined;
     const cueStart = autoPlayFromRef.current;
     const cuePlayback = cueAutoplayRef.current && Number.isFinite(cueStart);
-    const playerVars = cuePlayback ? createYouTubeCueAutoplayVars(origin, cueStart) : createYouTubePlayerVars(origin);
     unmutedRef.current = false;
     let cuePlayAttempts = 0;
     let cueStarted = false;
@@ -108,38 +107,43 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     const paintIframe = (src) => {
       host.innerHTML = "";
       const iframe = document.createElement("iframe");
-      iframe.src = src;
       iframe.style.cssText = "width:100%;height:100%;border:0";
-      iframe.allow = "autoplay; fullscreen; encrypted-media";
+      iframe.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
+      // Set before src. The first embed request must already include Referer,
+      // or YouTube answers with the bot-check screen on every network.
       iframe.referrerPolicy = "strict-origin-when-cross-origin";
+      iframe.dataset.lcReferrer = "1";
       iframe.title = "YouTube video player";
       iframe.setAttribute("allowfullscreen", "");
+      iframe.src = src;
       host.appendChild(iframe);
       return iframe;
     };
 
-    // Sentence preview injects the muted autoplay iframe immediately so playback
-    // does not wait on the IFrame API or a second tap. Study playback keeps the
-    // paused player and only falls back to a plain iframe if the API is slow.
-    let fallbackIframe = null;
-    let mount = null;
-    if (cuePlayback) {
-      fallbackIframe = paintIframe(createYouTubeCueEmbedUrl(embed.videoId, origin, cueStart));
-    } else {
-      mount = document.createElement("div");
-      mount.style.width = "100%";
-      mount.style.height = "100%";
-      host.innerHTML = "";
-      host.appendChild(mount);
-    }
-    const fallbackTimer = cuePlayback ? null : setTimeout(() => {
-      if (cancelled || ytPlayerRef.current) return;
-      fallbackIframe = paintIframe(createYouTubeEmbedUrl(embed.videoId, origin));
-    }, 6000);
+    const enforceReferrer = (iframe) => {
+      if (!iframe || iframe.dataset.lcReferrer === "1") return;
+      const missingPolicy = iframe.referrerPolicy !== "strict-origin-when-cross-origin";
+      iframe.referrerPolicy = "strict-origin-when-cross-origin";
+      iframe.dataset.lcReferrer = "1";
+      if (missingPolicy && iframe.src) {
+        const src = iframe.src;
+        iframe.src = src;
+      }
+    };
+
+    // Own the iframe so the IFrame API cannot insert one that navigates before
+    // referrerPolicy is set. Study playback stays paused; sentence preview autoplays.
+    const embedSrc = cuePlayback
+      ? createYouTubeCueEmbedUrl(embed.videoId, origin, cueStart)
+      : createYouTubeEmbedUrl(embed.videoId, origin);
+    let playerFrame = paintIframe(embedSrc);
+    const frameObserver = new MutationObserver(() => {
+      host.querySelectorAll("iframe").forEach(enforceReferrer);
+    });
+    frameObserver.observe(host, { childList: true, subtree: true });
+    let playerReady = false;
     const availabilityTimer = setTimeout(() => {
-      const state = ytPlayerRef.current?.getPlayerState?.();
-      const t = lastClockRef.current.time;
-      if (!cancelled && state !== 1 && state !== 3 && !(t > 0)) setEmbedUnavailable(true);
+      if (!cancelled && !playerReady) setEmbedUnavailable(true);
     }, 12000);
 
     const emit = (t) => {
@@ -154,14 +158,18 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     loadYTApi().then(() => {
       if (cancelled) return;
       try { ytPlayerRef.current?.destroy?.(); } catch { /* noop */ }
-      const target = fallbackIframe && fallbackIframe.isConnected ? fallbackIframe : mount;
+      const target = playerFrame.isConnected ? playerFrame : paintIframe(embedSrc);
+      playerFrame = target;
+      enforceReferrer(target);
       ytPlayerRef.current = new window.YT.Player(target, {
-        ...(target === mount ? { videoId: embed.videoId, width: "100%", height: "100%", playerVars } : {}),
         events: {
           onReady: (e) => {
             if (cancelled) return;
+            playerReady = true;
+            setEmbedUnavailable(false);
             try {
               const frame = e.target.getIframe?.();
+              enforceReferrer(frame);
               if (frame) frame.setAttribute("allow", "autoplay; fullscreen; encrypted-media; picture-in-picture");
             } catch { /* noop */ }
             if (cuePlayback) {
@@ -239,7 +247,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
 
     return () => {
       cancelled = true;
-      if (fallbackTimer) clearTimeout(fallbackTimer);
+      frameObserver.disconnect();
       clearTimeout(availabilityTimer);
       if (ytTickRef.current) { clearInterval(ytTickRef.current); ytTickRef.current = null; }
       try { ytPlayerRef.current?.destroy?.(); } catch { /* noop */ }
