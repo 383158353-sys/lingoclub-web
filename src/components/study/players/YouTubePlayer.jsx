@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle, useMemo } from "react";
-import { checkYouTubeEmbeddable, createYouTubeCueEmbedUrl, createYouTubeEmbedUrl, createYouTubePlainEmbedUrl, describeYouTubeEmbedError } from "@/lib/youtubePlayerConfig";
+import { checkYouTubeEmbeddable, createYouTubeCueEmbedUrl, createYouTubeEmbedUrl, describeYouTubeEmbedError } from "@/lib/youtubePlayerConfig";
 
 /**
  * YouTube 播放器：通过 IFrame Player API 嵌入。
@@ -22,8 +22,6 @@ function loadYTApi() {
   });
   return ytApiPromise;
 }
-
-if (typeof window !== "undefined") loadYTApi();
 
 function parseYouTube(url) {
   try {
@@ -52,6 +50,8 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
   const [playerErrorCode, setPlayerErrorCode] = useState(null);
   const [embedUnavailable, setEmbedUnavailable] = useState(false);
   const [embeddable, setEmbeddable] = useState(null);
+  const [embedBlocked, setEmbedBlocked] = useState(false);
+  const [playerLive, setPlayerLive] = useState(false);
 
   // Host container React owns but renders NO JSX children into — so React never
   // tries to reconcile the iframe the YT API injects/destroys inside it.
@@ -81,6 +81,8 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     setPlayerErrorCode(null);
     setEmbedUnavailable(false);
     setEmbeddable(null);
+    setEmbedBlocked(false);
+    setPlayerLive(false);
     let cancelled = false;
     const host = ytHostRef.current;
     if (!host) return;
@@ -139,18 +141,19 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     });
     frameObserver.observe(host, { childList: true, subtree: true });
     let playerReady = false;
-    let usedPlainEmbed = false;
-    const showPlainEmbed = () => {
-      if (usedPlainEmbed || cancelled) return;
-      usedPlainEmbed = true;
+    const blockEmbed = () => {
+      if (cancelled || playerReady) return;
       playerReady = true;
-      setPlayerErrorCode(null);
+      setEmbedBlocked(true);
+      setPlayerLive(false);
       setEmbedUnavailable(false);
-      playerFrame = paintIframe(createYouTubePlainEmbedUrl(embed.videoId));
+      setPlayerErrorCode(null);
+      try { ytPlayerRef.current?.destroy?.(); } catch { /* noop */ }
+      ytPlayerRef.current = null;
+      host.innerHTML = "";
     };
     const availabilityTimer = setTimeout(() => {
-      if (cancelled || playerReady) return;
-      showPlainEmbed();
+      if (!cancelled && !playerReady) blockEmbed();
     }, 4000);
 
     const emit = (t) => {
@@ -173,7 +176,8 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
           onReady: (e) => {
             if (cancelled) return;
             playerReady = true;
-            setEmbedUnavailable(false);
+            setPlayerLive(true);
+            setEmbedBlocked(false);
             try {
               const frame = e.target.getIframe?.();
               enforceReferrer(frame);
@@ -225,11 +229,11 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
           onAutoplayBlocked: (e) => kickCuePlayback(e?.target || ytPlayerRef.current),
           onError: (e) => {
             const code = Number(e?.data) || 0;
-            if (usedPlainEmbed) return;
+            if (playerReady) return;
             if (host) host.dataset.ytError = String(code);
             console.info("[YouTubePlayer] embedded playback error", { code, videoId: embed.videoId, origin });
             if (code === 101 || code === 150 || code === 153) {
-              showPlainEmbed();
+              blockEmbed();
               return;
             }
             setPlayerErrorCode(code);
@@ -322,15 +326,32 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
   }), [embed]);
 
   if (!embed) return null;
+  const watchUrl = `https://www.youtube.com/watch?v=${embed.videoId}`;
+  const poster = `https://i.ytimg.com/vi/${embed.videoId}/hqdefault.jpg`;
 
   return (
     <div className={className}>
       <div className="relative w-full overflow-hidden rounded-2xl border border-border bg-black" style={{ aspectRatio: "16 / 9" }}>
-        <div ref={ytHostRef} className="absolute inset-0 h-full w-full" />
+        <div ref={ytHostRef} className={`absolute inset-0 h-full w-full ${playerLive && !embedBlocked ? "" : "invisible"}`} />
+        {(!playerLive || embedBlocked) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black px-6 text-center">
+            <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-40" />
+            <div className="relative max-w-md">
+              {embedBlocked ? (
+                <>
+                  <p className="text-sm leading-6 text-white">YouTube 拒绝把这个视频嵌在网页里。打开原视频就可以播放。</p>
+                  <a href={watchUrl} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex min-h-11 items-center justify-center rounded-full bg-mint px-5 text-sm font-semibold text-background">在 YouTube 播放</a>
+                </>
+              ) : (
+                <p className="text-sm text-white/80">正在连接 YouTube…</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
-      {(playerErrorCode !== null || embedUnavailable) && <p role="status" className="mt-2 text-xs text-amber-300/90">
+      {(playerErrorCode !== null || embedUnavailable) && !embedBlocked && <p role="status" className="mt-2 text-xs text-amber-300/90">
         {describeYouTubeEmbedError(playerErrorCode, embeddable)}
-        {" "}<a href={`https://www.youtube.com/watch?v=${embed.videoId}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">在 YouTube 打开</a>
+        {" "}<a href={watchUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">在 YouTube 打开</a>
       </p>}
     </div>
   );
