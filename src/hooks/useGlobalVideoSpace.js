@@ -10,6 +10,11 @@ const EDITABLE_TARGET_SELECTOR = [
   "[role='combobox']",
 ].join(",");
 
+const hasModifier = (event) => event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
+
+/** → on its own toggles close reading; a bare Alt/Option does the same on keyup. */
+export const isCloseReadingKey = (event) => event.code === "ArrowRight" && !hasModifier(event);
+
 /** Bind study keyboard controls without owning playback or close-reading state. */
 export function useGlobalVideoSpace({ togglePlayback, enabled = true, isCloseReadingLoop, exitCloseReading, startCloseReading, focusCurrentCue, navigateTranscriptCue }) {
   const toggleRef = useRef(togglePlayback);
@@ -62,6 +67,13 @@ export function useGlobalVideoSpace({ togglePlayback, enabled = true, isCloseRea
         event.preventDefault();
         if (event.repeat) return;
         navigateRef.current?.(event.code === "ArrowUp" ? -1 : 1);
+        return;
+      }
+
+      if (isCloseReadingKey(event)) {
+        event.preventDefault();
+        if (event.repeat) return;
+        startRef.current?.();
         return;
       }
 
