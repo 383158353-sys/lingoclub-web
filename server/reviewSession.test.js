@@ -35,12 +35,13 @@ test("daily review resumes only the active daily session", () => {
   assert.equal(canResumeSession(allContent, ["a", "b", "c"], "resume"), true);
   assert.equal(canResumeSession(session(), ["a", "b", "c"], "daily"), true);
 
-  const legacyLargeQueue = Array.from({ length: 451 }, (_, index) => `word-${index}`);
+  const expandedQueue = Array.from({ length: 45 }, (_, index) => `word-${index}`);
   assert.equal(canResumeSession(session({
-    queue: legacyLargeQueue,
-    originalQueue: legacyLargeQueue,
-    dailyQueue: undefined,
-  }), legacyLargeQueue, "daily"), false);
+    reviewMode: "daily",
+    queue: expandedQueue,
+    originalQueue: expandedQueue,
+    dailyQueue: { date: today, goal: 40 },
+  }), expandedQueue, "daily"), true);
 });
 
 test("斩 removes the current card from the saved queue without restarting at the first card", () => {
