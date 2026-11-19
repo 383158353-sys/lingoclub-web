@@ -11,3 +11,13 @@ test("review persistence uses the repository's supported review-state API", asyn
   assert.match(collection, /VocabApi\.updateReviewState\(id, fields\)/);
   assert.doesNotMatch(collection, /VocabApi\.update\(id, fields\)/);
 });
+
+test("review choices load the full collection and use explicit today/recent filters", async () => {
+  const collectionPath = fileURLToPath(new URL("../src/pages/Collection.jsx", import.meta.url));
+  const collection = await readFile(collectionPath, "utf8");
+  assert.match(collection, /VocabApi\.list\("-created_date"\)/);
+  assert.doesNotMatch(collection, /VocabApi\.list\("-created_date",\s*500\)/);
+  assert.match(collection, /selectCollectionReviewCards\(vocab,\s*mode\)/);
+  assert.match(collection, /\["today",\s*"今日收藏"\]/);
+  assert.match(collection, /\["recent",\s*"最近 7 天收藏"\]/);
+});

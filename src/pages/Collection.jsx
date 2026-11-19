@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { vocabRepository } from "@/lib/vocabRepository";
 import { useToast } from "@/components/ui/use-toast";
 import Flashcard from "@/components/study/Flashcard";
-import { scheduleStage, buildDailyQueue, dailyQueueSnapshot, restoreDailyQueue, localDateKey, STAGE_LABELS, stageOf, clampDailyReviewGoal, DAILY_REVIEW_GOAL, isMasteredCard, masterVocabulary, unmasterVocabulary } from "@/lib/srs";
+import { scheduleStage, buildDailyQueue, dailyQueueSnapshot, restoreDailyQueue, localDateKey, STAGE_LABELS, stageOf, clampDailyReviewGoal, DAILY_REVIEW_GOAL, isMasteredCard, isReviewableCard, selectCollectionReviewCards, masterVocabulary, unmasterVocabulary } from "@/lib/srs";
 import { loadSession, saveSession, isResumable, canResumeSession, buryCardInSession } from "@/lib/reviewSession";
 import { BookMarked, Brain, ArrowRight, RotateCw, AlertTriangle } from "lucide-react";
 import { appendReviewLog, loadReviewLogs } from "@/lib/reviewLogs";
@@ -22,8 +22,8 @@ const REVIEW_MODE_LABELS = {
   focus: "重点攻克",
   occasional: "偶尔失误",
   mistakes: "全部错词",
-  new: "今日新增",
-  today: "今日新增",
+  new: "新词",
+  today: "今日收藏",
   recent: "最近收藏",
   random: "随机复习",
   all: "全部内容",
@@ -150,7 +150,7 @@ export default function Collection() {
     // 安全超时:接口卡死 12 秒后自动降级,避免列表一直空白/加载不出。
     const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 12000));
     try {
-      Promise.race([VocabApi.list("-created_date", 500), timeout])
+      Promise.race([VocabApi.list("-created_date"), timeout])
         .then((v) => setVocab((v || []).map(normalizeVocabularyProgress)))
         .catch(() => { setVocab([]); setLoadError(true); })
         .finally(() => setLoading(false));
@@ -180,7 +180,7 @@ export default function Collection() {
 
   const byId = useMemo(() => Object.fromEntries(vocab.map((c) => [c.id, c])), [vocab]);
   const vocabIds = useMemo(() => vocab.map((card) => card.id), [vocab]);
-  const reviewableVocab = useMemo(() => vocab.filter((card) => card.meaning_zh || card.text_zh), [vocab]);
+  const reviewableVocab = useMemo(() => vocab.filter(isReviewableCard), [vocab]);
   const resumable = isResumable(savedSession, vocabIds);
   const resumableDaily = canResumeSession(savedSession, vocabIds, "daily");
   const resumableOther = resumable && (savedSession?.reviewMode || "daily") !== "daily";
@@ -311,15 +311,14 @@ export default function Collection() {
     else if (mode === "occasional") selectedCards = activeMistakes.occasional;
     else if (mode === "mistakes") selectedCards = errorWords;
     else if (mode === "new") selectedCards = pools.new;
-    else if (mode === "today") selectedCards = vocab.filter((card) => card.created_date && localDateKey(card.created_date) === todayISO());
-    else if (mode === "recent") selectedCards = [...vocab].sort((a, b) => Date.parse(b.created_date || 0) - Date.parse(a.created_date || 0));
+    else if (mode === "today" || mode === "recent") selectedCards = selectCollectionReviewCards(vocab, mode);
     else if (mode.startsWith("source:")) {
       const title = mode.slice("source:".length);
       selectedCards = vocab.filter((card) => card.source_movie_title === title || card.sources?.some((source) => source.source_movie_title === title));
     }
     else if (mode === "random") selectedCards = [...vocab].sort(() => Math.random() - 0.5);
     else selectedCards = vocab;
-    selectedCards = selectedCards.filter((card) => !isMasteredCard(card));
+    selectedCards = selectedCards.filter(isReviewableCard);
     const ids = selectedCards.map((c) => c.id);
     // 三阶段都需要中英文内容，缺释义的卡自动跳过。
     const idMap = Object.fromEntries(vocab.map((c) => [c.id, c]));
@@ -599,7 +598,7 @@ export default function Collection() {
         </div>
       </div>
       {otherReviewOpen && <div className="mt-3 flex min-h-12 flex-wrap gap-2 rounded-xl border border-border/60 bg-card p-3">
-        {(tab === "list" ? [["due", "到期复习"], ["new", "今日新增"], ["recent", "最近收藏"], ["random", "随机复习"], ["all", "全部内容"]] : [["mistakes", "全部错词"], ["weak", "复习薄弱词"], ["focus", "重点攻克"], ["occasional", "偶尔失误"]]).map(([mode, label]) => <button key={mode} onClick={() => startReview(mode)} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-copper/50 hover:text-copper">{label}</button>)}
+        {(tab === "list" ? [["due", "到期复习"], ["new", "新词"], ["today", "今日收藏"], ["recent", "最近 7 天收藏"], ["random", "随机复习"], ["all", "全部内容"]] : [["mistakes", "全部错词"], ["weak", "复习薄弱词"], ["focus", "重点攻克"], ["occasional", "偶尔失误"]]).map(([mode, label]) => <button key={mode} onClick={() => startReview(mode)} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-copper/50 hover:text-copper">{label}</button>)}
         {tab === "list" && sourceGroups.length > 0 && <select aria-label="按影视来源复习" onChange={(event) => event.target.value && startReview(`source:${event.target.value}`)} defaultValue="" className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground"><option value="">按影视来源复习</option>{sourceGroups.map((title) => <option key={title} value={title}>{title}</option>)}</select>}
       </div>}
       <details className="mt-3 text-xs text-muted-foreground"><summary className="w-fit cursor-pointer select-none">今日计划详情</summary><p className="mt-2">今日总任务 {dailyQ.ids.length} · 新词 {dailyQ.newCount} · 到期 {dailyQ.dueCount} · 薄弱 {dailyQ.weakCount} · 未首次复习积压 {dailyQ.backlogCount} · 错题 {errorWords.length} · 收藏 {vocab.length} · 已掌握 {vocab.filter((c) => c.mastery_level === "mastered").length} · 连续学习 {streak(vocab)} 天</p></details>

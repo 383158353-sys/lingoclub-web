@@ -79,6 +79,33 @@ export function isMasteredCard(card) {
   return mastery === "mastered";
 }
 
+export function isReviewableCard(card) {
+  return !isMasteredCard(card)
+    && Boolean(card?.meaning_zh || card?.text_zh)
+    && Boolean(card?.expression_en || card?.text_en);
+}
+
+export function selectCollectionReviewCards(vocab, period, now = Date.now()) {
+  const instant = now instanceof Date ? now.getTime() : Number(now);
+  if (!Number.isFinite(instant)) return [];
+  const currentDate = new Date(instant);
+  const today = localDateKey(currentDate);
+  const recentStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate());
+  recentStart.setDate(recentStart.getDate() - 6);
+  const recentStartTime = recentStart.getTime();
+  const nextDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() + 1).getTime();
+
+  return (vocab || [])
+    .filter((card) => {
+      if (!isReviewableCard(card)) return false;
+      const createdAt = Date.parse(card?.created_date || "");
+      if (!Number.isFinite(createdAt)) return false;
+      if (period === "today") return localDateKey(createdAt) === today;
+      return period === "recent" && createdAt >= recentStartTime && createdAt < nextDay;
+    })
+    .sort((a, b) => Date.parse(b.created_date) - Date.parse(a.created_date));
+}
+
 export function isDue(vocab) {
   if (isMasteredCard(vocab)) return false;
   if (!vocab?.next_review) return true;
@@ -288,7 +315,7 @@ export function classifyMistakeTiers(vocab, reviewLogs = [], now = Date.now()) {
 export function classifyReviewPools(vocab, now = Date.now()) {
   const instant = now instanceof Date ? now.getTime() : Number(now);
   const today = localDateKey(instant);
-  const candidates = (vocab || []).filter((card) => !isMasteredCard(card) && (card?.meaning_zh || card?.text_zh) && (card?.expression_en || card?.text_en));
+  const candidates = (vocab || []).filter(isReviewableCard);
   const pools = { new: [], due: [], weak: [] };
   for (const card of candidates) {
     if (isNewReviewItem(card)) {

@@ -8,6 +8,8 @@ import {
   scheduleStage,
   classifyMistakeTiers,
   classifyReviewPools,
+  selectCollectionReviewCards,
+  localDateKey,
   isDue,
   masterVocabulary,
   normalizeVocabularyProgress,
@@ -22,6 +24,30 @@ const makeCard = (id, fields = {}) => ({
   meaning_zh: `词 ${id}`,
   created_date: "2025-01-01T00:00:00.000Z",
   ...fields,
+});
+
+test("today and recent collection review pools use the same reviewable-card rules and local-day boundaries", () => {
+  const now = new Date(2026, 0, 10, 12, 0, 0);
+  const cards = [
+    makeCard("old", { created_date: new Date(2026, 0, 3, 23, 59, 59).toISOString() }),
+    makeCard("week-start", { created_date: new Date(2026, 0, 4, 0, 0, 0).toISOString() }),
+    makeCard("yesterday", { created_date: new Date(2026, 0, 9, 15, 0, 0).toISOString() }),
+    makeCard("today-oldest", { created_date: new Date(2026, 0, 10, 8, 0, 0).toISOString() }),
+    makeCard("today-newest", { created_date: new Date(2026, 0, 10, 11, 0, 0).toISOString() }),
+    makeCard("future", { created_date: new Date(2026, 0, 11, 0, 0, 0).toISOString() }),
+    makeCard("mastered", { created_date: now.toISOString(), mastery_level: "mastered" }),
+    makeCard("missing-meaning", { created_date: now.toISOString(), meaning_zh: "" }),
+    makeCard("missing-expression", { created_date: now.toISOString(), expression_en: "" }),
+    makeCard("missing-date", { created_date: "" }),
+  ];
+
+  assert.deepEqual(selectCollectionReviewCards(cards, "recent", now).map((card) => card.id), [
+    "today-newest", "today-oldest", "yesterday", "week-start",
+  ]);
+  assert.deepEqual(selectCollectionReviewCards(cards, "today", now).map((card) => card.id), [
+    "today-newest", "today-oldest",
+  ]);
+  assert.equal(localDateKey(new Date(2026, 0, 10, 0, 0, 0)), "2026-01-10");
 });
 
 test("200 new items keep entering daily queues and due items cannot starve the new quota", () => {
