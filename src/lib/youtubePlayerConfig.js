@@ -1,10 +1,11 @@
 // Cue recall mounts the iframe after an async URL lookup, so the original tap is
 // no longer a user gesture. Mobile Safari/Chrome allow autoplay only when the
 // embed starts muted and inline (WebKit's media policy; YouTube player params
-// autoplay, start, mute, playsinline). controls=0 hides the control bar and the
-// large center play button for this preview only. The player unmutes after
-// playback begins. Sentence looping seeks back to the cue; YouTube's loop=1
-// restarts the whole video and requires playlist=<video id>, so it is not set.
+// autoplay, start, mute, playsinline). controls=0 keeps the embedded player
+// free of YouTube's timeline and keyboard controls; app shortcuts control study.
+// The player unmutes after playback begins. Sentence looping seeks back to the
+// cue; YouTube's loop=1 restarts the whole video and requires playlist=<video id>.
+// It is not set.
 // Same parameters as the MIT @u-wave/react-youtube player
 // (autoplay, startSeconds, muted, playsInline, controls).
 const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
@@ -18,13 +19,13 @@ export function createYouTubePlayerVars(origin, options = {}) {
     autoplay: autoplay ? 1 : 0,
     playsinline: 1,
     enablejsapi: 1,
+    controls: options.controls === 1 ? 1 : 0,
+    disablekb: options.disablekb === false ? 0 : 1,
     ...(origin ? { origin } : {}),
   };
   if (autoplay && Number.isFinite(start) && start >= 1) vars.start = Math.floor(start);
   if (options.mute) vars.mute = 1;
-  if (options.controls === 0) vars.controls = 0;
   if (options.fs === 0) vars.fs = 0;
-  if (options.disablekb) vars.disablekb = 1;
   if (options.ivLoadPolicy != null) vars.iv_load_policy = options.ivLoadPolicy;
   return vars;
 }
