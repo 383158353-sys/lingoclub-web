@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buryCardInSession, canResumeSession, deleteCardFromSession, isResumable } from "../src/lib/reviewSession.js";
+import { appendDailyReviewBatch, buryCardInSession, canResumeSession, deleteCardFromSession, isResumable } from "../src/lib/reviewSession.js";
 import { localDateKey } from "../src/lib/srs.js";
 
 const now = new Date(2026, 0, 5, 12, 0, 0);
@@ -42,6 +42,30 @@ test("daily review resumes only the active daily session", () => {
     originalQueue: expandedQueue,
     dailyQueue: { date: today, goal: 40 },
   }), expandedQueue, "daily"), true);
+});
+
+test("increased daily goals append only the newly added cards after the existing plan", () => {
+  const snapshot = {
+    goal: 3,
+    ids: ["a", "b", "c"],
+    sourceIds: { new: ["a", "b"], due: ["c"], weak: [] },
+    completedIds: ["a"],
+  };
+  const expandedQueue = {
+    goal: 5,
+    ids: ["a", "b", "c", "d", "e", "f"],
+    sourceIds: { new: ["a", "b", "d", "e"], due: ["c", "f"], weak: [] },
+    backlogCount: 20,
+  };
+
+  const next = appendDailyReviewBatch(snapshot, expandedQueue);
+  assert.deepEqual(next.ids, ["d", "e"]);
+  assert.deepEqual(next.snapshot.ids, ["a", "b", "c", "d", "e"]);
+  assert.deepEqual(next.snapshot.sourceIds, { new: ["a", "b", "d", "e"], due: ["c"], weak: [] });
+  assert.equal(next.snapshot.goal, 5);
+  assert.deepEqual(next.snapshot.completedIds, ["a"]);
+  assert.equal(next.snapshot.backlogAtGeneration, 20);
+  assert.equal(appendDailyReviewBatch(next.snapshot, expandedQueue), null);
 });
 
 test("斩 removes the current card from the saved queue without restarting at the first card", () => {

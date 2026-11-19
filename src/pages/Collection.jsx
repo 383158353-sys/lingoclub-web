@@ -4,7 +4,7 @@ import { vocabRepository } from "@/lib/vocabRepository";
 import { useToast } from "@/components/ui/use-toast";
 import Flashcard from "@/components/study/Flashcard";
 import { scheduleStage, buildDailyQueue, dailyQueueSnapshot, restoreDailyQueue, localDateKey, STAGE_LABELS, stageOf, clampDailyReviewGoal, DAILY_REVIEW_GOAL, isMasteredCard, isReviewableCard, selectCollectionReviewCards } from "@/lib/srs";
-import { loadSession, saveSession, isResumable, canResumeSession, deleteCardFromSession } from "@/lib/reviewSession";
+import { loadSession, saveSession, isResumable, canResumeSession, appendDailyReviewBatch, deleteCardFromSession } from "@/lib/reviewSession";
 import { BookMarked, Brain, ArrowRight, RotateCw, AlertTriangle } from "lucide-react";
 import { appendReviewLog, loadReviewLogs } from "@/lib/reviewLogs";
 import { classifyMistakeTiers, classifyReviewPools, normalizeVocabularyProgress } from "@/lib/srs";
@@ -333,15 +333,23 @@ export default function Collection() {
       return;
     }
     const existingSnapshot = restoreDailyQueue(session?.dailyQueue, reviewableVocab);
-    if (mode === "daily" && session?.reviewMode === "daily" && session?.dailyQueue?.date === todayISO() && (session.completed || session.phase === "done")) {
+    const previousGoal = Number(session?.dailyQueue?.goal) || DAILY_REVIEW_GOAL;
+    if (mode === "daily" && session?.reviewMode === "daily" && session?.dailyQueue?.date === todayISO()
+      && (session.completed || session.phase === "done") && dailyGoal <= previousGoal) {
       toast({ title: "今日复习已完成", description: "明天会生成新的每日队列。" });
       return;
     }
-    const snapshotGoal = Number(session?.dailyQueue?.goal) || DAILY_REVIEW_GOAL;
+    const snapshotGoal = previousGoal;
     const reuseSnapshot = Boolean(existingSnapshot) && session?.dailyQueue?.date === todayISO() && snapshotGoal === dailyGoal;
     const generated = reuseSnapshot ? existingSnapshot : buildDailyQueue(reviewableVocab, Date.now(), dailyGoal);
-    const snapshot = reuseSnapshot ? session.dailyQueue : dailyQueueSnapshot(generated);
-    const finishedIds = new Set(snapshot.completedIds || session?.completedIds || []);
+    const alreadyCompleted = [...new Set([
+      ...(session?.dailyQueue?.date === todayISO() ? session?.dailyQueue?.completedIds || [] : []),
+      ...(session?.reviewMode === "daily" && session?.dailyQueue?.date === todayISO() ? session?.completedIds || [] : []),
+    ])];
+    const snapshot = reuseSnapshot
+      ? { ...session.dailyQueue, completedIds: [...new Set([...(session.dailyQueue.completedIds || []), ...alreadyCompleted])] }
+      : { ...dailyQueueSnapshot(generated), completedIds: alreadyCompleted };
+    const finishedIds = new Set(snapshot.completedIds || []);
     let selectedCards;
     const pools = classifyReviewPools(vocab);
     if (mode === "daily") selectedCards = generated.queue.filter((c) => !finishedIds.has(c.id));
@@ -476,7 +484,50 @@ export default function Collection() {
 
     setReviewed((r) => r + 1);
     const next = advanceReviewQuestion({ phase, idx, queueLength: nextQueue.length });
-    if (next.phase === "done") setPhase("done");
+    if (next.phase === "done" && reviewMode === "daily") {
+      const snapshot = savedSession?.dailyQueue?.date === todayISO()
+        ? savedSession.dailyQueue
+        : dailyQueueSnapshot(dailyQ);
+      const expandedQueue = buildDailyQueue(reviewableVocab, Date.now(), dailyGoal);
+      const nextBatch = appendDailyReviewBatch(snapshot, expandedQueue);
+      if (nextBatch) {
+        const finishedIds = [...new Set([...(snapshot.completedIds || []), ...completedIds, ...originalQueue])];
+        const expandedSnapshot = { ...nextBatch.snapshot, completedIds: finishedIds };
+        const nextSession = {
+          date: todayISO(),
+          dailyQueue: expandedSnapshot,
+          reviewMode,
+          sessionId: reviewSessionId,
+          originalQueue: nextBatch.ids,
+          queue: [...nextBatch.ids],
+          idx: 0,
+          reviewed: 0,
+          phase: "r1",
+          r1Res,
+          r2Res,
+          r3Res: isFirst ? { ...r3Res, [id]: correct } : r3Res,
+          retried: {},
+          completedIds: finishedIds,
+          completed: false,
+        };
+        setSavedSession(saveSession(nextSession) || nextSession);
+        setOriginalQueue(nextBatch.ids);
+        setQueue([...nextBatch.ids]);
+        setIdx(0);
+        setReviewed(0);
+        setPhase("r1");
+        setRetried({});
+        setCompletedIds(finishedIds);
+        setSessionMeta({
+          totalCount: expandedSnapshot.ids.length,
+          newCount: expandedQueue.newCount,
+          reviewCount: expandedQueue.reviewCount,
+          deferred: expandedQueue.deferred,
+        });
+      } else {
+        setPhase("done");
+      }
+    } else if (next.phase === "done") setPhase("done");
     else if (next.phase !== phase) enterPhase(next.phase);
     else setIdx(next.idx);
     } catch (error) {
@@ -593,7 +644,7 @@ export default function Collection() {
             继续上次复习 ({savedSession.originalQueue?.length || savedSession.queue.length})
           </button>}
           <button type="button" aria-expanded={otherReviewOpen} onClick={() => setOtherReviewOpen((value) => !value)} className="min-h-10 rounded-full border border-border px-4 py-2 text-xs text-muted-foreground">更多复习方式 {otherReviewOpen ? "▴" : "▾"}</button>
-          <div role="group" aria-label="每日题量" title="进行中的复习不会改题量。新题量在下次生成新队列时生效。" className="inline-flex min-h-10 items-center gap-0.5 rounded-full border border-border px-1.5 text-xs text-muted-foreground">
+          <div role="group" aria-label="每日题量" title="进行中的计划会先完成原有三轮；增加题量后，再复习新增题目的三轮。" className="inline-flex min-h-10 items-center gap-0.5 rounded-full border border-border px-1.5 text-xs text-muted-foreground">
             <span className="px-1.5">每日题量</span>
             <button type="button" aria-label="减少每日题量" onClick={() => changeDailyGoal(dailyGoal - 5)} disabled={dailyGoal <= 5} className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full touch-manipulation hover:text-foreground disabled:opacity-40">−</button>
             <span className="w-8 text-center text-sm tabular-nums text-foreground">{dailyGoal}</span>
