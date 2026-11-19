@@ -4,7 +4,7 @@ import { vocabRepository } from "@/lib/vocabRepository";
 import { useToast } from "@/components/ui/use-toast";
 import Flashcard from "@/components/study/Flashcard";
 import { scheduleStage, buildDailyQueue, dailyQueueSnapshot, restoreDailyQueue, localDateKey, STAGE_LABELS, stageOf, clampDailyReviewGoal, DAILY_REVIEW_GOAL, isMasteredCard, masterVocabulary, unmasterVocabulary } from "@/lib/srs";
-import { loadSession, saveSession, isResumable, buryCardInSession } from "@/lib/reviewSession";
+import { loadSession, saveSession, isResumable, canResumeSession, buryCardInSession } from "@/lib/reviewSession";
 import { BookMarked, Brain, ArrowRight, RotateCw, AlertTriangle } from "lucide-react";
 import { appendReviewLog, loadReviewLogs } from "@/lib/reviewLogs";
 import { classifyMistakeTiers, classifyReviewPools, normalizeVocabularyProgress } from "@/lib/srs";
@@ -15,6 +15,19 @@ import { advanceReviewQuestion, createAnswerCommitGate, createReviewQuestionToke
 import VocabListCard from "@/components/vocab/VocabListCard";
 
 const REVIEW_FONT_SCALES = [0.85, 1, 1.15];
+const REVIEW_MODE_LABELS = {
+  daily: "今日计划",
+  due: "到期复习",
+  weak: "薄弱词汇",
+  focus: "重点攻克",
+  occasional: "偶尔失误",
+  mistakes: "全部错词",
+  new: "今日新增",
+  today: "今日新增",
+  recent: "最近收藏",
+  random: "随机复习",
+  all: "全部内容",
+};
 const corpusFontStorageKey = (userId) => `lingoclub:corpus-preview-font-scale:${userId || "guest"}`;
 const corpusHideSourceKey = (userId) => `lingoclub:corpus-hide-source:${userId || "guest"}`;
 const dailyGoalStorageKey = (userId) => `lingoclub:daily-review-goal:${userId || "guest"}`;
@@ -35,6 +48,9 @@ function loadDailyGoal(userId) {
 }
 
 const todayISO = () => localDateKey();
+const reviewModeLabel = (mode) => mode?.startsWith("source:")
+  ? `按来源 · ${mode.slice("source:".length)}`
+  : REVIEW_MODE_LABELS[mode] || "其他练习";
 const createSessionId = () => {
   try { return crypto.randomUUID(); } catch { return `00000000-0000-4000-8000-${Date.now().toString(16).slice(-12).padStart(12, "0")}`; }
 };
@@ -164,27 +180,30 @@ export default function Collection() {
 
   const byId = useMemo(() => Object.fromEntries(vocab.map((c) => [c.id, c])), [vocab]);
   const vocabIds = useMemo(() => vocab.map((card) => card.id), [vocab]);
+  const reviewableVocab = useMemo(() => vocab.filter((card) => card.meaning_zh || card.text_zh), [vocab]);
   const resumable = isResumable(savedSession, vocabIds);
+  const resumableDaily = canResumeSession(savedSession, vocabIds, "daily");
+  const resumableOther = resumable && (savedSession?.reviewMode || "daily") !== "daily";
 
   // 每日首次生成的 ID 快照固定保存；进行中的断点不因题量改动重抽。
   const dailyQ = useMemo(() => {
-    const restored = restoreDailyQueue(savedSession?.dailyQueue, vocab);
+    const restored = restoreDailyQueue(savedSession?.dailyQueue, reviewableVocab);
     const snapshotGoal = Number(savedSession?.dailyQueue?.goal) || DAILY_REVIEW_GOAL;
     const snapshotIsToday = savedSession?.dailyQueue?.date === todayISO();
     const finishedToday = snapshotIsToday && savedSession.reviewMode === "daily"
       && (savedSession.completed || savedSession.phase === "done");
-    if (restored && snapshotIsToday && (resumable || finishedToday || snapshotGoal === dailyGoal)) return restored;
-    return buildDailyQueue(vocab, Date.now(), dailyGoal);
-  }, [dailyGoal, resumable, savedSession, vocab]);
+    if (restored && snapshotIsToday && (resumableDaily || finishedToday || snapshotGoal === dailyGoal)) return restored;
+    return buildDailyQueue(reviewableVocab, Date.now(), dailyGoal);
+  }, [dailyGoal, resumableDaily, reviewableVocab, savedSession]);
 
   useEffect(() => {
-    if (loading || !vocab.length || savedSession?.dailyQueue?.date === todayISO()) return;
+    if (loading || !reviewableVocab.length || savedSession?.dailyQueue?.date === todayISO()) return;
     const dailyQueue = dailyQueueSnapshot(dailyQ);
     const next = saveSession(isResumable(savedSession, vocabIds)
       ? { ...savedSession, date: todayISO(), dailyQueue, completedIds: [] }
       : { date: todayISO(), dailyQueue, completedIds: [] });
     if (next) setSavedSession(next);
-  }, [dailyQ, loading, savedSession, vocab.length, vocabIds]);
+  }, [dailyQ, loading, reviewableVocab.length, savedSession, vocabIds]);
 
   const saveReviewCheckpoint = (completed = phase === "done") => {
     if (tab !== "review" || !queue.length) return;
@@ -246,11 +265,11 @@ export default function Collection() {
   const todayProgress = dailyQ.goal ? Math.min(100, Math.round(todayRecommendedCompleted / dailyQ.goal * 100)) : 0;
   const sourceGroups = [...new Set(vocab.flatMap((card) => [card.source_movie_title, ...(card.sources || []).map((source) => source.source_movie_title)]).filter(Boolean))];
 
-  const startReview = (mode = "daily") => {
+  const startReview = (requestedMode = "daily") => {
+    const mode = requestedMode === "resume" ? "daily" : requestedMode;
     // Restore the active checkpoint before starting a new queue.
     const session = loadSession();
-    if (isResumable(session, vocab.map((c) => c.id))
-      && (mode === "daily" || mode === session.reviewMode)) {
+    if (canResumeSession(session, vocab.map((c) => c.id), requestedMode)) {
       setOriginalQueue(session.originalQueue || session.queue);
       setQueue([...session.queue]);
       setIdx(session.idx || 0);
@@ -263,18 +282,24 @@ export default function Collection() {
       setCompletedIds(session.completedIds || session.dailyQueue?.completedIds || []);
       setReviewMode(session.reviewMode || "daily");
       setReviewSessionId(session.sessionId || createSessionId());
-      setSessionMeta(null);
+      const dailySnapshot = restoreDailyQueue(session.dailyQueue, reviewableVocab) || dailyQ;
+      setSessionMeta(session.reviewMode === "daily" ? {
+        totalCount: dailySnapshot.ids.length,
+        newCount: dailySnapshot.newCount,
+        reviewCount: dailySnapshot.reviewCount,
+        deferred: dailySnapshot.deferred,
+      } : null);
       setTab("review");
       return;
     }
-    const existingSnapshot = restoreDailyQueue(session?.dailyQueue, vocab);
+    const existingSnapshot = restoreDailyQueue(session?.dailyQueue, reviewableVocab);
     if (mode === "daily" && session?.reviewMode === "daily" && session?.dailyQueue?.date === todayISO() && (session.completed || session.phase === "done")) {
       toast({ title: "今日复习已完成", description: "明天会生成新的每日队列。" });
       return;
     }
     const snapshotGoal = Number(session?.dailyQueue?.goal) || DAILY_REVIEW_GOAL;
     const reuseSnapshot = Boolean(existingSnapshot) && session?.dailyQueue?.date === todayISO() && snapshotGoal === dailyGoal;
-    const generated = reuseSnapshot ? existingSnapshot : buildDailyQueue(vocab, Date.now(), dailyGoal);
+    const generated = reuseSnapshot ? existingSnapshot : buildDailyQueue(reviewableVocab, Date.now(), dailyGoal);
     const snapshot = reuseSnapshot ? session.dailyQueue : dailyQueueSnapshot(generated);
     const finishedIds = new Set(snapshot.completedIds || session?.completedIds || []);
     let selectedCards;
@@ -321,7 +346,9 @@ export default function Collection() {
     setR3Res({});
     setRetried({});
     setCompletedIds([...finishedIds]);
-    setSessionMeta({ newCount: generated.newCount, reviewCount: generated.reviewCount, deferred: generated.deferred });
+    setSessionMeta(mode === "daily"
+      ? { totalCount: validIds.length, newCount: generated.newCount, reviewCount: generated.reviewCount, deferred: generated.deferred }
+      : null);
     setReviewMode(mode);
     setReviewSessionId(initial.sessionId);
     setTab("review");
@@ -331,7 +358,7 @@ export default function Collection() {
   useEffect(() => {
     if (resumeTriggered.current || loading || !searchParams.has("resumeReview")) return;
     resumeTriggered.current = true;
-    startReview("daily");
+    startReview("resume");
   }, [loading, searchParams, vocab]);
 
   useEffect(() => {
@@ -486,9 +513,9 @@ export default function Collection() {
     const errorRate = totalReviews ? Math.round((totalErrors / totalReviews) * 100) : 0;
     return (
       <div className="mx-auto flex min-h-[100dvh] max-w-7xl flex-col px-3 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+4.75rem)] sm:px-5 md:min-h-0 md:px-8 md:pb-20 md:pt-28">
-        <ReviewHeader reviewed={reviewed} total={originalQueue.length} phase={phase} stage={stageOf(activeCard)} errorRate={errorRate} onExit={() => { saveReviewCheckpoint(false); setTab("list"); }} />
-        {sessionMeta && (sessionMeta.newCount > 0 || sessionMeta.reviewCount > 0) && (
-          <p className="mt-2 text-[11px] text-muted-foreground/70">今日队列：复习 {sessionMeta.reviewCount} · 新词 {sessionMeta.newCount}{sessionMeta.deferred > 0 ? ` · 顺延 ${sessionMeta.deferred} 至明日` : ""}</p>
+        <ReviewHeader reviewed={reviewed} total={originalQueue.length} phase={phase} stage={stageOf(activeCard)} errorRate={errorRate} reviewMode={reviewMode} onExit={() => { saveReviewCheckpoint(false); setTab("list"); }} />
+        {reviewMode === "daily" && sessionMeta && (sessionMeta.newCount > 0 || sessionMeta.reviewCount > 0) && (
+          <p className="mt-2 text-[11px] text-muted-foreground/70">今日计划 {sessionMeta.totalCount} 条 · 复习 {sessionMeta.reviewCount} · 新词 {sessionMeta.newCount}{sessionMeta.deferred > 0 ? ` · 顺延 ${sessionMeta.deferred} 至明日` : ""}</p>
         )}
         <div className="mt-10">
           <Flashcard
@@ -546,9 +573,12 @@ export default function Collection() {
       <div className="mt-5 space-y-2 md:mt-8 md:space-y-3">
         <div className="flex min-h-10 flex-wrap items-center gap-2 md:gap-3">
           <button onClick={() => startReview(tab === "list" ? "daily" : "mistakes")} disabled={tab === "errors" && !errorWords.length} className="inline-flex min-h-10 items-center gap-1.5 rounded-full bg-copper px-4 py-2 text-xs font-medium text-copper-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 md:px-6 md:py-2.5 md:text-sm">
-            <RotateCw size={13} className="md:size-[15px]" /> {tab === "list" ? (resumable ? "继续复习" : remainingDailyCount ? "开始今日复习" : "今日复习已完成") + (remainingDailyCount > 0 ? ` (${remainingDailyCount})` : "") : `复习错词 (${errorWords.length})`}
+            <RotateCw size={13} className="md:size-[15px]" /> {tab === "list" ? (resumableDaily ? "继续今日复习" : remainingDailyCount ? "开始今日复习" : "今日复习已完成") + (remainingDailyCount > 0 ? ` (${remainingDailyCount})` : "") : `复习错词 (${errorWords.length})`}
           </button>
-          <button type="button" aria-expanded={otherReviewOpen} onClick={() => setOtherReviewOpen((value) => !value)} className="min-h-10 rounded-full border border-border px-4 py-2 text-xs text-muted-foreground">复习方式 {otherReviewOpen ? "▴" : "▾"}</button>
+          {tab === "list" && resumableOther && <button type="button" onClick={() => startReview("resume")} className="inline-flex min-h-10 items-center rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:border-copper/50 hover:text-copper">
+            继续上次复习 ({savedSession.originalQueue?.length || savedSession.queue.length})
+          </button>}
+          <button type="button" aria-expanded={otherReviewOpen} onClick={() => setOtherReviewOpen((value) => !value)} className="min-h-10 rounded-full border border-border px-4 py-2 text-xs text-muted-foreground">更多复习方式 {otherReviewOpen ? "▴" : "▾"}</button>
           <div role="group" aria-label="每日题量" title="进行中的复习不会改题量。新题量在下次生成新队列时生效。" className="inline-flex min-h-10 items-center gap-0.5 rounded-full border border-border px-1.5 text-xs text-muted-foreground">
             <span className="px-1.5">每日题量</span>
             <button type="button" aria-label="减少每日题量" onClick={() => changeDailyGoal(dailyGoal - 5)} disabled={dailyGoal <= 5} className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full touch-manipulation hover:text-foreground disabled:opacity-40">−</button>
@@ -569,7 +599,7 @@ export default function Collection() {
         </div>
       </div>
       {otherReviewOpen && <div className="mt-3 flex min-h-12 flex-wrap gap-2 rounded-xl border border-border/60 bg-card p-3">
-        {(tab === "list" ? [["daily", "今日计划"], ["new", "今天新增"], ["recent", "最近收藏"], ["random", "随机复习"], ["all", "全部内容"]] : [["mistakes", "全部错词"], ["weak", "复习薄弱词"], ["focus", "重点攻克"], ["occasional", "偶尔失误"]]).map(([mode, label]) => <button key={mode} onClick={() => startReview(mode)} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-copper/50 hover:text-copper">{label}</button>)}
+        {(tab === "list" ? [["due", "到期复习"], ["new", "今日新增"], ["recent", "最近收藏"], ["random", "随机复习"], ["all", "全部内容"]] : [["mistakes", "全部错词"], ["weak", "复习薄弱词"], ["focus", "重点攻克"], ["occasional", "偶尔失误"]]).map(([mode, label]) => <button key={mode} onClick={() => startReview(mode)} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-copper/50 hover:text-copper">{label}</button>)}
         {tab === "list" && sourceGroups.length > 0 && <select aria-label="按影视来源复习" onChange={(event) => event.target.value && startReview(`source:${event.target.value}`)} defaultValue="" className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground"><option value="">按影视来源复习</option>{sourceGroups.map((title) => <option key={title} value={title}>{title}</option>)}</select>}
       </div>}
       <details className="mt-3 text-xs text-muted-foreground"><summary className="w-fit cursor-pointer select-none">今日计划详情</summary><p className="mt-2">今日总任务 {dailyQ.ids.length} · 新词 {dailyQ.newCount} · 到期 {dailyQ.dueCount} · 薄弱 {dailyQ.weakCount} · 未首次复习积压 {dailyQ.backlogCount} · 错题 {errorWords.length} · 收藏 {vocab.length} · 已掌握 {vocab.filter((c) => c.mastery_level === "mastered").length} · 连续学习 {streak(vocab)} 天</p></details>
@@ -659,15 +689,16 @@ function VocabCard(props) {
   return <VocabListCard {...props} />;
 }
 
-function ReviewHeader({ reviewed, total, phase, stage, errorRate, onExit }) {
+function ReviewHeader({ reviewed, total, phase, stage, errorRate, reviewMode, onExit }) {
   const pct = total ? Math.min(100, Math.round((reviewed / total) * 100)) : 0;
   const labelMap = { r1: "第一轮 · 英译中", r2: "第二轮 · 中译英", r3: "第三轮 · 听音选词" };
   const label = labelMap[phase] || "复习";
+  const modeLabel = reviewMode === "daily" ? "今日计划" : `自由练习 · ${reviewModeLabel(reviewMode)}`;
   return (
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-[11px] uppercase tracking-luxe text-copper/80">{label}</p>
+          <p className="text-[11px] uppercase tracking-luxe text-copper/80">{modeLabel} · {label}</p>
           <h2 className="mt-1 font-display text-2xl text-foreground">已复习 {reviewed} / {total}</h2>
           <p className="mt-1 text-[11px] text-muted-foreground">当前单词 · {STAGE_LABELS[stage] || "新词"} · 历史错题率 {errorRate}%</p>
         </div>

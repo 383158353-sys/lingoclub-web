@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buryCardInSession, isResumable } from "../src/lib/reviewSession.js";
+import { buryCardInSession, canResumeSession, isResumable } from "../src/lib/reviewSession.js";
 import { localDateKey } from "../src/lib/srs.js";
 
 const now = new Date(2026, 0, 5, 12, 0, 0);
@@ -26,6 +26,21 @@ test("unfinished review sessions remain resumable across dates", () => {
   assert.equal(isResumable(session({ phase: "done" }), ["a", "b", "c"]), false);
   assert.equal(isResumable(session({ completed: true }), ["a", "b", "c"]), false);
   assert.equal(isResumable(session({ queue: ["a", "missing"], idx: 0 }), ["a"]), false);
+});
+
+test("daily review resumes only the active daily session", () => {
+  const allContent = session({ reviewMode: "all" });
+  assert.equal(canResumeSession(allContent, ["a", "b", "c"], "daily"), false);
+  assert.equal(canResumeSession(allContent, ["a", "b", "c"], "all"), true);
+  assert.equal(canResumeSession(allContent, ["a", "b", "c"], "resume"), true);
+  assert.equal(canResumeSession(session(), ["a", "b", "c"], "daily"), true);
+
+  const legacyLargeQueue = Array.from({ length: 451 }, (_, index) => `word-${index}`);
+  assert.equal(canResumeSession(session({
+    queue: legacyLargeQueue,
+    originalQueue: legacyLargeQueue,
+    dailyQueue: undefined,
+  }), legacyLargeQueue, "daily"), false);
 });
 
 test("斩 removes the current card from the saved queue without restarting at the first card", () => {

@@ -93,7 +93,7 @@ const AuthenticatedApp = () => {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/bili-study" element={<BilibiliStudy />} />
-      <Route path="/review" element={<Navigate to="/collection?resumeReview=1" replace />} />
+      <Route path="/review" element={<Navigate to="/collection" replace />} />
       {/* Add your page Route elements here */}
       <Route element={<SiteLayout />}>
         <Route path="/" element={<Home />} />

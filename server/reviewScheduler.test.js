@@ -188,6 +188,10 @@ test("custom daily goals scale the 40-card quotas and clamp to 5–100", () => {
   assert.equal(small.goal, 10);
   assert.equal(small.queue.length, 10);
   assert.equal(small.newCount + small.dueCount + small.weakCount, 10);
+  const forty = buildDailyQueue(cards, date(3), 40);
+  assert.equal(forty.goal, 40);
+  assert.equal(forty.queue.length, 40);
+  assert.equal(forty.newCount + forty.dueCount + forty.weakCount, 40);
   const wide = buildDailyQueue(cards, date(3), 100);
   assert.equal(wide.goal, 100);
   assert.equal(wide.queue.length, 60);

@@ -1,6 +1,7 @@
 // 复习会话断点续学：把当前队列/索引/阶段/对错记录存 localStorage，
 // 用户退出后再次进入「开始复习」时自动恢复到上次中断的位置。
 import { advanceReviewQuestion } from "./reviewFlow.js";
+import { DAILY_REVIEW_GOAL_MAX } from "./srs.js";
 import { notifyLocalStateChanged, scopedStorageKey } from "./userStorage.js";
 
 const KEY = "lingoclub_review_session_v1";
@@ -32,6 +33,17 @@ export function isResumable(session, vocabIds) {
   if (Number(session.idx || 0) >= session.queue.length) return false;
   const idSet = new Set(vocabIds);
   return session.queue.every((id) => idSet.has(id));
+}
+
+export function canResumeSession(session, vocabIds, mode) {
+  if (!isResumable(session, vocabIds)) return false;
+  if (mode === "daily") {
+    const activeQueueLength = (session.originalQueue || session.queue).length;
+    const savedGoal = Number(session.dailyQueue?.goal);
+    const dailyGoalLimit = Number.isFinite(savedGoal) && savedGoal > 0 ? savedGoal : DAILY_REVIEW_GOAL_MAX;
+    if (activeQueueLength > dailyGoalLimit) return false;
+  }
+  return mode === "resume" || (session.reviewMode || "daily") === mode;
 }
 
 function dropId(list, id) {
