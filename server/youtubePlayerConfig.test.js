@@ -4,12 +4,13 @@ import { createYouTubeCueAutoplayVars, createYouTubeEmbedUrl, createYouTubePlaye
 
 test("YouTube API and iframe fallback use matching origin and playback parameters", () => {
   const origin = "https://lingoclub.vercel.app";
-  const playerVars = createYouTubePlayerVars(origin);
-  const embed = new URL(createYouTubeEmbedUrl("7zUI6Ko9qsU", origin));
+  const playerVars = createYouTubePlayerVars(origin, { controls: 1 });
+  const embed = new URL(createYouTubeEmbedUrl("7zUI6Ko9qsU", origin, { controls: 1 }));
   assert.equal(embed.origin, "https://www.youtube.com");
   assert.equal(embed.searchParams.get("origin"), origin);
   for (const [key, value] of Object.entries(playerVars)) assert.equal(embed.searchParams.get(key), String(value));
   assert.equal(playerVars.enablejsapi, 1);
+  assert.equal(playerVars.controls, 1);
 });
 
 test("cue recall requests muted inline autoplay at the saved start while study playback stays paused", () => {

@@ -1,8 +1,8 @@
 // Cue recall mounts the iframe after an async URL lookup, so the original tap is
 // no longer a user gesture. Mobile Safari/Chrome allow autoplay only when the
 // embed starts muted and inline (WebKit's media policy; YouTube player params
-// autoplay, start, mute, playsinline). controls=0 keeps the embedded player
-// free of YouTube's timeline and keyboard controls; app shortcuts control study.
+// autoplay, start, mute, playsinline). Study playback explicitly configures
+// the YouTube control bar and uses the app's shortcuts for subtitle navigation.
 // The player unmutes after playback begins. Sentence looping seeks back to the
 // cue; YouTube's loop=1 restarts the whole video and requires playlist=<video id>.
 // It is not set.

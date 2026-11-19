@@ -95,9 +95,9 @@ test("sentence preview has no 播放原句 and autoplay/loop config stays on the
   assert.equal(embed.searchParams.get("playsinline"), "1");
   assert.equal(embed.searchParams.get("loop"), null);
   assert.equal(embed.searchParams.get("playlist"), null);
-  const study = createYouTubePlayerVars(origin);
+  const study = createYouTubePlayerVars(origin, { controls: 1 });
   assert.equal(study.autoplay, 0);
-  assert.equal(study.controls, 0);
+  assert.equal(study.controls, 1);
   assert.deepEqual(createYouTubeCueAutoplayVars(origin, 12.8).controls, 0);
   assert.equal(armCuePreviewPlayback(), false);
 });

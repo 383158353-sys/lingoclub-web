@@ -86,7 +86,9 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     const origin = typeof window !== "undefined" ? window.location.origin : undefined;
     const cueStart = autoPlayFromRef.current;
     const cuePlayback = cueAutoplayRef.current && Number.isFinite(cueStart);
-    const playerVars = cuePlayback ? createYouTubeCueAutoplayVars(origin, cueStart) : createYouTubePlayerVars(origin);
+    const playerVars = cuePlayback
+      ? createYouTubeCueAutoplayVars(origin, cueStart)
+      : createYouTubePlayerVars(origin, { controls: 1 });
     unmutedRef.current = false;
     let cuePlayAttempts = 0;
     let cueStarted = false;
@@ -134,7 +136,7 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
     }
     const fallbackTimer = cuePlayback ? null : setTimeout(() => {
       if (cancelled || ytPlayerRef.current) return;
-      fallbackIframe = paintIframe(createYouTubeEmbedUrl(embed.videoId, origin));
+      fallbackIframe = paintIframe(createYouTubeEmbedUrl(embed.videoId, origin, { controls: 1 }));
     }, 6000);
     const availabilityTimer = setTimeout(() => {
       const state = ytPlayerRef.current?.getPlayerState?.();
@@ -283,8 +285,10 @@ const YouTubePlayer = forwardRef(function YouTubePlayer({ url, className = "", o
         return;
       }
       try {
+        const state = player.getPlayerState?.();
+        const wasPlaying = state === 1 || state === 3;
         if (Number.isFinite(sec)) player.seekTo?.(sec, true);
-        player.playVideo?.();
+        if (!wasPlaying) player.playVideo?.();
       } catch { /* noop */ }
     },
     pause(sec) {
