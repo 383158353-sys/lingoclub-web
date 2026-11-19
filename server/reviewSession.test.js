@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buryCardInSession, canResumeSession, isResumable } from "../src/lib/reviewSession.js";
+import { buryCardInSession, canResumeSession, deleteCardFromSession, isResumable } from "../src/lib/reviewSession.js";
 import { localDateKey } from "../src/lib/srs.js";
 
 const now = new Date(2026, 0, 5, 12, 0, 0);
@@ -58,4 +58,30 @@ test("斩 removes the current card from the saved queue without restarting at th
   assert.equal(finishedPhase.idx, 0);
   assert.deepEqual(finishedPhase.queue, ["a", "b"]);
   assert.equal(isResumable(finishedPhase, ["a", "b", "c"]), true);
+});
+
+test("deleting a word removes it from the review checkpoint and daily snapshot", () => {
+  const deleted = deleteCardFromSession(session({
+    r1Res: { a: true, b: false }, r2Res: { b: true }, r3Res: { b: false }, retried: { b: true },
+  }), "b");
+  assert.deepEqual(deleted.queue, ["a", "c"]);
+  assert.deepEqual(deleted.originalQueue, ["a", "c"]);
+  assert.equal(deleted.idx, 1);
+  assert.deepEqual(deleted.dailyQueue.ids, ["a", "c"]);
+  assert.deepEqual(deleted.dailyQueue.sourceIds, { new: ["a"], due: [], weak: ["c"] });
+  assert.deepEqual(deleted.r1Res, { a: true });
+  assert.deepEqual(deleted.r2Res, {});
+  assert.deepEqual(deleted.r3Res, {});
+  assert.deepEqual(deleted.retried, {});
+  assert.equal(isResumable(deleted, ["a", "c"]), true);
+});
+
+test("deleting the last active word advances the phase or completes the session", () => {
+  const nextPhase = deleteCardFromSession(session({ queue: ["a"], originalQueue: ["a", "b"], idx: 0 }), "a");
+  assert.equal(nextPhase.phase, "r2");
+  assert.deepEqual(nextPhase.queue, ["b"]);
+
+  const completed = deleteCardFromSession(session({ queue: ["a"], originalQueue: ["a"], idx: 0, phase: "r3" }), "a");
+  assert.equal(completed.phase, "done");
+  assert.equal(completed.completed, true);
 });

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLocalDistractors, buildReviewQuestion, clearReviewDistractorCache, distractorsForReview, getReviewQuestionPresentation, isCorrectReviewAnswer, prefetchReviewDistractors } from "../src/lib/reviewDistractors.js";
+import { buildLocalDistractors, buildReviewQuestion, clearReviewDistractorCache, distractorsForReview, getReviewQuestionPresentation, isCorrectReviewAnswer, prepareReviewDistractors } from "../src/lib/reviewDistractors.js";
 
 const card = {
   id: "marquee",
@@ -52,14 +52,15 @@ test("listening uses Chinese meaning distractors from the shared vocabulary pool
   assert.ok(!buildLocalDistractors(card, [card, unrelatedSamePartOfSpeech], "r3").includes("猫"));
 });
 
-test("listening still shows four choices immediately when the pool has no near match and AI has not returned", async () => {
+test("review prefers local choices, then asynchronously fills missing choices from AI", async () => {
   clearReviewDistractorCache();
   const current = { id: "wiener", expression_en: "wiener", meaning_zh: "香肠" };
   const pool = [
     current,
-    { id: "closet", expression_en: "closet", meaning_zh: "衣柜，服装" },
-    { id: "guess", expression_en: "guess", meaning_zh: "推测，猜测" },
-    { id: "sign", expression_en: "sign", meaning_zh: "招牌" },
+    { id: "weiner", expression_en: "weiner", meaning_zh: "维也纳香肠" },
+    { id: "wieners", expression_en: "wieners", meaning_zh: "热狗" },
+    { id: "winner", expression_en: "winner", meaning_zh: "获胜者" },
+    { id: "wiener-dog", expression_en: "wiener dog", meaning_zh: "腊肠犬" },
   ];
   const immediate = distractorsForReview(current, pool, "r3");
   assert.equal(immediate.length, 3);
@@ -68,23 +69,22 @@ test("listening still shows four choices immediately when the pool has no near m
   const question = buildReviewQuestion(current, pool, "r3", immediate, () => 0);
   assert.equal(question.options.length, 4);
   assert.equal(question.options.filter((option) => option.value === current.meaning_zh).length, 1);
+  let localFallbackCalls = 0;
+  await prepareReviewDistractors([current], pool, async () => { localFallbackCalls += 1; });
+  assert.equal(localFallbackCalls, 0);
 
   const alone = { id: "solo", expression_en: "solo", meaning_zh: "独奏" };
-  const filled = distractorsForReview(alone, [alone], "r3");
-  assert.equal(filled.length, 3);
-  assert.equal(buildReviewQuestion(alone, [alone], "r3", filled, () => 0).options.length, 4);
-
-  let release;
-  const pending = prefetchReviewDistractors([current], "r3", () => new Promise((resolve) => { release = resolve; }), pool);
-  assert.equal(distractorsForReview(current, pool, "r3").length, 3);
-  release({ meaning_options: ["热狗", "维也纳香肠", "小面包"] });
-  await pending;
-  const warmed = distractorsForReview(current, pool, "r3");
-  assert.deepEqual(warmed, ["热狗", "维也纳香肠", "小面包"]);
+  assert.deepEqual(distractorsForReview(alone, [alone], "r3"), []);
+  await prepareReviewDistractors([alone], [alone], async () => ({
+    meaning_options: ["独奏表演", "独唱", "协奏曲"],
+    expression_options: ["soloist", "soloing", "solitary"],
+    listening_options: ["独奏表演", "独唱", "协奏曲"],
+  }));
+  const warmed = distractorsForReview(alone, [alone], "r3");
+  assert.deepEqual(warmed, ["独奏表演", "独唱", "协奏曲"]);
+  assert.equal(buildReviewQuestion(alone, [alone], "r3", warmed, () => 0).options.length, 4);
 
   clearReviewDistractorCache();
-  await prefetchReviewDistractors([current], "r3", async () => { throw new Error("offline"); }, pool);
-  const offline = distractorsForReview(current, pool, "r3");
-  assert.equal(offline.length, 3);
-  assert.ok(!offline.includes("热狗"));
+  await prepareReviewDistractors([alone], [alone], async () => { throw new Error("offline"); });
+  assert.deepEqual(distractorsForReview(alone, [alone], "r3"), []);
 });

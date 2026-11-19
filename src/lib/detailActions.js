@@ -1,15 +1,13 @@
 import { isMasteredCard } from "./srs.js";
 
-/** Corpus and mistake-list rows do not offer 斩 or 取消斩. */
+/** Corpus and mistake-list rows do not offer destructive actions inline. */
 export function listRowBuryControl() {
   return null;
 }
 
-/**
- * 斩 is only on the word-detail footer and the review footer.
- * A mastered card offers 取消斩 when restore is wired.
- */
-export function detailBuryControl(card, { onBury, onRestore } = {}) {
+/** Keep the legacy bury action available to older callers; current detail views delete. */
+export function detailBuryControl(card, { onBury, onRestore, onDelete } = {}) {
+  if (typeof onDelete === "function") return { label: "删除", action: "delete" };
   if (isMasteredCard(card)) {
     if (typeof onRestore !== "function") return null;
     return { label: "取消斩", action: "restore" };

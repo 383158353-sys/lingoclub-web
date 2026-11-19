@@ -14,14 +14,14 @@ import {
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("corpus list rows have no 斩 and detail/review footers do", () => {
+test("vocabulary detail and review footers delete words instead of burying them", () => {
   assert.equal(listRowBuryControl(), null);
   const bury = () => {};
   const restore = () => {};
+  const remove = () => {};
+  assert.deepEqual(detailBuryControl({ mastery_level: "learning" }, { onDelete: remove }), { label: "删除", action: "delete" });
+  assert.deepEqual(detailBuryControl({ mastery_level: "mastered" }, { onDelete: remove }), { label: "删除", action: "delete" });
   assert.deepEqual(detailBuryControl({ mastery_level: "learning" }, { onBury: bury, onRestore: restore }), { label: "斩", action: "bury" });
-  assert.deepEqual(detailBuryControl({ mastery_level: "mastered" }, { onBury: bury, onRestore: restore }), { label: "取消斩", action: "restore" });
-  assert.equal(detailBuryControl({ mastery_level: "learning" }, {}), null);
-  assert.equal(detailBuryControl({ mastery_level: "mastered" }, { onBury: bury }), null);
 
   const collection = read("src/pages/Collection.jsx");
   const card = collection.slice(collection.indexOf("function VocabCard"), collection.indexOf("function ReviewHeader"));
@@ -31,12 +31,10 @@ test("corpus list rows have no 斩 and detail/review footers do", () => {
   assert.equal(collection.includes("斩"), false);
   const dialogAt = collection.indexOf("<WordDetailDialog");
   const dialogTag = collection.slice(dialogAt, collection.indexOf("/>", dialogAt));
-  assert.match(dialogTag, /onBury=\{/);
-  assert.match(dialogTag, /onRestore=\{/);
+  assert.match(dialogTag, /onDelete=\{deleteWord\}/);
   const flashAt = collection.indexOf("<Flashcard");
   const flashTag = collection.slice(flashAt, collection.indexOf("/>", flashAt));
-  assert.match(flashTag, /onBury=\{buryCard\}/);
-  assert.match(flashTag, /onRestore=\{restoreCard\}/);
+  assert.match(flashTag, /onDelete=\{deleteWord\}/);
 
   const detail = read("src/components/vocab/WordDetailDialog.jsx");
   assert.equal(detail.includes("播放原句"), false);
@@ -46,13 +44,13 @@ test("corpus list rows have no 斩 and detail/review footers do", () => {
   assert.equal((detail.match(/<DetailActionFooter/g) || []).length, 2);
   assert.match(detail, /primaryLabel=\{footerLabel\}/);
   assert.match(detail, /primaryLabel="继续复习"/);
-  assert.match(detail, /<BuryButton/);
+  assert.match(detail, /<DeleteWordButton/);
 
   const flashcard = read("src/components/study/Flashcard.jsx");
   const optionsAt = flashcard.indexOf("options.map");
-  const buryAt = flashcard.indexOf("<BuryButton");
-  assert.ok(optionsAt > 0 && buryAt > optionsAt);
-  assert.match(flashcard, /<WordDetailOverlay[\s\S]*onBury=\{onBury\}[\s\S]*onRestore=\{onRestore\}/);
+  const deleteAt = flashcard.indexOf("<DeleteWordButton");
+  assert.ok(optionsAt > 0 && deleteAt > optionsAt);
+  assert.match(flashcard, /<WordDetailOverlay[\s\S]*onDelete=\{onDelete\}/);
 });
 
 test("sentence preview has no 播放原句 and autoplay/loop config stays on the cue", () => {

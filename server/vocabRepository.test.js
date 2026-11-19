@@ -12,12 +12,13 @@ test("review persistence uses the repository's supported review-state API", asyn
   assert.doesNotMatch(collection, /VocabApi\.update\(id, fields\)/);
 });
 
-test("review choices load the full collection and use explicit today/recent filters", async () => {
+test("review choices load up to 3000 entries and use explicit today/recent filters", async () => {
   const collectionPath = fileURLToPath(new URL("../src/pages/Collection.jsx", import.meta.url));
   const collection = await readFile(collectionPath, "utf8");
-  assert.match(collection, /VocabApi\.list\("-created_date"\)/);
-  assert.doesNotMatch(collection, /VocabApi\.list\("-created_date",\s*500\)/);
+  assert.match(collection, /VOCAB_REVIEW_LOAD_LIMIT\s*=\s*3000/);
+  assert.match(collection, /VocabApi\.list\("-created_date",\s*VOCAB_REVIEW_LOAD_LIMIT\)/);
   assert.match(collection, /selectCollectionReviewCards\(vocab,\s*mode\)/);
+  assert.match(collection, /\["new",\s*"未复习"\]/);
   assert.match(collection, /\["today",\s*"今日收藏"\]/);
   assert.match(collection, /\["recent",\s*"最近 7 天收藏"\]/);
 });

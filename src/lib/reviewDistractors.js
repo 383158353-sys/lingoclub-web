@@ -38,6 +38,72 @@ function profileOf(card) {
   return card?.profile && typeof card.profile === "object" ? card.profile : {};
 }
 
+function tokens(value) {
+  return normalize(value).split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+function characterPairs(value, minimum = 1) {
+  const text = String(value || "").replace(/\s/g, "");
+  const size = text.length > 3 ? 2 : 1;
+  const pairs = new Set();
+  for (let index = 0; index <= text.length - size; index += 1) pairs.add(text.slice(index, index + size));
+  if (pairs.size < minimum && text) pairs.add(text);
+  return pairs;
+}
+
+function diceSimilarity(left, right) {
+  if (!left.size || !right.size) return 0;
+  let shared = 0;
+  for (const token of left) if (right.has(token)) shared += 1;
+  return (2 * shared) / (left.size + right.size);
+}
+
+function stableTieBreak(left, right) {
+  const input = `${left}:${right}`;
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) hash = Math.imul(hash ^ input.charCodeAt(index), 16777619);
+  return hash >>> 0;
+}
+
+export function createReviewDistractorIndex(pool) {
+  return {
+    entries: (Array.isArray(pool) ? pool : []).map((card) => {
+      const profile = profileOf(card);
+      const expression = card?.expression_en || card?.text_en || "";
+      const meaning = card?.meaning_zh || card?.text_zh || "";
+      return {
+        card,
+        expression: normalize(expression),
+        expressionChars: characterPairs(expression, 2),
+        expressionTokens: new Set(tokens(expression)),
+        meaningKey: meaningKey(meaning),
+        meaningChars: characterPairs(String(meaning).replace(/[^\u3400-\u9fff]/g, ""), 1),
+        pos: normalize(profile.pos || card?.pos),
+        type: normalize(card?.type || "phrase"),
+        source: normalize(card?.source_movie_id || card?.source_movie_title),
+      };
+    }),
+  };
+}
+
+function indexedPool(pool) {
+  return pool && Array.isArray(pool.entries) ? pool : createReviewDistractorIndex(pool);
+}
+
+function distractorScore(target, candidate, mode) {
+  const expressionSimilarity = Math.max(
+    diceSimilarity(target.expressionChars, candidate.expressionChars),
+    diceSimilarity(target.expressionTokens, candidate.expressionTokens),
+  );
+  const meaningSimilarity = diceSimilarity(target.meaningChars, candidate.meaningChars);
+  const samePos = target.pos && candidate.pos && target.pos === candidate.pos ? 1 : 0;
+  const sameSource = target.source && candidate.source && target.source === candidate.source ? 1 : 0;
+  const sameType = target.type && candidate.type && target.type === candidate.type ? 1 : 0;
+  return mode === "r2"
+    ? expressionSimilarity * 0.62 + samePos * 0.18 + meaningSimilarity * 0.12 + sameSource * 0.06 + sameType * 0.02
+    : meaningSimilarity * 0.48 + expressionSimilarity * 0.25 + samePos * 0.17 + sameSource * 0.08 + sameType * 0.02;
+}
+
 function localLists(card, mode) {
   const expr = normalize(card?.expression_en || card?.text_en);
   const profile = profileOf(card);
@@ -48,24 +114,26 @@ function localLists(card, mode) {
 }
 
 function poolCandidates(card, pool, mode) {
-  const expr = normalize(card?.expression_en || card?.text_en);
-  const profile = profileOf(card);
-  const pos = normalize(profile.pos || card?.pos);
-  return (pool || []).map((candidate) => {
-    if (!candidate || candidate.id === card?.id) return null;
-    const candidateExpr = normalize(candidate.expression_en || candidate.text_en);
-    const candidateMeaning = normalize(candidate.meaning_zh || candidate.text_zh);
-    const candidatePos = normalize(candidate.profile?.pos || candidate.pos);
-    const usesMeaning = mode === "r1" || mode === "r3";
-    const value = usesMeaning ? candidateMeaning : candidate.expression_en || candidate.text_en;
-    if (!value || normalize(value) === normalize(usesMeaning ? card?.meaning_zh || card?.text_zh : expr)) return null;
-    let score = 0;
-    if (pos && candidatePos === pos) score += 5;
-    if (candidateExpr[0] && expr[0] && candidateExpr[0] === expr[0]) score += 2;
-    if (editDistance(candidateExpr, expr) <= Math.max(2, Math.floor(expr.length / 3))) score += 4;
-    if (score <= 0 || (mode === "r3" && score < 7)) return null;
-    return { value: String(value).trim(), score };
-  }).filter(Boolean).sort((a, b) => b.score - a.score).map((item) => item.value);
+  const usesMeaning = mode === "r1" || mode === "r3";
+  const target = createReviewDistractorIndex([card]).entries[0];
+  const correct = normalize(usesMeaning ? card?.meaning_zh || card?.text_zh : card?.expression_en || card?.text_en);
+  return indexedPool(pool).entries.map((entry) => {
+    if (!entry?.card || entry.card.id === card?.id) return null;
+    const expressionSimilarity = Math.max(
+      diceSimilarity(target.expressionChars, entry.expressionChars),
+      diceSimilarity(target.expressionTokens, entry.expressionTokens),
+    );
+    const meaningSimilarity = diceSimilarity(target.meaningChars, entry.meaningChars);
+    const hasLexicalOverlap = mode === "r2"
+      ? expressionSimilarity >= 0.15
+      : expressionSimilarity >= 0.12 || meaningSimilarity >= 0.12;
+    if (!hasLexicalOverlap) return null;
+    const value = String(usesMeaning ? entry.card.meaning_zh || entry.card.text_zh || "" : entry.card.expression_en || entry.card.text_en || "").trim();
+    const key = usesMeaning ? meaningKey(value) : normalize(value);
+    if (!value || !key || key === (usesMeaning ? meaningKey(correct) : correct)) return null;
+    if (usesMeaning && (!isChineseMeaning(value) || nearDuplicateMeaning(value, correct))) return null;
+    return { value, score: distractorScore(target, entry, mode), tie: stableTieBreak(card?.id, entry.card.id) };
+  }).filter(Boolean).sort((a, b) => b.score - a.score || a.tie - b.tie).map((item) => item.value);
 }
 
 export function buildLocalDistractors(card, pool, mode) {
@@ -76,7 +144,7 @@ export function buildLocalDistractors(card, pool, mode) {
   for (const value of [...localLists(card, mode), ...poolCandidates(card, pool, mode)]) {
     const clean = String(value || "").trim();
     const key = mode === "r3" ? meaningKey(clean) : normalize(clean);
-    if (!clean || (mode === "r3" && !isChineseMeaning(clean)) || seen.has(key) || (mode === "r3" && (nearDuplicateMeaning(clean, correct) || result.some((item) => nearDuplicateMeaning(clean, item))))) continue;
+    if (!clean || (usesMeaning && !isChineseMeaning(clean)) || seen.has(key) || (usesMeaning && (nearDuplicateMeaning(clean, correct) || result.some((item) => nearDuplicateMeaning(clean, item))))) continue;
     seen.add(key);
     result.push(clean);
     if (result.length === 3) break;
@@ -138,11 +206,8 @@ export function buildReviewOptions(card, pool, mode, distractors = buildLocalDis
   return buildReviewQuestion(card, pool, mode, distractors).options;
 }
 
-// Generic fillers only run after the vocabulary pool is exhausted, so a card
-// still has four choices when no near-match and no network result is ready.
-const FALLBACK_MEANINGS = ["时间", "地方", "方法", "原因", "结果", "机会", "问题", "答案", "故事", "声音", "画面", "决定", "计划", "经验", "感觉"];
-const FALLBACK_EXPRESSIONS = ["moment", "place", "method", "reason", "result", "chance", "problem", "answer", "story", "sound", "picture", "decision", "plan", "experience", "feeling"];
 const reviewDistractorCache = new Map();
+const REVIEW_MODES = ["r1", "r2", "r3"];
 
 const distractorCacheKey = (card, mode) => `${card?.id ?? ""}:${mode}`;
 
@@ -163,23 +228,8 @@ export function rememberReviewDistractors(card, mode, values) {
 export function distractorValuesFromRemote(remote, mode) {
   if (Array.isArray(remote)) return remote;
   const data = remote?.distractors || remote || {};
-  const list = mode === "r2" ? data.expression_options : data.meaning_options;
+  const list = mode === "r2" ? data.expression_options : mode === "r3" ? data.listening_options : data.meaning_options;
   return Array.isArray(list) ? list : [];
-}
-
-function relaxedPoolValues(card, pool, mode) {
-  const usesMeaning = mode === "r1" || mode === "r3";
-  const correct = normalize(usesMeaning ? card?.meaning_zh || card?.text_zh : card?.expression_en || card?.text_en);
-  const values = [];
-  for (const candidate of pool || []) {
-    if (!candidate || candidate.id === card?.id) continue;
-    const value = usesMeaning
-      ? String(candidate.meaning_zh || candidate.text_zh || "").trim()
-      : String(candidate.expression_en || candidate.text_en || "").trim();
-    if (!value || normalize(value) === correct) continue;
-    values.push(value);
-  }
-  return values;
 }
 
 function takeDistractors(values, card, mode, limit = 3) {
@@ -198,33 +248,56 @@ function takeDistractors(values, card, mode, limit = 3) {
   return result;
 }
 
-// Strict near-matches stay first. The rest of the user's vocabulary, then a
-// fixed bank, fills the card immediately so review does not wait on AI.
+// Prefer similar entries from the user's own vocabulary. AI results only fill
+// gaps when the local collection cannot supply three distinct choices.
 export function distractorsForReview(card, pool, mode) {
   const cached = cachedReviewDistractors(card, mode) || [];
-  const fallback = mode === "r2" ? FALLBACK_EXPRESSIONS : FALLBACK_MEANINGS;
   return takeDistractors([
-    ...cached,
     ...buildLocalDistractors(card, pool, mode),
-    ...relaxedPoolValues(card, pool, mode),
-    ...fallback,
+    ...cached,
   ], card, mode, 3);
 }
 
-export async function prefetchReviewDistractors(cards, mode, loader, pool = []) {
-  const jobs = [];
-  for (const card of cards || []) {
-    if (!card?.id || cachedReviewDistractors(card, mode)) continue;
-    if (buildLocalDistractors(card, pool, mode).length >= 3) continue;
-    let request;
-    try { request = Promise.resolve(loader?.(card)); }
-    catch (error) { request = Promise.reject(error); }
-    jobs.push(request
-      .then((remote) => {
-        const values = distractorValuesFromRemote(remote, mode);
-        if (values.length) rememberReviewDistractors(card, mode, values);
-      })
-      .catch(() => { /* a failed prefetch must not block the card already on screen */ }));
+const yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+export async function prepareReviewDistractors(cards, pool, loader, { signal, onPrepared, chunkSize = 12, concurrency = 2 } = {}) {
+  const uniqueCards = [...new Map((cards || []).filter((card) => card?.id).map((card) => [card.id, card])).values()];
+  const needsRemote = [];
+  const index = indexedPool(pool);
+  for (let offset = 0; offset < uniqueCards.length; offset += chunkSize) {
+    if (signal?.aborted) return;
+    const chunk = uniqueCards.slice(offset, offset + chunkSize);
+    for (const card of chunk) {
+      let missingOptions = false;
+      for (const mode of REVIEW_MODES) {
+        const local = buildLocalDistractors(card, index, mode);
+        const cached = cachedReviewDistractors(card, mode) || [];
+        if (takeDistractors([...local, ...cached], card, mode).length < 3) missingOptions = true;
+        if (local.length && cached.length < 3) rememberReviewDistractors(card, mode, local);
+      }
+      if (missingOptions) needsRemote.push(card);
+    }
+    onPrepared?.(chunk.map((card) => card.id));
+    if (offset + chunkSize < uniqueCards.length) await yieldToBrowser();
   }
-  await Promise.all(jobs);
+
+  let next = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), needsRemote.length) }, async () => {
+    while (!signal?.aborted) {
+      const card = needsRemote[next];
+      next += 1;
+      if (!card) return;
+      try {
+        const remote = await loader?.(card, { signal });
+        for (const mode of REVIEW_MODES) {
+          const values = distractorValuesFromRemote(remote, mode);
+          if (values.length) rememberReviewDistractors(card, mode, values);
+        }
+        onPrepared?.([card.id]);
+      } catch {
+        // The current card already has its best local choices; failed supplements must not block review.
+      }
+    }
+  });
+  await Promise.all(workers);
 }

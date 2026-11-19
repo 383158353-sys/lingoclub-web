@@ -86,3 +86,49 @@ export function buryCardInSession(session, id) {
     completed: advanced.done || Boolean(session.completed),
   };
 }
+
+export function deleteCardFromSession(session, id) {
+  if (!session || id == null) return session;
+  const removeCardResult = (values) => {
+    if (!values || typeof values !== "object") return values;
+    const next = { ...values };
+    delete next[id];
+    return next;
+  };
+  const dailyQueue = session.dailyQueue ? {
+    ...session.dailyQueue,
+    ids: dropId(session.dailyQueue.ids, id),
+    completedIds: dropId(session.dailyQueue.completedIds, id),
+    sourceIds: session.dailyQueue.sourceIds
+      ? Object.fromEntries(Object.entries(session.dailyQueue.sourceIds).map(([name, list]) => [name, dropId(list, id)]))
+      : session.dailyQueue.sourceIds,
+  } : session.dailyQueue;
+  const completedIds = dropId(session.completedIds, id);
+  const queue = dropId(session.queue, id);
+  const originalQueue = dropId(session.originalQueue || session.queue, id);
+  const position = Array.isArray(session.queue) ? session.queue.indexOf(id) : -1;
+  const next = {
+    ...session, dailyQueue, completedIds, queue, originalQueue,
+    r1Res: removeCardResult(session.r1Res),
+    r2Res: removeCardResult(session.r2Res),
+    r3Res: removeCardResult(session.r3Res),
+    retried: removeCardResult(session.retried),
+  };
+  if (!originalQueue.length) return { ...next, idx: 0, phase: "done", completed: true };
+  if (position < 0) return next;
+
+  let idx = Number(session.idx || 0);
+  if (position < idx) idx -= 1;
+  if (idx < queue.length) return { ...next, idx };
+
+  const advanced = advanceReviewQuestion({ phase: session.phase || "r1", idx: 0, queueLength: 0 });
+  return {
+    ...next,
+    queue: advanced.done ? queue : [...originalQueue],
+    idx: 0,
+    phase: advanced.phase,
+    reviewed: 0,
+    retried: {},
+    completed: advanced.done || Boolean(session.completed),
+  };
+}

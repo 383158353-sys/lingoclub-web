@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Check, Volume2, VolumeX } from "lucide-react";
-import { invokeAI } from "@/lib/localApi";
-import { buildReviewQuestion, distractorsForReview, getReviewQuestionPresentation, isCorrectReviewAnswer, prefetchReviewDistractors } from "@/lib/reviewDistractors";
+import { buildReviewQuestion, distractorsForReview, getReviewQuestionPresentation, isCorrectReviewAnswer } from "@/lib/reviewDistractors";
 import { commitReviewAnswer, scheduleReviewAutoAdvance } from "@/lib/reviewFlow";
-import { BuryButton, WordDetailOverlay } from "@/components/vocab/WordDetailDialog";
+import { DeleteWordButton, WordDetailOverlay } from "@/components/vocab/WordDetailDialog";
 import { pronounce } from "@/lib/pronunciation";
 import { answerFeedbackPlan, isReviewSoundEnabled, playReviewSound, setReviewSoundEnabled } from "@/lib/reviewSounds";
 
@@ -11,13 +10,12 @@ function speak(text) {
   pronounce(text, { accent: "en-US" });
 }
 
-export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, onBack, onBury, onRestore, fontScale = 1 }) {
+export default function Flashcard({ mode, card, pool, distractorIndex, distractorRevision = 0, onAnswer, onBack, onDelete, fontScale = 1 }) {
   const [picked, setPicked] = useState(null);
   const [correct, setCorrect] = useState(null);
   const [showAnswer, setShowAnswer] = useState(false);
   const [soundOn, setSoundOn] = useState(() => isReviewSoundEnabled());
   const questionCache = useRef({ key: null, question: null });
-  const poolRef = useRef(pool);
   const autoTimer = useRef(null);
   const pendingAnswer = useRef(null);
   const answerToken = useRef(0);
@@ -29,14 +27,16 @@ export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, o
   const ts = card.timestamp || "";
   const presentation = getReviewQuestionPresentation(card, mode, picked !== null);
   const questionKey = `${card?.id}:${mode}`;
-  if (questionCache.current.key !== questionKey) {
-    questionCache.current = { key: questionKey, question: buildReviewQuestion(card, pool, mode, distractorsForReview(card, pool, mode)) };
+  if (questionCache.current.key !== questionKey || (picked === null && questionCache.current.revision !== distractorRevision)) {
+    questionCache.current = {
+      key: questionKey,
+      revision: distractorRevision,
+      question: buildReviewQuestion(card, pool, mode, distractorsForReview(card, distractorIndex || pool, mode)),
+    };
   }
   const question = questionCache.current.question;
   const options = question?.options || [];
-  const hasCompleteOptions = options.length > 0;
-  const upcomingKey = upcoming.map((item) => item?.id).filter(Boolean).slice(0, 2).join("\n");
-  poolRef.current = pool;
+  const hasCompleteOptions = options.length === 4;
 
   const commitAnswer = useCallback((token) => {
     const pending = pendingAnswer.current;
@@ -57,25 +57,6 @@ export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, o
     }
     return result.committed;
   }, []);
-
-  useEffect(() => {
-    const targets = upcoming.filter((item) => item?.id).slice(0, 2);
-    if (!targets.length) return undefined;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
-    prefetchReviewDistractors(targets, mode, (target) => invokeAI("generate_distractors", {
-      expression_en: target.expression_en || target.text_en || "",
-      meaning_zh: target.meaning_zh || target.text_zh || "",
-      subtitle_text: target.expression_en || target.text_en || "",
-      video_id: target.source_movie_id || "review",
-    }, { signal: controller.signal, timeoutMs: 3500 }), poolRef.current);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-    // upcomingKey is the identity of the next two cards; pool is read from poolRef.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, upcomingKey]);
 
   const pronounceTimer = useRef(null);
   useEffect(() => () => { if (pronounceTimer.current) clearTimeout(pronounceTimer.current); }, []);
@@ -111,16 +92,16 @@ export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, o
 
   useEffect(() => {
     const onKey = (event) => {
-      if (picked !== null) return;
+      if (!hasCompleteOptions || picked !== null) return;
       const number = parseInt(event.key, 10);
       if (number >= 1 && number <= options.length) choose(options[number - 1]);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [options, picked]);
+  }, [hasCompleteOptions, options, picked]);
 
   const choose = (option) => {
-    if (picked !== null || pendingAnswer.current || !option || !question) return;
+    if (!hasCompleteOptions || picked !== null || pendingAnswer.current || !option || !question) return;
     const isCorrect = isCorrectReviewAnswer(question, option);
     const correctOption = question.options.find((candidate) => candidate.id === question.correctAnswerId);
     const answerDetails = { question_type: mode, user_answer: option.value, correct_answer: correctOption?.value, rating: isCorrect ? 4 : 0, response_time_ms: Date.now() - startedAt.current };
@@ -146,7 +127,7 @@ export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, o
   };
 
   if (showAnswer && !correct) {
-    return <WordDetailOverlay vocabulary={card} onContinue={continueAfterWrong} returnContext="review" onBury={onBury} onRestore={onRestore} />;
+    return <WordDetailOverlay vocabulary={card} onContinue={continueAfterWrong} returnContext="review" onDelete={onDelete} />;
   }
 
   const answerClass = (option, revealed) => {
@@ -166,7 +147,7 @@ export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, o
         {mode === "r3" && <><button onClick={() => speak(expr)} className="mt-3 flex w-full flex-col items-center justify-center rounded-xl border border-mint/30 bg-mint/5 py-4 text-mint hover:bg-mint/10 md:mt-6 md:py-8"><Volume2 size={26} /><span className="mt-2 text-sm">重新播放英文，再选择中文释义</span></button></>}
         {hasCompleteOptions ? <div className="mt-4 grid grid-cols-2 gap-2 pt-1 md:mt-4 md:gap-3 md:pt-0">
           {options.map((option, index) => <button key={`${questionKey}:${option.id}`} onClick={(event) => { choose(option); if (event.detail > 0) event.currentTarget.blur(); }} disabled={picked !== null} style={{ "--review-font-scale": fontScale }} className={`min-h-[4.25rem] touch-manipulation rounded-xl border p-3 transition-colors [-webkit-tap-highlight-color:transparent] focus-visible:outline focus-visible:outline-2 focus-visible:outline-copper ${answerClass(option, picked !== null)} ${mode === "r2" ? "text-center font-display text-[calc(1rem*var(--review-font-scale))]" : "text-left text-[calc(0.875rem*var(--review-font-scale))]"}`}><span className="mr-1.5 text-[10px] text-muted-foreground/40">{index + 1}</span>{option.value || "—"}</button>)}
-        </div> : <div className="mt-4 rounded-xl border border-mint/20 bg-mint/5 p-5 text-center text-sm text-muted-foreground">正在准备相近干扰项，请稍候…</div>}
+        </div> : <div className="mt-4 rounded-xl border border-mint/20 bg-mint/5 p-5 text-center text-sm text-muted-foreground">正在补充足够的相近选项，请稍候…</div>}
         {mode === "r3" && picked !== null && correct && <div className="mt-4 rounded-xl border border-mint/20 bg-mint/5 p-4">
           <div className="flex items-center gap-2 text-sm text-mint"><Check size={16} />回答正确</div>
           <p className="mt-2 font-display text-lg text-foreground">{expr}</p>
@@ -177,7 +158,7 @@ export default function Flashcard({ mode, card, pool, upcoming = [], onAnswer, o
       </div>
       <div className="mt-3 flex items-center justify-between gap-2 md:mt-5">
         <button type="button" onClick={() => onBack?.()} className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-sm text-muted-foreground touch-manipulation hover:border-mint/40 hover:text-mint"><ArrowLeft size={14} /> 上一张</button>
-        <BuryButton card={card} onBury={onBury} onRestore={onRestore} className="inline-flex min-h-11 items-center rounded-full border border-copper/50 px-4 py-2 text-sm font-medium text-copper touch-manipulation [-webkit-tap-highlight-color:transparent] hover:bg-copper/10" />
+        <DeleteWordButton card={card} onDelete={onDelete} className="inline-flex min-h-11 items-center rounded-full border border-copper/50 px-4 py-2 text-sm font-medium text-copper touch-manipulation [-webkit-tap-highlight-color:transparent] hover:bg-copper/10" />
       </div>
     </div>
   );
