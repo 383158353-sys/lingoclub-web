@@ -36,7 +36,7 @@ export default function AISettingsPanel({ embedded = false }) {
   const [activeId, setActiveId] = useState(getActiveAICredentialId());
   const [draft, setDraft] = useState(EMPTY);
   const [editingActive, setEditingActive] = useState(false);
-  const [editDraft, setEditDraft] = useState({ baseUrl: "", apiKey: "", model: "", fastModel: "" });
+  const [editDraft, setEditDraft] = useState({ baseUrl: "", apiKey: "", model: "", fastModel: "", provider: "" });
   const [adding, setAdding] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -77,13 +77,6 @@ export default function AISettingsPanel({ embedded = false }) {
   };
   const activate = async (id) => { setBusy(true); setMessage(""); try { await activateAICredential(id); setActiveId(id); setCredentials(getAICredentials()); setMessage("已切换当前 API"); } catch (error) { setMessage(errorText(error)); } finally { setBusy(false); } };
   const remove = async (id) => { if (!window.confirm("删除这套 API 配置？")) return; setBusy(true); try { await deleteAICredential(id); await refresh(); setMessage("配置已删除"); } catch (error) { setMessage(errorText(error)); } finally { setBusy(false); } };
-  const saveProvider = async (provider) => {
-    if (!activeCredential || provider === activeCredential.provider) return;
-    setProviderBusy(true); setMessage("");
-    try { await updateAICredential(activeCredential.id, { provider }); setCredentials(getAICredentials()); setMessage("接口协议已保存；加密 API Key 未更改"); }
-    catch (error) { setMessage(errorText(error)); }
-    finally { setProviderBusy(false); }
-  };
   const refreshGeminiModels = async () => {
     if (!activeCredential) return;
     setModelsBusy(true); setMessage(""); setGeminiModels([]);
@@ -103,7 +96,7 @@ export default function AISettingsPanel({ embedded = false }) {
   };
   const beginEditActive = () => {
     if (!activeCredential) return;
-    setEditDraft({ baseUrl: activeCredential.baseUrl || "", apiKey: "", model: activeCredential.model || "", fastModel: activeCredential.fastModel || "" });
+    setEditDraft({ baseUrl: activeCredential.baseUrl || "", apiKey: "", model: activeCredential.model || "", fastModel: activeCredential.fastModel || "", provider: activeCredential.provider || "" });
     setEditingActive(true);
     setMessage("");
   };
@@ -113,7 +106,10 @@ export default function AISettingsPanel({ embedded = false }) {
     setBusy(true); setMessage("");
     try {
       const patch = { model: editDraft.model.trim(), fastModel: editDraft.fastModel.trim() };
-      if (activeCredential.type === "relay") patch.baseUrl = editDraft.baseUrl.trim();
+      if (activeCredential.type === "relay") {
+        patch.baseUrl = editDraft.baseUrl.trim();
+        patch.provider = editDraft.provider;
+      }
       // An empty key means keep the encrypted credential as-is.
       if (editDraft.apiKey.trim()) patch.apiKey = editDraft.apiKey.trim();
       await updateAICredential(activeCredential.id, patch);
@@ -143,9 +139,14 @@ export default function AISettingsPanel({ embedded = false }) {
       {activeCredential && <div className="space-y-2 rounded-xl border border-border/70 p-3">
         {!editingActive ? <button type="button" disabled={busy || testBusy} onClick={beginEditActive} className="rounded-full border border-border px-3 py-1.5 text-xs text-foreground disabled:opacity-50">重新编辑当前 API</button> : <form onSubmit={saveActiveEdit} className="space-y-2 rounded-lg bg-background/60 p-3">
           <p className="text-xs text-muted-foreground">修改当前配置不会删除 credential。API Key 留空则保留现有密钥。</p>
-          {activeCredential.type === "relay" && <Field label="Base URL" value={editDraft.baseUrl} onChange={(value) => setEditDraft((current) => ({ ...current, baseUrl: value }))} required />}
+          {activeCredential.type === "relay" && <>
+            <label className="block space-y-1 text-sm"><span>接口协议</span><select value={editDraft.provider} onChange={(event) => setEditDraft((current) => ({ ...current, provider: event.target.value }))} className="w-full rounded-lg border border-border bg-background px-3 py-2"><option value="openai-compatible">OpenAI-compatible · Chat Completions</option><option value="gemini">Gemini-compatible · generateContent</option></select></label>
+            <Field label="Base URL" value={editDraft.baseUrl} onChange={(value) => setEditDraft((current) => ({ ...current, baseUrl: value }))} required />
+            {relayProtocolHint(editDraft.provider, editDraft.baseUrl) && <p className="text-xs text-amber-200">{relayProtocolHint(editDraft.provider, editDraft.baseUrl)}</p>}
+          </>}
           <label className="block space-y-1 text-sm"><span>API Key（留空保留当前密钥）</span><input type="password" autoComplete="new-password" value={editDraft.apiKey} onChange={(event) => setEditDraft((current) => ({ ...current, apiKey: event.target.value }))} placeholder={activeCredential.maskedApiKey || "留空保留当前密钥"} className="w-full rounded-lg border border-border bg-background px-3 py-2" /></label>
           <Field label="Model" value={editDraft.model} onChange={(value) => setEditDraft((current) => ({ ...current, model: value }))} required />
+          {activeCredential.type === "relay" && <p className="text-xs text-muted-foreground">按服务商模型页原样填写 Model ID（例如 fb-5-2）；不添加 models/ 或接口路径。</p>}
           <Field label="Fast Model（可选）" value={editDraft.fastModel} onChange={(value) => setEditDraft((current) => ({ ...current, fastModel: value }))} />
           <div className="flex gap-2"><button type="submit" disabled={busy} className="rounded-full bg-mint px-3 py-1.5 text-xs font-medium text-background disabled:opacity-50">{busy ? "保存中…" : "保存修改"}</button><button type="button" onClick={() => { setEditingActive(false); setEditDraft((current) => ({ ...current, apiKey: "" })); }} className="rounded-full border border-border px-3 py-1.5 text-xs">取消</button></div>
         </form>}
@@ -161,18 +162,22 @@ export default function AISettingsPanel({ embedded = false }) {
           {manualFastModelOpen && <div className="flex gap-2"><input value={manualFastModel} onChange={(event) => setManualFastModel(event.target.value)} aria-label="手动输入 Gemini Fast Model ID" className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs" /><button type="button" onClick={() => saveModelField("fast_model", manualFastModel)} className="rounded-lg border border-border px-3 text-xs">保存</button></div>}
         </div>}
         {testResult && <CredentialTestResult result={testResult} />}
-        {activeCredential.type === "relay" && <p className="text-xs text-muted-foreground">中转站使用已保存的接口协议：{activeCredential.provider === "gemini" ? "Gemini-compatible generateContent" : "OpenAI-compatible Chat Completions"}。</p>}
+        {activeCredential.type === "relay" && <p className="text-xs text-muted-foreground">协议决定请求格式；Model ID 不做白名单限制，按服务商模型页原样填写（例如 fb-5-2）。</p>}
       </div>}
       {credentials.length === 0 && <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">尚未添加 API。选择官方 OpenAI、官方 Gemini 或 OpenAI-compatible 中转站。</p>}
       {!adding ? <button type="button" onClick={() => setAdding(true)} className="inline-flex items-center gap-2 rounded-full border border-copper/40 px-4 py-2 text-sm text-copper"><Plus size={15} />添加 API</button> : <form onSubmit={submit} className="space-y-3 rounded-xl border border-border/70 p-4">
         <Field label="名称" value={draft.name} onChange={(value) => setField("name", value)} placeholder="例如：我的中转站" required />
-        <div className="grid grid-cols-2 gap-2"><Choice active={draft.type === "official"} onClick={() => setDraft({ ...draft, type: "official", provider: "openai", baseUrl: "" })}>官方 API</Choice><Choice active={draft.type === "relay"} onClick={() => setDraft({ ...draft, type: "relay", provider: "gemini" })}>中转站 · Gemini-compatible</Choice></div>
+        <div className="grid grid-cols-2 gap-2"><Choice active={draft.type === "official"} onClick={() => setDraft({ ...draft, type: "official", provider: "openai", baseUrl: "" })}>官方 API</Choice><Choice active={draft.type === "relay"} onClick={() => setDraft({ ...draft, type: "relay", provider: "openai-compatible" })}>中转站</Choice></div>
         {draft.type === "official" && <label className="block space-y-1 text-sm"><span>Provider</span><select value={draft.provider} onChange={(event) => setDraft({ ...draft, provider: event.target.value, baseUrl: "" })} className="w-full rounded-lg border border-border bg-background px-3 py-2"><option value="openai">OpenAI · Responses API</option><option value="gemini">Gemini · generateContent</option></select><span className="block text-xs text-muted-foreground">Base URL：{draft.provider === "gemini" ? "https://generativelanguage.googleapis.com" : "https://api.openai.com/v1"}</span></label>}
-        {draft.type === "relay" && <Field label="Base URL" value={draft.baseUrl} onChange={(value) => setField("baseUrl", value)} placeholder="https://api.lk888.ai/v1" required />}
+        {draft.type === "relay" && <>
+          <label className="block space-y-1 text-sm"><span>接口协议</span><select value={draft.provider} onChange={(event) => setField("provider", event.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2"><option value="openai-compatible">OpenAI-compatible · Chat Completions</option><option value="gemini">Gemini-compatible · generateContent</option></select></label>
+          <Field label="Base URL" value={draft.baseUrl} onChange={(value) => setField("baseUrl", value)} placeholder={draft.provider === "gemini" ? "按服务商文档填写 Gemini API 根地址" : "https://api.lk888.ai/v1"} required />
+          {relayProtocolHint(draft.provider, draft.baseUrl) && <p className="text-xs text-amber-200">{relayProtocolHint(draft.provider, draft.baseUrl)}</p>}
+        </>}
         <label className="block space-y-1 text-sm"><span>API Key</span><span className="flex rounded-lg border border-border bg-background"><input required type={showKey ? "text" : "password"} autoComplete="new-password" value={draft.apiKey} onChange={(event) => setField("apiKey", event.target.value)} className="min-w-0 flex-1 bg-transparent px-3 py-2 outline-none" /><button type="button" onClick={() => setShowKey((value) => !value)} className="px-3 text-muted-foreground" aria-label={showKey ? "隐藏 API Key" : "显示 API Key"}>{showKey ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label>
-        <Field label="Model" value={draft.model} onChange={(value) => setField("model", value)} placeholder="输入 model ID" required />
+        <Field label="Model" value={draft.model} onChange={(value) => setField("model", value)} placeholder={draft.type === "relay" ? "输入服务商的 Model ID，例如 fb-5-2" : "输入 model ID"} required />
         <Field label="Fast Model（可选）" value={draft.fastModel} onChange={(value) => setField("fastModel", value)} placeholder="留空时使用 Model" />
-        {draft.type === "relay" && <p className="text-xs text-muted-foreground">Gemini-compatible 中转站使用 generateContent；Model ID 由你填写。</p>}
+        {draft.type === "relay" && <p className="text-xs text-muted-foreground">可填写此服务商支持的任意文本模型 ID；请按模型文档原样填写，不要添加 models/ 或接口路径。</p>}
         <p className="text-xs text-muted-foreground">API Key 由服务端加密后与账号关联；保存 credential 与测试模型相互独立。</p>
         <div className="flex gap-2"><button disabled={busy} className="rounded-full bg-mint px-4 py-2 text-sm font-medium text-background">{busy ? <Loader2 size={15} className="animate-spin" /> : "保存 API"}</button><button type="button" onClick={() => { setAdding(false); setDraft(EMPTY); }} className="rounded-full border border-border px-4 py-2 text-sm">取消</button></div>
       </form>}
@@ -183,6 +188,17 @@ export default function AISettingsPanel({ embedded = false }) {
 }
 
 function credentialLabel(item) { if (item.type === "relay") return `中转站 · ${item.provider === "gemini" ? "Gemini-compatible" : "OpenAI-compatible"}`; return item.provider === "gemini" ? "官方 Gemini" : "官方 OpenAI"; }
+function relayProtocolHint(provider, baseUrl) {
+  if (!["gemini", "openai-compatible"].includes(provider)) return "";
+  const path = String(baseUrl || "").trim().replace(/^https?:\/\/[^/]+/i, "").split(/[?#]/, 1)[0].replace(/\/+$/, "");
+  if (provider === "gemini" && /\/v\d+$/i.test(path)) {
+    return "此地址以版本路径结尾（如 /v1），通常对应 OpenAI-compatible；若文档给的是 /v1 接口，请切换协议。";
+  }
+  if (provider === "openai-compatible" && /\/v\d+beta$/i.test(path)) {
+    return "此地址看起来是 Gemini API 版本路径；OpenAI-compatible 通常使用 /v1，请核对服务商文档。";
+  }
+  return "";
+}
 function safeTestError(error) {
   if (error?.code === "AUTH_ERROR") return "API Key 无效或无调用权限";
   if (error?.code === "MODEL_NOT_AVAILABLE") return "当前 API Key 无权使用此模型";
@@ -211,7 +227,9 @@ function CredentialTestResult({ result }) {
   const connection = record.payload?.connection;
   const success = record.status === 200 && connection?.ok;
   const safeError = record.code ? safeTestError(record) : record.error || "连接失败";
-  return <p role="status" className={`text-xs ${success ? "text-mint" : "text-amber-200"}`}>{success ? "连接成功" : safeError}</p>;
+  const diagnostic = record.diagnostic || record.payload?.diagnostic;
+  const detail = !success && (diagnostic?.upstreamCode || diagnostic?.httpStatus);
+  return <div role="status" className={`text-xs ${success ? "text-mint" : "text-amber-200"}`}><p>{success ? "连接成功" : safeError}</p>{detail && <p className="mt-1 text-muted-foreground">上游信息：{[diagnostic.upstreamCode, diagnostic.httpStatus && `HTTP ${diagnostic.httpStatus}`].filter(Boolean).join(" · ")}</p>}</div>;
 }
 function Choice({ active, onClick, children }) { return <button type="button" onClick={onClick} aria-pressed={active} className={`rounded-lg border px-3 py-2 text-sm ${active ? "border-mint/50 bg-mint/10 text-mint" : "border-border text-muted-foreground"}`}>{children}</button>; }
 function Field({ label, value, onChange, placeholder, required = false }) { return <label className="block space-y-1 text-sm"><span>{label}</span><input required={required} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} autoComplete="off" className="w-full rounded-lg border border-border bg-background px-3 py-2" /></label>; }

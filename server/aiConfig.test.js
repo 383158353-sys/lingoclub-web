@@ -34,7 +34,7 @@ test("OpenAI-compatible relay request loads only the selected credential and nev
   } finally { globalThis.fetch = oldFetch; }
 });
 
-test("OpenAI-compatible relay stays on Chat Completions regardless of model name", async () => {
+test("OpenAI-compatible relay accepts model IDs from the provider without protocol-specific rewriting", async () => {
   const oldFetch = globalThis.fetch;
   let observed;
   globalThis.fetch = async (url, options) => {
@@ -45,11 +45,11 @@ test("OpenAI-compatible relay stays on Chat Completions regardless of model name
     const res = recorder();
     await handleAI({}, res, { credential_id: "active-credential", task: "ai_connection_test" }, {
       NODE_ENV: "test",
-      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async (_req, id) => ({ id, type: "relay", provider: "openai-compatible", base_url: "https://api.lk888.ai/v1", api_key: "test-only-secret", model: "gem-3.5-flash-lite", fast_model: "" }),
+      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async (_req, id) => ({ id, type: "relay", provider: "openai-compatible", base_url: "https://api.lk888.ai/v1", api_key: "test-only-secret", model: "fb-5-2", fast_model: "" }),
     });
     assert.equal(res.statusCode, 200);
     assert.equal(observed.url, "https://api.lk888.ai/v1/chat/completions");
-    assert.deepEqual(observed.body, { model: "gem-3.5-flash-lite", messages: [{ role: "user", content: "Reply only with OK" }] });
+    assert.deepEqual(observed.body, { model: "fb-5-2", messages: [{ role: "user", content: "Reply only with OK" }] });
     assert.equal(JSON.parse(res.body).connection.provider, "openai-compatible");
     assert.equal(JSON.parse(res.body).diagnostic.endpoint, "https://api.lk888.ai/v1/chat/completions");
     assert.doesNotMatch(res.body, /test-only-secret/);

@@ -66,7 +66,7 @@ export async function listAICredentialModels(credentialId) {
 
 export async function testActiveCredentialAI(credentialId) {
   try { return { connection: await callCredentialAI(credentialId, "ai_connection_test") }; }
-  catch (error) { return { connection: { status: error.status, error: error.message, code: error.code, upstreamStatus: error.upstreamStatus, upstreamCode: error.upstreamCode, endpoint: error.endpoint } }; }
+  catch (error) { return { connection: { status: error.status, error: error.message, code: error.code, upstreamStatus: error.upstreamStatus, upstreamCode: error.upstreamCode, endpoint: error.endpoint, diagnostic: error.diagnostic } }; }
 }
 
 export async function activateAICredential(credentialId) {

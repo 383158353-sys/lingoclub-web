@@ -1,8 +1,8 @@
 import { compareLibraryItems } from "./librarySort.js";
 import { cleanVideoTitle, isPlaceholderVideoTitle } from "./videoTitle.js";
-import { notifyLocalStateChanged, scopedStorageKey } from "./userStorage";
+import { notifyLocalStateChanged, scopedStorageKey } from "./userStorage.js";
 import { setItemWithCacheEviction } from "./storageQuota.js";
-import { deleteLocalVideoMany, getLocalMediaAssets, saveLocalMediaAssets } from "./localStudyLibrary";
+import { deleteLocalVideoMany, getLocalMediaAssets, saveLocalMediaAssets } from "./localStudyLibrary.js";
 
 const MOVIES_KEY = "lingoclub_local_movies_v1";
 const FOLDERS_KEY = "lingoclub_local_folders_v1";
@@ -168,9 +168,10 @@ async function ensureMigrated(key, kind) {
 }
 
 async function hydrateRecord(record, kind) {
-  const item = { ...record };
+  let item = { ...record };
   const key = assetKey(item, kind);
   const refs = await getLocalMediaAssets(key);
+  item = restoreExtraLargeFields(item, refs?.extraLargeFields);
   if (item.subtitle_id && Array.isArray(refs?.subtitleData)) item.subtitles = refs.subtitleData;
   const posterRef = kind === "folder" ? item.cover_id : item.poster_id;
   if (posterRef && refs?.posterBlob) {
@@ -178,6 +179,15 @@ async function hydrateRecord(record, kind) {
     else item.poster_blob = refs.posterBlob;
   }
   return item;
+}
+
+export function restoreExtraLargeFields(record, extraLargeFields) {
+  const restored = { ...record };
+  if (!extraLargeFields || typeof extraLargeFields !== "object" || Array.isArray(extraLargeFields)) return restored;
+  for (const [field, value] of Object.entries(extraLargeFields)) {
+    if (!Object.prototype.hasOwnProperty.call(restored, field)) restored[field] = value;
+  }
+  return restored;
 }
 
 function collection(key, prefix, kind) {

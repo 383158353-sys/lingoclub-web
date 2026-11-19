@@ -62,6 +62,47 @@ test("persisted cue processing restores translations and avoids another batch re
   }
 });
 
+test("cached subtitle translations are reused on a later page entry", async () => {
+  const previous = globalThis.localStorage;
+  const entries = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => entries.get(key) || null,
+    setItem: (key, value) => entries.set(key, value),
+  };
+  try {
+    const source = cues(1);
+    let calls = 0;
+    const translateBatch = async (_task, payload) => {
+      calls += 1;
+      return {
+        translation_batch: {
+          cues: payload.cues.filter((cue) => cue.target).map((cue) => ({ cueId: cue.cueId, translation: "第零行" })),
+        },
+      };
+    };
+    const first = await processSubtitleEpisode({
+      videoId: "reopen-test",
+      subtitles: source,
+      getCurrentTime: () => 0,
+      translateBatch,
+    });
+    const reopened = await processSubtitleEpisode({
+      videoId: "reopen-test",
+      subtitles: source,
+      getCurrentTime: () => 0,
+      translateBatch,
+    });
+
+    assert.equal(calls, 1);
+    assert.equal(first.subtitles[0].text_zh, "第零行");
+    assert.equal(reopened.subtitles[0].text_zh, "第零行");
+    assert.equal(reopened.diagnostics.apiCalls, 0);
+  } finally {
+    if (previous === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = previous;
+  }
+});
+
 test("already bilingual subtitles are returned as-is without batch translation calls", async () => {
   const previous = globalThis.localStorage;
   globalThis.localStorage = { getItem: () => null, setItem: () => {} };
