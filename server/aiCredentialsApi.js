@@ -1,5 +1,6 @@
 import { authenticatedUser, encryptCredentialSecret, isSafeProviderUrl, serviceRoleProjectMatches } from "./aiCredentials.js";
 import { classifyCredentialFailure, credentialDiagnosticCategory } from "./aiCredentialErrors.js";
+import { normalizeLk888RelayCredential } from "./aiProviders/lk888.js";
 
 function send(res, status, body) {
   res.statusCode = status;
@@ -7,7 +8,8 @@ function send(res, status, body) {
   res.end(JSON.stringify(payload));
 }
 function publicCredential(row, activeId) {
-  return { id: row.id, name: row.name, type: row.provider_type, provider: row.provider, baseUrl: row.base_url || "", model: row.model, fastModel: row.fast_model || "", maskedApiKey: row.key_hint ? `••••••••${row.key_hint}` : "", active: row.id === activeId, updatedAt: row.updated_at };
+  const normalized = normalizeLk888RelayCredential(row);
+  return { id: normalized.id, name: normalized.name, type: normalized.provider_type, provider: normalized.provider, baseUrl: normalized.base_url || "", model: normalized.model, fastModel: normalized.fast_model || "", maskedApiKey: normalized.key_hint ? `••••••••${normalized.key_hint}` : "", active: normalized.id === activeId, updatedAt: normalized.updated_at };
 }
 
 function logDatabaseDiagnostic(error, env) {

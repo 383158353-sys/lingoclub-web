@@ -2,6 +2,7 @@ import { getUserCredential } from "./aiCredentials.js";
 import { normalizeOpenAICompatibleEndpoint, openAICompatibleRequest, readOpenAICompatibleResponse } from "./aiProviders/openaiCompatible.js";
 import { geminiEndpoint, geminiModelsEndpoint, geminiRequest, readGeminiResponse } from "./aiProviders/gemini.js";
 import { openAIResponsesEndpoint, openAIResponsesRequest, readOpenAIResponsesResponse } from "./aiProviders/openaiResponses.js";
+import { normalizeLk888RelayCredential } from "./aiProviders/lk888.js";
 
 export function endpoint(baseUrl) {
   return normalizeOpenAICompatibleEndpoint(baseUrl);
@@ -417,9 +418,10 @@ function promptFor(body) {
 }
 
 export function resolveProviderRoute(credential) {
-  const providerType = String(credential?.provider_type || credential?.type || "").toLowerCase();
-  const provider = String(credential?.provider || "").toLowerCase();
-  if (providerType === "relay" && ["gemini", "openai-compatible"].includes(provider)) return { providerType, provider, baseUrl: credential.base_url || "" };
+  const normalizedCredential = normalizeLk888RelayCredential(credential);
+  const providerType = String(normalizedCredential?.provider_type || normalizedCredential?.type || "").toLowerCase();
+  const provider = String(normalizedCredential?.provider || "").toLowerCase();
+  if (providerType === "relay" && ["gemini", "openai-compatible"].includes(provider)) return { providerType, provider, baseUrl: normalizedCredential.base_url || "" };
   if (providerType === "official" && provider === "gemini") return { providerType, provider, baseUrl: "https://generativelanguage.googleapis.com" };
   if (providerType === "official" && provider === "openai") return { providerType, provider, baseUrl: "https://api.openai.com/v1" };
   const error = new Error("AI credential provider configuration is invalid");

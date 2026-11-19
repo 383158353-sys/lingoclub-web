@@ -6,7 +6,7 @@ import { CLOSE_READING_CLIENT_TIMEOUT_MS, CLOSE_READING_UPSTREAM_TIMEOUT_MS, des
 import { readFileSync } from "node:fs";
 
 function recorder() { return { statusCode: 200, body: "", end(value) { this.body = value; } }; }
-const relayCredential = async (_req, id) => ({ id, type: "relay", provider: "gemini", base_url: "https://api.lk888.ai", api_key: "test-only-secret", model: "tt-6-luna", fast_model: "tt-6-luna" });
+const relayCredential = async (_req, id) => ({ id, type: "relay", provider: "gemini", base_url: "https://gemini-relay.example", api_key: "test-only-secret", model: "tt-6-luna", fast_model: "tt-6-luna" });
 
 test("close-reading timeouts fit inside the Vercel function limit and the client waits longer than the server", () => {
   const vercel = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));

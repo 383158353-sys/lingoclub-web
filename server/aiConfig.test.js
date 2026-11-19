@@ -34,7 +34,7 @@ test("OpenAI-compatible relay request loads only the selected credential and nev
   } finally { globalThis.fetch = oldFetch; }
 });
 
-test("OpenAI-compatible relay accepts model IDs from the provider without protocol-specific rewriting", async () => {
+test("Lk888 legacy relay settings use the documented Chat Completions route and preserve the model ID", async () => {
   const oldFetch = globalThis.fetch;
   let observed;
   globalThis.fetch = async (url, options) => {
@@ -45,7 +45,7 @@ test("OpenAI-compatible relay accepts model IDs from the provider without protoc
     const res = recorder();
     await handleAI({}, res, { credential_id: "active-credential", task: "ai_connection_test" }, {
       NODE_ENV: "test",
-      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async (_req, id) => ({ id, type: "relay", provider: "openai-compatible", base_url: "https://api.lk888.ai/v1", api_key: "test-only-secret", model: "fb-5-2", fast_model: "" }),
+      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async (_req, id) => ({ id, type: "relay", provider: "gemini", base_url: "https://api.lk888.ai/v1", api_key: "test-only-secret", model: "fb-5-2", fast_model: "" }),
     });
     assert.equal(res.statusCode, 200);
     assert.equal(observed.url, "https://api.lk888.ai/v1/chat/completions");
@@ -181,7 +181,7 @@ test("Gemini-compatible relay uses one native adapter for connection and busines
     return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: responseText }] } }] }), { status: 200 });
   };
   try {
-    const credential = { id: "relay-credential-7", provider_type: "relay", provider: "gemini", base_url: "https://api.lk888.ai", api_key: "never-return-this-key", key_hint: "XY", model: "gem-3.8-flash", fast_model: "gem-3.5-flash-lite" };
+    const credential = { id: "relay-credential-7", provider_type: "relay", provider: "gemini", base_url: "https://gemini-relay.example", api_key: "never-return-this-key", key_hint: "XY", model: "gem-3.8-flash", fast_model: "gem-3.5-flash-lite" };
     const tasks = [
       [{ task: "ai_connection_test" }, "OK"],
       [{ task: "word_lookup", expression_en: "debate", subtitle_text: "We had a debate." }, "{}"],
@@ -199,10 +199,10 @@ test("Gemini-compatible relay uses one native adapter for connection and busines
       assert.equal(res.statusCode, 200);
     }
     assert.deepEqual(requests.map((item) => item.url), [
-      "https://api.lk888.ai/v1beta/models/gem-3.8-flash:generateContent",
-      "https://api.lk888.ai/v1beta/models/gem-3.8-flash:generateContent",
-      "https://api.lk888.ai/v1beta/models/gem-3.8-flash:generateContent",
-      "https://api.lk888.ai/v1beta/models/gem-3.8-flash:generateContent",
+      "https://gemini-relay.example/v1beta/models/gem-3.8-flash:generateContent",
+      "https://gemini-relay.example/v1beta/models/gem-3.8-flash:generateContent",
+      "https://gemini-relay.example/v1beta/models/gem-3.8-flash:generateContent",
+      "https://gemini-relay.example/v1beta/models/gem-3.8-flash:generateContent",
     ]);
     assert.equal(requests[0].options.headers["x-goog-api-key"], "never-return-this-key");
     assert.equal(requests[0].options.headers.Authorization, undefined);
@@ -240,11 +240,11 @@ test("relay translate_sentence uses the primary model and the minimal Gemini-com
       next_cues: [{ text: "This is the next line." }],
     }, {
       NODE_ENV: "test",
-      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ id: "relay-credential-7", provider_type: "relay", provider: "gemini", base_url: "https://api.lk888.ai", api_key: "never-return-this-key", model: "gem-3.8-flash", fast_model: "gem-3.5-flash-lite" }),
+      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ id: "relay-credential-7", provider_type: "relay", provider: "gemini", base_url: "https://gemini-relay.example", api_key: "never-return-this-key", model: "gem-3.8-flash", fast_model: "gem-3.5-flash-lite" }),
     });
     const response = JSON.parse(res.body);
     assert.equal(res.statusCode, 200);
-    assert.equal(observed.url, "https://api.lk888.ai/v1beta/models/gem-3.8-flash:generateContent");
+    assert.equal(observed.url, "https://gemini-relay.example/v1beta/models/gem-3.8-flash:generateContent");
     assert.deepEqual(Object.keys(observed.body).sort(), ["contents"]);
     assert.equal(observed.headers["x-goog-api-key"], "never-return-this-key");
     assert.match(observed.body.contents[0].parts[0].text, /I guess I'll stop beating myself up\./);
@@ -359,9 +359,9 @@ test("relay translate_sentence uses the tested main model and the minimal Gemini
     const res = recorder();
     await handleAI({}, res, { credential_id: "gem-1", task: "translate_sentence", text_en: "Hello" }, {
       NODE_ENV: "test",
-      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ id: "gem-1", type: "relay", provider: "gemini", base_url: "https://api.lk888.ai", api_key: "private-key", model: "gem-3.8-flash", fast_model: "gem-3.5-flash-lite" }),
+      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ id: "gem-1", type: "relay", provider: "gemini", base_url: "https://gemini-relay.example", api_key: "private-key", model: "gem-3.8-flash", fast_model: "gem-3.5-flash-lite" }),
     });
-    assert.equal(observed.url, "https://api.lk888.ai/v1beta/models/gem-3.8-flash:generateContent");
+    assert.equal(observed.url, "https://gemini-relay.example/v1beta/models/gem-3.8-flash:generateContent");
     assert.equal(observed.options.headers.Authorization, undefined);
     assert.equal(observed.options.headers["x-goog-api-key"], "private-key");
     assert.equal(observed.body.contents[0].parts[0].text.includes("Hello"), true);
@@ -382,10 +382,10 @@ test("relay word_lookup uses the same main model as connection_test, not Fast Mo
     const res = recorder();
     await handleAI({}, res, { credential_id: "gem-1", task: "word_lookup", expression_en: "debate", quick: true, subtitle_text: "We had a debate." }, {
       NODE_ENV: "test",
-      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ id: "gem-1", type: "relay", provider: "gemini", base_url: "https://api.lk888.ai", api_key: "private-key", model: "gem-3.8-flash", fast_model: "gem-3.5-flash-lite" }),
+      __AI_CREDENTIAL_LOOKUP_TEST_ONLY: async () => ({ id: "gem-1", type: "relay", provider: "gemini", base_url: "https://gemini-relay.example", api_key: "private-key", model: "gem-3.8-flash", fast_model: "gem-3.5-flash-lite" }),
     });
     assert.equal(res.statusCode, 200);
-    assert.equal(observed.url, "https://api.lk888.ai/v1beta/models/gem-3.8-flash:generateContent");
+    assert.equal(observed.url, "https://gemini-relay.example/v1beta/models/gem-3.8-flash:generateContent");
     assert.equal(observed.options.headers["x-goog-api-key"], "private-key");
     assert.equal(observed.body.generationConfig, undefined);
     assert.equal(JSON.parse(res.body).profile.meaning, "辩论");
