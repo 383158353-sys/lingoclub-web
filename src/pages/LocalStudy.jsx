@@ -360,6 +360,8 @@ export default function LocalStudy() {
   const study = useLocalStudy({
     subtitles: materials?.subtitles,
     videoId: extractYouTubeId(materials?.videoUrl) || materials?.recordId || "local",
+    videoUrl: materials?.videoUrl,
+    videoRef,
     currentTime: studyTime,
     offsetMs: subtitleOffsetMs,
     onSeek: (sec) => { setLoopRange(null); playFromLine(sec); },

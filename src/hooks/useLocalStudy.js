@@ -7,6 +7,7 @@ import { toSec, fromSecPrecise } from "@/lib/timecode";
 import { activeCueForLocalStudy, shiftPlaybackSeconds, subtitleLookupTime } from "@/lib/subtitleOffset";
 import { displayLinesFromTimedCues } from "@/lib/captionDisplayCues";
 import { mergeCompleteAnalysis, partialAnalysisForCue } from "@/lib/studyLearningCache";
+import { observeVideoFrames } from "@/lib/videoFrameClock";
 
 // 本地学习素材专用 study hook —— 与 useEpisodeStudy 同形，但台词来自浏览器
 // 解析（不读数据库），AI 精读结果只缓存在内存里（不写 Subtitle 实体）。
@@ -105,7 +106,7 @@ function presentStudySubtitles(list) {
   return ensureIds(normalizeTimestamps(displayLinesFromTimedCues(list || [])));
 }
 
-export function useLocalStudy({ subtitles, currentTime, videoId = "local", offsetMs = 0, onSeek, onStudyEnter, onStudyExit, onPlayOnly, onAnalysisCached, onSubtitlesProcessed, onSubtitleLearningProcessed }) {
+export function useLocalStudy({ subtitles, currentTime, videoId = "local", videoUrl, videoRef, offsetMs = 0, onSeek, onStudyEnter, onStudyExit, onPlayOnly, onAnalysisCached, onSubtitlesProcessed, onSubtitleLearningProcessed }) {
   const [subs, setSubs] = useState(() => presentStudySubtitles(subtitles));
   const [activeId, setActiveId] = useState(null);
   const [selectedCueId, setSelectedCueId] = useState(null);
@@ -386,18 +387,26 @@ export function useLocalStudy({ subtitles, currentTime, videoId = "local", offse
     setProcessingRetry((value) => value + 1);
   };
 
-  // 播放高亮：取 time_start ≤ t 最近的一行作为当前台词。
-  // 不使用区间匹配——宽 time_end 的行会"吸收"缺 time_end 的相邻行，导致跳行。
-  // 归一化后每行都有唯一且递增的 time_start，逐行高亮不会遗漏。
+  const updateActiveCueAtTime = useCallback((time) => {
+    const best = activeCueForLocalStudy(subs, time, offsetMs);
+    const nextId = best?.id ?? null;
+    setActiveId((previous) => previous === nextId ? previous : nextId);
+  }, [offsetMs, subs]);
+
+  // Keep the native-video highlight in step with decoded frames; timeupdate is too
+  // sparse to reliably catch short cues between consecutive events.
+  useEffect(() => {
+    const video = videoRef?.current?.getVideoElement?.();
+    if (!video || !subs.length) return undefined;
+    return observeVideoFrames(video, updateActiveCueAtTime);
+  }, [subs, updateActiveCueAtTime, videoRef, videoUrl]);
+
+  // Non-native players still use their playback clock. The frame observer above
+  // supplements this for local videos without causing per-frame page renders.
   useEffect(() => {
     if (currentTime == null || subs.length === 0) return;
-    const best = activeCueForLocalStudy(subs, currentTime, offsetMs);
-    if (best) {
-      if (best.id !== activeId) setActiveId(best.id);
-    } else if (activeId !== null) {
-      setActiveId(null);
-    }
-  }, [currentTime, subs, activeId, offsetMs]);
+    updateActiveCueAtTime(currentTime);
+  }, [currentTime, subs.length, updateActiveCueAtTime]);
 
   const generate = async (sub, { silent = false } = {}) => {
     if (!sub?.text_en || !String(sub.text_en).trim()) return;
