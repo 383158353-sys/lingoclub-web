@@ -146,6 +146,8 @@ test("study articles merge imports with recommendations and keep a favorites fol
   assert.match(learn, /setLibraryArticleFavorite/);
   assert.match(learn, /setArticleFavorite/);
   assert.match(learn, /收藏文章/);
+  assert.match(learn, /编辑/);
+  assert.match(learn, /回收站/);
   assert.match(foldersUi, /onSelect\("favorites"\)/);
   assert.match(foldersUi, />\s*收藏/);
   assert.match(movieCard, /aria-label=\{meta\.favorited \? "取消收藏" : "收藏"\}/);
