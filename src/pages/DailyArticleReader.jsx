@@ -200,11 +200,11 @@ function AnalysisSection({ title, rows, type, source, fields, extra }) {
     <div>{rows.map((row, index) => <article key={`${row.en}-${index}`} className="border-b border-border py-6 first:pt-3 last:border-0">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="break-words text-[1.375rem] font-semibold leading-tight tracking-tight">{row.en}</h3>
-          {(row.ipa || row.pos) && <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm leading-6 text-muted-foreground">
-            {row.ipa && <span lang="en-GB">{row.ipa}</span>}
-            {row.pos && <i>{abbreviatedPartOfSpeech(row.pos)}</i>}
-          </p>}
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h3 className="break-words text-[1.375rem] font-semibold leading-tight tracking-tight">{row.en}</h3>
+            {row.pos && <i className="text-sm font-normal text-muted-foreground">{abbreviatedPartOfSpeech(row.pos)}</i>}
+          </div>
+          {row.ipa && <p lang="en-GB" className="mt-1 text-xs leading-5 text-muted-foreground">{row.ipa}</p>}
         </div>
         <div className="shrink-0"><VocabSaveButton {...source} expression={row.en} meaning={row.zh} type="word" /></div>
       </div>
