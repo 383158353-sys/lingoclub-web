@@ -7,6 +7,7 @@ import SelectionBubble from "@/components/study/SelectionBubble";
 import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
 import VocabSaveButton from "@/components/study/VocabSaveButton";
 import ArticleQuestionTable from "@/components/study/ArticleQuestionTable";
+import { abbreviatedPartOfSpeech } from "@/lib/vocabularyPos";
 import { articlesAvailable, getDailyArticle, markArticleRead, setArticleFavorite } from "@/lib/dailyArticles";
 import {
   analysisHasClassroomNotes,
@@ -194,6 +195,32 @@ export default function DailyArticleReader({ library = false }) {
 
 function AnalysisSection({ title, rows, type, source, fields, extra }) {
   if (!rows?.length) return null;
+  if (type === "word") return <section aria-label={title}>
+    <h2 className="mb-2 font-display text-xl">{title}</h2>
+    <div>{rows.map((row, index) => <article key={`${row.en}-${index}`} className="border-b border-border py-6 first:pt-3 last:border-0">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="break-words text-[1.375rem] font-semibold leading-tight tracking-tight">{row.en}</h3>
+          {(row.ipa || row.pos) && <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm leading-6 text-muted-foreground">
+            {row.ipa && <span lang="en-GB">{row.ipa}</span>}
+            {row.pos && <i>{abbreviatedPartOfSpeech(row.pos)}</i>}
+          </p>}
+        </div>
+        <div className="shrink-0"><VocabSaveButton {...source} expression={row.en} meaning={row.zh} type="word" /></div>
+      </div>
+      {row.zh && <p className="mt-2 whitespace-pre-line text-base font-medium leading-7">{row.zh}</p>}
+      {row.collocation && <p className="mt-3 flex items-baseline gap-3 text-sm leading-6"><span className="shrink-0 text-xs text-muted-foreground">搭配</span><span className="min-w-0 break-words">{row.collocation}</span></p>}
+      {(row.example_en || row.example_zh) && <div className="mt-3 border-l-2 border-copper/30 pl-3">
+        {row.example_en && <p lang="en" className="text-base leading-7 text-foreground/90">{row.example_en}</p>}
+        {row.example_zh && <p className="mt-1 text-sm leading-6 text-muted-foreground">{row.example_zh}</p>}
+      </div>}
+      {(row.forms || row.confusion) && <details className="mt-3 text-sm leading-6 text-muted-foreground"><summary className="cursor-pointer text-xs">词形与辨析</summary>
+        {row.forms && <p className="mt-2">{row.forms}</p>}
+        {row.confusion && <p className="mt-1">{row.confusion}</p>}
+      </details>}
+      {row.note && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-muted-foreground">{row.note}</p>}
+    </article>)}</div>
+  </section>;
   return <section><h2 className="mb-4 font-display text-xl">{title}</h2>
     <div className="space-y-4">{rows.map((row, index) => <div key={`${row.en}-${index}`} className="border-b border-border pb-4 last:border-0">
       <div className="flex items-start gap-3"><p className="flex-1 leading-relaxed">{row.en}</p><VocabSaveButton {...source} expression={row.en} meaning={row.zh || row.usage} type={type} sourceSentenceEn={type === "sentence" ? row.en : undefined} sourceSentenceZh={row.zh} /></div>
