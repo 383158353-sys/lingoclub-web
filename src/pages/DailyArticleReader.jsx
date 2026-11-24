@@ -8,6 +8,7 @@ import SubtitleWordLookup from "@/components/study/SubtitleWordLookup";
 import VocabSaveButton from "@/components/study/VocabSaveButton";
 import ArticleQuestionTable from "@/components/study/ArticleQuestionTable";
 import { abbreviatedPartOfSpeech } from "@/lib/vocabularyPos";
+import { articleVocabularyContext } from "@/lib/articleVocabularyContext";
 import { articlesAvailable, getDailyArticle, markArticleRead, setArticleFavorite } from "@/lib/dailyArticles";
 import {
   analysisHasClassroomNotes,
@@ -116,7 +117,7 @@ export default function DailyArticleReader({ library = false }) {
     });
     return () => cancelAnimationFrame(frame);
   }, [article?.id, loading, focusParagraph, focusSentenceIndex, focusSentence, focusWord]);
-  const source = article ? { sourceType: library ? "library_article" : "article", sourceRecordId: article.id, sourceUrl: article.source_url, movieTitle: article.title } : {};
+  const source = article ? { sourceType: library ? "library_article" : "article", sourceRecordId: article.id, sourceUrl: article.source_url, movieTitle: article.title, articleBody: article.body_en } : {};
   const href = articleSourceUrl(article?.source_url);
   const meanings = Object.fromEntries([...analysis.key_vocab, ...analysis.long_sentences, ...analysis.ielts_expressions].map((row) => [row.en.toLowerCase(), row.zh || row.usage || ""]));
   return <div className="mx-auto max-w-5xl px-4 pb-20 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-8 md:pt-28">
@@ -206,7 +207,7 @@ function AnalysisSection({ title, rows, type, source, fields, extra }) {
           </div>
           {row.ipa && <p lang="en-GB" className="mt-1 text-xs leading-5 text-muted-foreground">{row.ipa}</p>}
         </div>
-        <div className="shrink-0"><VocabSaveButton {...source} expression={row.en} meaning={row.zh} type="word" /></div>
+        <div className="shrink-0"><VocabSaveButton {...source} expression={row.en} meaning={row.zh} type="word" sourceSentenceEn={articleVocabularyContext(source.articleBody, row.en)} /></div>
       </div>
       {row.zh && <p className="mt-2 whitespace-pre-line text-base font-medium leading-7">{row.zh}</p>}
       {row.collocation && <p className="mt-3 flex items-baseline gap-3 text-sm leading-6"><span className="shrink-0 text-xs text-muted-foreground">搭配</span><span className="min-w-0 break-words">{row.collocation}</span></p>}
@@ -223,7 +224,7 @@ function AnalysisSection({ title, rows, type, source, fields, extra }) {
   </section>;
   return <section><h2 className="mb-4 font-display text-xl">{title}</h2>
     <div className="space-y-4">{rows.map((row, index) => <div key={`${row.en}-${index}`} className="border-b border-border pb-4 last:border-0">
-      <div className="flex items-start gap-3"><p className="flex-1 leading-relaxed">{row.en}</p><VocabSaveButton {...source} expression={row.en} meaning={row.zh || row.usage} type={type} sourceSentenceEn={type === "sentence" ? row.en : undefined} sourceSentenceZh={row.zh} /></div>
+      <div className="flex items-start gap-3"><p className="flex-1 leading-relaxed">{row.en}</p><VocabSaveButton {...source} expression={row.en} meaning={row.zh || row.usage} type={type} sourceSentenceEn={type === "sentence" ? row.en : articleVocabularyContext(source.articleBody, row.en)} sourceSentenceZh={type === "sentence" ? row.zh : undefined} /></div>
       {fields(row).map(([key, value]) => (
         <p key={key} className="mt-2 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
           {FIELD_LABEL[key] ? <span className="mr-2 text-foreground/70">{FIELD_LABEL[key]}</span> : null}{value}

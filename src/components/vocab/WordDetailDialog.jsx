@@ -18,6 +18,9 @@ import { compactExpressionText, detailExpressionPresentation, detailPosLabel, sh
 import { displayLinesFromTimedCues } from "@/lib/captionDisplayCues";
 import { detailBuryControl } from "@/lib/detailActions";
 import { armCuePreviewPlayback } from "@/lib/youtubePlayerConfig";
+import { getDailyArticle } from "@/lib/dailyArticles";
+import { getLibraryArticle } from "@/lib/libraryArticles";
+import { articleVocabularyContext } from "@/lib/articleVocabularyContext";
 
 function isDetailed(profile) {
   return isCurrentWordProfile(profile);
@@ -25,7 +28,7 @@ function isDetailed(profile) {
 
 function sourcesFor(vocabulary) {
   if (Array.isArray(vocabulary?.sources) && vocabulary.sources.length) return vocabulary.sources;
-  if (vocabulary?.source_sentence_en || vocabulary?.source_movie_id || vocabulary?.source_subtitle_id) {
+  if (vocabulary?.source_sentence_en || vocabulary?.source_record_id || vocabulary?.source_movie_id || vocabulary?.source_subtitle_id) {
     return [{
       source_sentence_en: vocabulary.source_sentence_en || "",
       source_sentence_zh: vocabulary.source_sentence_zh || "",
@@ -125,9 +128,20 @@ export function WordDetailBody({ vocabulary, onReturnToSource }) {
     if (!baseSources.length) return undefined;
     (async () => {
       let changed = false;
+      const articleRequests = new Map();
       const hydrated = await Promise.all(baseSources.map(async (source) => {
         const recordId = source.source_record_id || source.source_movie_id || source.source_episode_id;
         try {
+          if (["article", "library_article"].includes(source.source_type)) {
+            if (source.source_sentence_en?.trim() || !recordId) return source;
+            const cacheKey = `${source.source_type}:${recordId}`;
+            if (!articleRequests.has(cacheKey)) articleRequests.set(cacheKey, source.source_type === "library_article" ? getLibraryArticle(recordId) : getDailyArticle(recordId));
+            const article = await articleRequests.get(cacheKey);
+            const sentence = articleVocabularyContext(article?.body_en, expression);
+            if (!sentence) return source;
+            changed = true;
+            return { ...source, source_sentence_en: sentence, subtitle_snapshot: { ...source.subtitle_snapshot, text_en: sentence } };
+          }
           let movie = null;
           if (recordId) movie = await localMovies.get(recordId);
           const direct = youtubePlaybackUrl(movie?.video_url, movie?.youtube_video_id, source.source_url, source.source_video_id);
