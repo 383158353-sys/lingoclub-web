@@ -5,6 +5,7 @@ import {
   clampDailyReviewGoal,
   dailyQueueSnapshot,
   restoreDailyQueue,
+  resolveDailyReviewPlan,
   scheduleStage,
   classifyMistakeTiers,
   classifyReviewPools,
@@ -248,4 +249,38 @@ test("mastered cards leave the daily queue and due list, and 斩 can be undone",
   assert.equal(restored.mastery_level, "learning");
   assert.equal(restored.review_status, "learning");
   assert.equal(isDue({ ...makeCard("wiener"), ...restored }), true);
+});
+
+test("a finished batch with 18 completed cards still offers 22 of a 40-card goal", () => {
+  const cards = Array.from({ length: 57 }, (_, i) => makeCard(i + 1));
+  const completedIds = cards.slice(0, 18).map((card) => card.id);
+  const pending = cards.slice(18).map((card) => card.id);
+  const session = {
+    reviewMode: "daily",
+    completed: true,
+    phase: "done",
+    dailyQueue: { date: localDateKey(date(10)), ids: pending, completedIds, goal: 40 },
+  };
+  const plan = resolveDailyReviewPlan(cards, session, date(10), 40);
+  assert.deepEqual(plan.completedIds, completedIds);
+  assert.deepEqual(plan.queue.map((card) => card.id), pending.slice(0, 22));
+  assert.equal(plan.ids.length, 40);
+  assert.equal(plan.carryIds.length, 17);
+});
+
+test("unfinished daily cards carry past midnight, including cards rescheduled by a partial review", () => {
+  const cards = [
+    makeCard("finished"),
+    makeCard("unfinished", { review_count: 2, last_reviewed_at: date(10).toISOString(), next_review_at: date(20).toISOString() }),
+    makeCard("overflow"),
+    makeCard("fresh"),
+  ];
+  const previous = { date: localDateKey(date(10)), ids: ["finished", "unfinished"], completedIds: ["finished"], carryIds: ["overflow"] };
+  const plan = resolveDailyReviewPlan(cards, { dailyQueue: previous }, date(11), 1);
+  assert.deepEqual(plan.completedIds, []);
+  assert.deepEqual(plan.queue.map((card) => card.id), ["unfinished"]);
+  assert.deepEqual(plan.carryIds, ["overflow"]);
+  const snapshot = dailyQueueSnapshot({ ...plan, completedIds: ["unfinished"] });
+  const tomorrow = resolveDailyReviewPlan(cards, { dailyQueue: snapshot }, date(12), 1);
+  assert.deepEqual(tomorrow.queue.map((card) => card.id), ["overflow"]);
 });

@@ -39,36 +39,6 @@ export function canResumeSession(session, vocabIds, mode) {
   return mode === "resume" || (session.reviewMode || "daily") === mode;
 }
 
-export function appendDailyReviewBatch(snapshot, expandedQueue) {
-  const previousGoal = Number(snapshot?.goal) || 0;
-  const goal = Number(expandedQueue?.goal) || 0;
-  const batchSize = Math.max(0, goal - previousGoal);
-  if (!snapshot || !batchSize) return null;
-
-  const existingIds = new Set([...(snapshot.ids || []), ...(snapshot.completedIds || [])]);
-  const ids = (expandedQueue.ids || []).filter((id) => !existingIds.has(id)).slice(0, batchSize);
-  if (!ids.length) return null;
-
-  const sourceIds = Object.fromEntries(["new", "due", "weak"].map((name) => {
-    const additions = (expandedQueue.sourceIds?.[name] || []).filter((id) => ids.includes(id));
-    return [name, [...(snapshot.sourceIds?.[name] || []), ...additions]];
-  }));
-  const counts = Object.fromEntries(Object.entries(sourceIds).map(([name, values]) => [name, values.length]));
-
-  return {
-    ids,
-    snapshot: {
-      ...snapshot,
-      goal,
-      ids: [...(snapshot.ids || []), ...ids],
-      sourceIds,
-      counts,
-      completedIds: [...(snapshot.completedIds || [])],
-      backlogAtGeneration: expandedQueue.backlogCount || snapshot.backlogAtGeneration || 0,
-    },
-  };
-}
-
 function dropId(list, id) {
   return Array.isArray(list) ? list.filter((item) => item !== id) : list;
 }
@@ -80,6 +50,7 @@ export function buryCardInSession(session, id) {
   const dailyQueue = session.dailyQueue ? {
     ...session.dailyQueue,
     ids: dropId(session.dailyQueue.ids, id),
+    carryIds: dropId(session.dailyQueue.carryIds, id),
     completedIds: [...new Set([...(session.dailyQueue.completedIds || []), id])],
     sourceIds: session.dailyQueue.sourceIds
       ? Object.fromEntries(Object.entries(session.dailyQueue.sourceIds).map(([name, list]) => [name, dropId(list, id)]))
@@ -121,6 +92,7 @@ export function deleteCardFromSession(session, id) {
   const dailyQueue = session.dailyQueue ? {
     ...session.dailyQueue,
     ids: dropId(session.dailyQueue.ids, id),
+    carryIds: dropId(session.dailyQueue.carryIds, id),
     completedIds: dropId(session.dailyQueue.completedIds, id),
     sourceIds: session.dailyQueue.sourceIds
       ? Object.fromEntries(Object.entries(session.dailyQueue.sourceIds).map(([name, list]) => [name, dropId(list, id)]))

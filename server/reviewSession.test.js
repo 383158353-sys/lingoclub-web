@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendDailyReviewBatch, buryCardInSession, canResumeSession, deleteCardFromSession, isResumable } from "../src/lib/reviewSession.js";
-import { localDateKey } from "../src/lib/srs.js";
+import { buryCardInSession, canResumeSession, deleteCardFromSession, isResumable } from "../src/lib/reviewSession.js";
+import { localDateKey, resolveDailyReviewPlan } from "../src/lib/srs.js";
 
 const now = new Date(2026, 0, 5, 12, 0, 0);
 const today = localDateKey(now);
@@ -45,27 +45,13 @@ test("daily review resumes only the active daily session", () => {
 });
 
 test("increased daily goals append only the newly added cards after the existing plan", () => {
-  const snapshot = {
-    goal: 3,
-    ids: ["a", "b", "c"],
-    sourceIds: { new: ["a", "b"], due: ["c"], weak: [] },
-    completedIds: ["a"],
-  };
-  const expandedQueue = {
-    goal: 5,
-    ids: ["a", "b", "c", "d", "e", "f"],
-    sourceIds: { new: ["a", "b", "d", "e"], due: ["c", "f"], weak: [] },
-    backlogCount: 20,
-  };
-
-  const next = appendDailyReviewBatch(snapshot, expandedQueue);
-  assert.deepEqual(next.ids, ["d", "e"]);
-  assert.deepEqual(next.snapshot.ids, ["a", "b", "c", "d", "e"]);
-  assert.deepEqual(next.snapshot.sourceIds, { new: ["a", "b", "d", "e"], due: ["c"], weak: [] });
-  assert.equal(next.snapshot.goal, 5);
-  assert.deepEqual(next.snapshot.completedIds, ["a"]);
-  assert.equal(next.snapshot.backlogAtGeneration, 20);
-  assert.equal(appendDailyReviewBatch(next.snapshot, expandedQueue), null);
+  const snapshot = { date: today, goal: 3, ids: ["a", "b", "c"], completedIds: ["a", "b", "c"] };
+  const cards = ["a", "b", "c", "d", "e"].map((id) => ({ id, expression_en: id, meaning_zh: "词" }));
+  const next = resolveDailyReviewPlan(cards, { dailyQueue: snapshot }, now, 5);
+  assert.deepEqual(next.queue.map((card) => card.id).sort(), ["d", "e"]);
+  assert.deepEqual(next.completedIds, ["a", "b", "c"]);
+  assert.equal(next.goal, 5);
+  assert.equal(resolveDailyReviewPlan(cards, { dailyQueue: snapshot }, now, 3).queue.length, 0);
 });
 
 test("斩 removes the current card from the saved queue without restarting at the first card", () => {

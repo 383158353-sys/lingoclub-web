@@ -187,8 +187,48 @@ export default function MinimalSubtitleBar({
     }
   }, [boxW, frameH, manualFont, lockedFont, active?.text_en]);
 
+  const endPointerDrag = useRef(null);
+  useEffect(() => () => endPointerDrag.current?.(), []);
+  useEffect(() => {
+    if (!active?.text_en) endPointerDrag.current?.();
+  }, [active?.text_en]);
+
+  const trackPointerDrag = (event, onMove, onEnd) => {
+    const { currentTarget: target, pointerId } = event;
+    endPointerDrag.current?.();
+
+    const finish = (nextEvent) => {
+      if (nextEvent?.pointerId != null && nextEvent.pointerId !== pointerId) return;
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", finish, true);
+      window.removeEventListener("pointercancel", finish, true);
+      window.removeEventListener("blur", finish);
+      target.removeEventListener("lostpointercapture", finish);
+      endPointerDrag.current = null;
+      if (target.hasPointerCapture?.(pointerId)) target.releasePointerCapture(pointerId);
+      onEnd?.();
+    };
+    const move = (nextEvent) => {
+      if (nextEvent.pointerId !== pointerId) return;
+      if ((nextEvent.buttons & 1) === 0) {
+        finish(nextEvent);
+        return;
+      }
+      onMove(nextEvent);
+    };
+
+    endPointerDrag.current = finish;
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", finish, true);
+    window.addEventListener("pointercancel", finish, true);
+    window.addEventListener("blur", finish);
+    target.addEventListener("lostpointercapture", finish);
+    try { target.setPointerCapture(pointerId); } catch { /* Window listeners still track the drag. */ }
+  };
+
   // 移动：按住字幕背景拖拽（文字/按钮不触发），2D 自由移动，松手确认
   const startMove = (e) => {
+    if (e.button !== 0 || (e.buttons & 1) === 0) return;
     if (e.target.closest("[data-word]") || e.target.closest("button") || e.target.closest("[data-resize]") || e.target.closest("[data-font-nudge]")) return;
     e.preventDefault();
     e.stopPropagation();
@@ -200,43 +240,37 @@ export default function MinimalSubtitleBar({
     const sy = e.clientY;
     const startX = posX;
     const startY = posY;
-    const move = (ev) => {
+    trackPointerDrag(e, (ev) => {
       const dx = (ev.clientX - sx) / W;
       const dy = (ev.clientY - sy) / H;
       setPosX(Math.max(0, Math.min(0.92, startX + dx)));
       setPosY(Math.max(0.02, Math.min(0.95, startY + dy)));
-    };
-    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    });
   };
 
   // 右下角拖拽：同时调节宽度和高度，字号随后撑满方框，松手确认
   const startResize = (e) => {
-    e.preventDefault();
     e.stopPropagation();
+    if (e.button !== 0 || (e.buttons & 1) === 0) return;
+    e.preventDefault();
     const sx = e.clientX;
     const sy = e.clientY;
     const startW = boxW || pillRef.current?.offsetWidth || 320;
     const startH = boxH || pillRef.current?.offsetHeight || 60;
+    endPointerDrag.current?.();
     dragging.current = true;
     pinHeight.current = true;
-    const move = (ev) => {
+    trackPointerDrag(e, (ev) => {
       const next = nextSubtitleBoxSize(startW, startH, ev.clientX - sx, ev.clientY - sy);
       setManualFont(null);
       setBoxW(next.width);
       setFrameH(next.height);
       setBoxH(next.height);
-    };
-    const up = () => {
+    }, () => {
       dragging.current = false;
       pinHeight.current = true;
       setLockedFont(fittedRef.current);
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    });
   };
 
   const lookupWord = async (w) => {

@@ -3,8 +3,8 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { vocabRepository } from "@/lib/vocabRepository";
 import { useToast } from "@/components/ui/use-toast";
 import Flashcard from "@/components/study/Flashcard";
-import { scheduleStage, buildDailyQueue, dailyQueueSnapshot, restoreDailyQueue, localDateKey, STAGE_LABELS, stageOf, clampDailyReviewGoal, DAILY_REVIEW_GOAL, isMasteredCard, isReviewableCard, selectCollectionReviewCards } from "@/lib/srs";
-import { loadSession, saveSession, isResumable, canResumeSession, appendDailyReviewBatch, deleteCardFromSession } from "@/lib/reviewSession";
+import { scheduleStage, resolveDailyReviewPlan, dailyQueueSnapshot, restoreDailyQueue, localDateKey, STAGE_LABELS, stageOf, clampDailyReviewGoal, DAILY_REVIEW_GOAL, isMasteredCard, isReviewableCard, selectCollectionReviewCards } from "@/lib/srs";
+import { loadSession, saveSession, isResumable, canResumeSession, deleteCardFromSession } from "@/lib/reviewSession";
 import { BookMarked, Brain, ArrowRight, RotateCw, AlertTriangle } from "lucide-react";
 import { appendReviewLog, loadReviewLogs } from "@/lib/reviewLogs";
 import { classifyMistakeTiers, classifyReviewPools, normalizeVocabularyProgress } from "@/lib/srs";
@@ -201,16 +201,10 @@ export default function Collection() {
   const resumableDaily = canResumeSession(savedSession, vocabIds, "daily");
   const resumableOther = resumable && (savedSession?.reviewMode || "daily") !== "daily";
 
-  // 每日首次生成的 ID 快照固定保存；进行中的断点不因题量改动重抽。
-  const dailyQ = useMemo(() => {
-    const restored = restoreDailyQueue(savedSession?.dailyQueue, reviewableVocab);
-    const snapshotGoal = Number(savedSession?.dailyQueue?.goal) || DAILY_REVIEW_GOAL;
-    const snapshotIsToday = savedSession?.dailyQueue?.date === todayISO();
-    const finishedToday = snapshotIsToday && savedSession.reviewMode === "daily"
-      && (savedSession.completed || savedSession.phase === "done");
-    if (restored && snapshotIsToday && (resumableDaily || finishedToday || snapshotGoal === dailyGoal)) return restored;
-    return buildDailyQueue(reviewableVocab, Date.now(), dailyGoal);
-  }, [dailyGoal, resumableDaily, reviewableVocab, savedSession]);
+  const dailyQ = useMemo(
+    () => resolveDailyReviewPlan(reviewableVocab, savedSession, Date.now(), dailyGoal),
+    [dailyGoal, reviewableVocab, savedSession],
+  );
 
   useEffect(() => {
     if (loading || !reviewableVocab.length || savedSession?.dailyQueue?.date === todayISO()) return;
@@ -269,15 +263,12 @@ export default function Collection() {
   const [visibleWordCount, wordsSentinelRef] = useProgressiveRenderLimit(sectionWords.length, sectionWords.length);
   const [visibleSentenceCount, sentencesSentinelRef] = useProgressiveRenderLimit(sectionSentences.length, sectionSentences.length);
   const [visibleMistakeCount, mistakesSentinelRef] = useProgressiveRenderLimit(visibleMistakes.length, `${mistakeFilter}:${visibleMistakes.length}`);
-  const masteredIdSet = useMemo(() => new Set(vocab.filter(isMasteredCard).map((card) => card.id)), [vocab]);
-  const todaysCompletedIds = savedSession?.dailyQueue?.date === todayISO()
-    ? (savedSession.dailyQueue.completedIds || savedSession.completedIds || [])
-    : [];
-  const remainingDailyCount = dailyQ.ids.filter((id) => !todaysCompletedIds.includes(id) && !masteredIdSet.has(id)).length;
+  const todaysCompletedIds = dailyQ.completedIds;
+  const remainingDailyCount = dailyQ.queue.length;
   const todayLogs = reviewLogs.filter((log) => localDateKey(log.reviewed_at) === todayISO());
   const todayAccuracy = todayLogs.length ? Math.round(todayLogs.filter((log) => log.is_correct).length / todayLogs.length * 100) : 0;
   const masteredCount = vocab.filter((card) => card.mastery_level === "mastered").length;
-  const todayRecommendedCompleted = Math.min(todaysCompletedIds.length, dailyQ.ids.length);
+  const todayRecommendedCompleted = Math.min(todaysCompletedIds.length, dailyQ.goal);
   const todayProgress = dailyQ.goal ? Math.min(100, Math.round(todayRecommendedCompleted / dailyQ.goal * 100)) : 0;
   const sourceGroups = [...new Set(vocab.flatMap((card) => [card.source_movie_title, ...(card.sources || []).map((source) => source.source_movie_title)]).filter(Boolean))];
 
@@ -332,27 +323,12 @@ export default function Collection() {
       setTab("review");
       return;
     }
-    const existingSnapshot = restoreDailyQueue(session?.dailyQueue, reviewableVocab);
-    const previousGoal = Number(session?.dailyQueue?.goal) || DAILY_REVIEW_GOAL;
-    if (mode === "daily" && session?.reviewMode === "daily" && session?.dailyQueue?.date === todayISO()
-      && (session.completed || session.phase === "done") && dailyGoal <= previousGoal) {
-      toast({ title: "今日复习已完成", description: "明天会生成新的每日队列。" });
-      return;
-    }
-    const snapshotGoal = previousGoal;
-    const reuseSnapshot = Boolean(existingSnapshot) && session?.dailyQueue?.date === todayISO() && snapshotGoal === dailyGoal;
-    const generated = reuseSnapshot ? existingSnapshot : buildDailyQueue(reviewableVocab, Date.now(), dailyGoal);
-    const alreadyCompleted = [...new Set([
-      ...(session?.dailyQueue?.date === todayISO() ? session?.dailyQueue?.completedIds || [] : []),
-      ...(session?.reviewMode === "daily" && session?.dailyQueue?.date === todayISO() ? session?.completedIds || [] : []),
-    ])];
-    const snapshot = reuseSnapshot
-      ? { ...session.dailyQueue, completedIds: [...new Set([...(session.dailyQueue.completedIds || []), ...alreadyCompleted])] }
-      : { ...dailyQueueSnapshot(generated), completedIds: alreadyCompleted };
-    const finishedIds = new Set(snapshot.completedIds || []);
+    const generated = resolveDailyReviewPlan(reviewableVocab, session, Date.now(), dailyGoal);
+    const snapshot = dailyQueueSnapshot(generated);
+    const finishedIds = new Set(snapshot.completedIds);
     let selectedCards;
     const pools = classifyReviewPools(vocab);
-    if (mode === "daily") selectedCards = generated.queue.filter((c) => !finishedIds.has(c.id));
+    if (mode === "daily") selectedCards = generated.queue;
     else if (mode === "due") selectedCards = pools.due;
     else if (mode === "weak") selectedCards = [...activeMistakes.focus, ...activeMistakes.weak];
     else if (mode === "focus") selectedCards = activeMistakes.focus;
@@ -375,7 +351,7 @@ export default function Collection() {
       return c && (c.meaning_zh || c.text_zh);
     });
     if (validIds.length === 0) {
-      toast({ title: "今日暂无需要复习的卡片", description: "明天会生成新的每日队列。" });
+      toast({ title: mode === "daily" && finishedIds.size >= dailyGoal ? "今日复习已完成" : "当前没有可复习的卡片" });
       return;
     }
     const initial = {
@@ -488,18 +464,23 @@ export default function Collection() {
       const snapshot = savedSession?.dailyQueue?.date === todayISO()
         ? savedSession.dailyQueue
         : dailyQueueSnapshot(dailyQ);
-      const expandedQueue = buildDailyQueue(reviewableVocab, Date.now(), dailyGoal);
-      const nextBatch = appendDailyReviewBatch(snapshot, expandedQueue);
-      if (nextBatch) {
-        const finishedIds = [...new Set([...(snapshot.completedIds || []), ...completedIds, ...originalQueue])];
-        const expandedSnapshot = { ...nextBatch.snapshot, completedIds: finishedIds };
+      const finishedIds = [...new Set([...(snapshot.completedIds || []), ...completedIds, ...originalQueue])];
+      const expandedQueue = resolveDailyReviewPlan(
+        reviewableVocab.filter((card) => isReviewableCard(card.id === id ? updated : card)),
+        { dailyQueue: { ...snapshot, completedIds: finishedIds } },
+        reviewedAt,
+        dailyGoal,
+      );
+      const batchIds = expandedQueue.queue.map((card) => card.id);
+      if (batchIds.length) {
+        const expandedSnapshot = dailyQueueSnapshot(expandedQueue);
         const nextSession = {
           date: todayISO(),
           dailyQueue: expandedSnapshot,
           reviewMode,
           sessionId: reviewSessionId,
-          originalQueue: nextBatch.ids,
-          queue: [...nextBatch.ids],
+          originalQueue: batchIds,
+          queue: [...batchIds],
           idx: 0,
           reviewed: 0,
           phase: "r1",
@@ -511,8 +492,8 @@ export default function Collection() {
           completed: false,
         };
         setSavedSession(saveSession(nextSession) || nextSession);
-        setOriginalQueue(nextBatch.ids);
-        setQueue([...nextBatch.ids]);
+        setOriginalQueue(batchIds);
+        setQueue([...batchIds]);
         setIdx(0);
         setReviewed(0);
         setPhase("r1");
@@ -638,7 +619,7 @@ export default function Collection() {
       <div className="mt-5 space-y-2 md:mt-8 md:space-y-3">
         <div className="flex min-h-10 flex-wrap items-center gap-2 md:gap-3">
           <button onClick={() => startReview(tab === "list" ? "daily" : "mistakes")} disabled={tab === "errors" && !errorWords.length} className="inline-flex min-h-10 items-center gap-1.5 rounded-full bg-copper px-4 py-2 text-xs font-medium text-copper-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 md:px-6 md:py-2.5 md:text-sm">
-            <RotateCw size={13} className="md:size-[15px]" /> {tab === "list" ? (resumableDaily ? "继续今日复习" : remainingDailyCount ? "开始今日复习" : "今日复习已完成") + (remainingDailyCount > 0 ? ` (${remainingDailyCount})` : "") : `复习错词 (${errorWords.length})`}
+            <RotateCw size={13} className="md:size-[15px]" /> {tab === "list" ? (resumableDaily ? "继续今日复习" : remainingDailyCount ? "开始今日复习" : todayRecommendedCompleted >= dailyQ.goal ? "今日复习已完成" : "当前没有可复习的卡片") + (remainingDailyCount > 0 ? ` (${remainingDailyCount})` : "") : `复习错词 (${errorWords.length})`}
           </button>
           {tab === "list" && resumableOther && <button type="button" onClick={() => startReview("resume")} className="inline-flex min-h-10 items-center rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:border-copper/50 hover:text-copper">
             继续上次复习 ({savedSession.originalQueue?.length || savedSession.queue.length})

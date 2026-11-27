@@ -514,6 +514,52 @@ export function buildDailyQueue(vocab, now = Date.now(), goal = DAILY_REVIEW_GOA
   };
 }
 
+export function resolveDailyReviewPlan(vocab, session, now = Date.now(), goal = DAILY_REVIEW_GOAL) {
+  const previous = session?.dailyQueue;
+  const date = localDateKey(now);
+  const sameDay = previous?.date === date;
+  const previousCompleted = previous?.completedIds || (session?.reviewMode === "daily" ? session.completedIds : []) || [];
+  const completedIds = sameDay ? [...new Set(previousCompleted)] : [];
+  const previouslyFinished = new Set(previousCompleted);
+  const byId = new Map(vocab.filter(isReviewableCard).map((card) => [card.id, card]));
+  const savedPending = [...new Set([...(previous?.ids || []), ...(previous?.carryIds || [])])]
+    .filter((id) => byId.has(id) && !previouslyFinished.has(id));
+  const openSlots = Math.max(0, goal - completedIds.length);
+  const pendingIds = savedPending.slice(0, openSlots);
+  const excluded = new Set([...completedIds, ...savedPending]);
+  const fresh = buildDailyQueue(vocab.filter((card) => !excluded.has(card.id)), now, Math.max(1, openSlots - pendingIds.length));
+  pendingIds.push(...fresh.ids.slice(0, openSlots - pendingIds.length));
+
+  const ids = [...completedIds, ...pendingIds];
+  const carryIds = savedPending.slice(openSlots);
+  const plannedIds = new Set([...ids, ...carryIds]);
+  const currentIds = new Set(ids);
+  const sourceIds = Object.fromEntries(["new", "due", "weak"].map((name) => [
+    name,
+    [...new Set([...(previous?.sourceIds?.[name] || []), ...(fresh.sourceIds[name] || [])])]
+      .filter((id) => plannedIds.has(id)),
+  ]));
+  const counts = Object.fromEntries(Object.entries(sourceIds).map(([name, values]) => [name, values.filter((id) => currentIds.has(id)).length]));
+  const freshSelected = pendingIds.length - Math.min(savedPending.length, openSlots);
+  return {
+    ...fresh,
+    date,
+    goal,
+    ids,
+    queue: pendingIds.map((id) => byId.get(id)),
+    sourceIds,
+    counts,
+    completedIds,
+    carryIds,
+    newCount: counts.new,
+    dueCount: counts.due,
+    weakCount: counts.weak,
+    reviewCount: counts.due + counts.weak,
+    backlogCount: fresh.backlogCount + savedPending.filter((id) => isNewReviewItem(byId.get(id))).length,
+    deferred: fresh.deferred + carryIds.length + fresh.ids.length - freshSelected,
+  };
+}
+
 export function dailyQueueSnapshot(dailyQueue, now = Date.now()) {
   return {
     date: dailyQueue.date || localDateKey(now),
@@ -528,6 +574,7 @@ export function dailyQueueSnapshot(dailyQueue, now = Date.now()) {
     counts: { ...(dailyQueue.counts || { new: dailyQueue.newCount || 0, due: dailyQueue.dueCount || 0, weak: dailyQueue.weakCount || 0 }) },
     backlogAtGeneration: dailyQueue.backlogCount || 0,
     completedIds: [...(dailyQueue.completedIds || [])],
+    carryIds: [...(dailyQueue.carryIds || [])],
     generatedAt: dailyQueue.generatedAt || new Date(now instanceof Date ? now.getTime() : Number(now)).toISOString(),
   };
 }
