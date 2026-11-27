@@ -10,10 +10,11 @@ function speak(text) {
   pronounce(text, { accent: "en-US" });
 }
 
-export default function Flashcard({ mode, card, pool, distractorIndex, distractorRevision = 0, onAnswer, onBack, onDelete, fontScale = 1 }) {
+export default function Flashcard({ mode, card, pool, distractorIndex, onAnswer, onBack, onDelete, fontScale = 1 }) {
   const [picked, setPicked] = useState(null);
   const [correct, setCorrect] = useState(null);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [revealedForSelfCheck, setRevealedForSelfCheck] = useState(false);
   const [soundOn, setSoundOn] = useState(() => isReviewSoundEnabled());
   const questionCache = useRef({ key: null, question: null });
   const autoTimer = useRef(null);
@@ -27,16 +28,15 @@ export default function Flashcard({ mode, card, pool, distractorIndex, distracto
   const ts = card.timestamp || "";
   const presentation = getReviewQuestionPresentation(card, mode, picked !== null);
   const questionKey = `${card?.id}:${mode}`;
-  if (questionCache.current.key !== questionKey || (picked === null && questionCache.current.revision !== distractorRevision)) {
+  if (questionCache.current.key !== questionKey) {
     questionCache.current = {
       key: questionKey,
-      revision: distractorRevision,
       question: buildReviewQuestion(card, pool, mode, distractorsForReview(card, distractorIndex || pool, mode)),
     };
   }
   const question = questionCache.current.question;
   const options = question?.options || [];
-  const hasCompleteOptions = options.length === 4;
+  const hasChoices = options.length >= 2;
 
   const commitAnswer = useCallback((token) => {
     const pending = pendingAnswer.current;
@@ -69,6 +69,7 @@ export default function Flashcard({ mode, card, pool, distractorIndex, distracto
     setPicked(null);
     setCorrect(null);
     setShowAnswer(false);
+    setRevealedForSelfCheck(false);
     pendingAnswer.current = null;
     startedAt.current = Date.now();
   }, [card.id, mode]);
@@ -92,19 +93,20 @@ export default function Flashcard({ mode, card, pool, distractorIndex, distracto
 
   useEffect(() => {
     const onKey = (event) => {
-      if (!hasCompleteOptions || picked !== null) return;
+      if (!hasChoices || picked !== null) return;
       const number = parseInt(event.key, 10);
       if (number >= 1 && number <= options.length) choose(options[number - 1]);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [hasCompleteOptions, options, picked]);
+  }, [hasChoices, options, picked]);
 
-  const choose = (option) => {
-    if (!hasCompleteOptions || picked !== null || pendingAnswer.current || !option || !question) return;
-    const isCorrect = isCorrectReviewAnswer(question, option);
+  const choose = (option, selfCheck) => {
+    if (picked !== null || pendingAnswer.current || !option || !question) return;
+    if (selfCheck === undefined ? !hasChoices : !revealedForSelfCheck) return;
+    const isCorrect = selfCheck ?? isCorrectReviewAnswer(question, option);
     const correctOption = question.options.find((candidate) => candidate.id === question.correctAnswerId);
-    const answerDetails = { question_type: mode, user_answer: option.value, correct_answer: correctOption?.value, rating: isCorrect ? 4 : 0, response_time_ms: Date.now() - startedAt.current };
+    const answerDetails = { question_type: mode, user_answer: selfCheck === undefined ? option.value : selfCheck ? "记得" : "没记住", correct_answer: correctOption?.value, rating: isCorrect ? 4 : 0, response_time_ms: Date.now() - startedAt.current };
     const token = ++answerToken.current;
     const delay = mode === "r3" ? 1600 : 700;
     pendingAnswer.current = { token, card, correct: isCorrect, details: answerDetails, dueAt: Date.now() + delay, committed: false };
@@ -139,15 +141,25 @@ export default function Flashcard({ mode, card, pool, distractorIndex, distracto
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col px-3 pb-3 md:min-h-0 md:px-0">
-      <div className="mb-1 flex items-center justify-center gap-3 text-[10px] text-muted-foreground/50 md:mb-2"><span>键盘 1-4 快速选答案</span><button type="button" onClick={() => { const next = !soundOn; setReviewSoundEnabled(next); setSoundOn(next); if (next) playReviewSound("correct"); }} aria-pressed={soundOn} aria-label={soundOn ? "关闭答题音效" : "开启答题音效"} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 hover:text-mint">{soundOn ? <Volume2 size={11} /> : <VolumeX size={11} />}音效{soundOn ? "开" : "关"}</button></div>
+      <div className="mb-1 flex items-center justify-center gap-3 text-[10px] text-muted-foreground/50 md:mb-2">{hasChoices && <span>键盘 1-{options.length} 快速选答案</span>}<button type="button" onClick={() => { const next = !soundOn; setReviewSoundEnabled(next); setSoundOn(next); if (next) playReviewSound("correct"); }} aria-pressed={soundOn} aria-label={soundOn ? "关闭答题音效" : "开启答题音效"} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 hover:text-mint">{soundOn ? <Volume2 size={11} /> : <VolumeX size={11} />}音效{soundOn ? "开" : "关"}</button></div>
       <div className="flex flex-col rounded-2xl border border-white/10 bg-card p-4 md:min-h-[340px] md:flex-none md:p-6">
         <p className="text-[11px] uppercase tracking-luxe text-mint/80">{card.source_movie_title || "语料复习"} · {mode === "r1" ? "第一轮 · 英译中" : mode === "r2" ? "第二轮 · 中译英" : "第三轮 · 听音选词"}</p>
-        {mode === "r1" && <><div className="mt-3 flex items-center justify-between gap-3 md:mt-4"><h3 style={{ "--review-font-scale": fontScale }} className="break-words font-display text-[calc(1.5rem*var(--review-font-scale))] font-bold leading-snug text-foreground md:text-[calc(1.875rem*var(--review-font-scale))]">{expr}</h3><button onClick={() => speak(expr)} className="rounded-full border border-white/10 p-2.5 text-muted-foreground hover:border-mint/40 hover:text-mint" aria-label="朗读"><Volume2 size={18} /></button></div>{ts && <p className="mt-1.5 font-mono text-[11px] text-mint/70">{ts}</p>}<p style={{ "--review-font-scale": fontScale }} className="mt-3 text-[calc(0.875rem*var(--review-font-scale))] text-muted-foreground md:mt-4">选择正确的中文词义</p></>}
-        {mode === "r2" && <><h3 style={{ "--review-font-scale": fontScale }} className="mt-3 break-words font-display text-[calc(1.5rem*var(--review-font-scale))] font-bold leading-snug text-foreground md:mt-4 md:text-[calc(1.875rem*var(--review-font-scale))]">{meaning}</h3>{ts && <p className="mt-1.5 font-mono text-[11px] text-mint/70">{ts}</p>}<p style={{ "--review-font-scale": fontScale }} className="mt-3 text-[calc(0.875rem*var(--review-font-scale))] text-muted-foreground md:mt-4">选择对应的英文表达</p></>}
-        {mode === "r3" && <><button onClick={() => speak(expr)} className="mt-3 flex w-full flex-col items-center justify-center rounded-xl border border-mint/30 bg-mint/5 py-4 text-mint hover:bg-mint/10 md:mt-6 md:py-8"><Volume2 size={26} /><span className="mt-2 text-sm">重新播放英文，再选择中文释义</span></button></>}
-        {hasCompleteOptions ? <div className="mt-4 grid grid-cols-2 gap-2 pt-1 md:mt-4 md:gap-3 md:pt-0">
+        {mode === "r1" && <><div className="mt-3 flex items-center justify-between gap-3 md:mt-4"><h3 style={{ "--review-font-scale": fontScale }} className="break-words font-display text-[calc(1.5rem*var(--review-font-scale))] font-bold leading-snug text-foreground md:text-[calc(1.875rem*var(--review-font-scale))]">{expr}</h3><button onClick={() => speak(expr)} className="rounded-full border border-white/10 p-2.5 text-muted-foreground hover:border-mint/40 hover:text-mint" aria-label="朗读"><Volume2 size={18} /></button></div>{ts && <p className="mt-1.5 font-mono text-[11px] text-mint/70">{ts}</p>}<p style={{ "--review-font-scale": fontScale }} className="mt-3 text-[calc(0.875rem*var(--review-font-scale))] text-muted-foreground md:mt-4">{hasChoices ? "选择正确的中文词义" : "先回想中文词义"}</p></>}
+        {mode === "r2" && <><h3 style={{ "--review-font-scale": fontScale }} className="mt-3 break-words font-display text-[calc(1.5rem*var(--review-font-scale))] font-bold leading-snug text-foreground md:mt-4 md:text-[calc(1.875rem*var(--review-font-scale))]">{meaning}</h3>{ts && <p className="mt-1.5 font-mono text-[11px] text-mint/70">{ts}</p>}<p style={{ "--review-font-scale": fontScale }} className="mt-3 text-[calc(0.875rem*var(--review-font-scale))] text-muted-foreground md:mt-4">{hasChoices ? "选择对应的英文表达" : "先回想对应的英文表达"}</p></>}
+        {mode === "r3" && <><button onClick={() => speak(expr)} className="mt-3 flex w-full flex-col items-center justify-center rounded-xl border border-mint/30 bg-mint/5 py-4 text-mint hover:bg-mint/10 md:mt-6 md:py-8"><Volume2 size={26} /><span className="mt-2 text-sm">{hasChoices ? "重新播放英文，再选择中文释义" : "重新播放英文，回想中文释义"}</span></button></>}
+        {hasChoices ? <div className="mt-4 grid grid-cols-2 gap-2 pt-1 md:mt-4 md:gap-3 md:pt-0">
           {options.map((option, index) => <button key={`${questionKey}:${option.id}`} onClick={(event) => { choose(option); if (event.detail > 0) event.currentTarget.blur(); }} disabled={picked !== null} style={{ "--review-font-scale": fontScale }} className={`min-h-[4.25rem] touch-manipulation rounded-xl border p-3 transition-colors [-webkit-tap-highlight-color:transparent] focus-visible:outline focus-visible:outline-2 focus-visible:outline-copper ${answerClass(option, picked !== null)} ${mode === "r2" ? "text-center font-display text-[calc(1rem*var(--review-font-scale))]" : "text-left text-[calc(0.875rem*var(--review-font-scale))]"}`}><span className="mr-1.5 text-[10px] text-muted-foreground/40">{index + 1}</span>{option.value || "—"}</button>)}
-        </div> : <div className="mt-4 rounded-xl border border-mint/20 bg-mint/5 p-5 text-center text-sm text-muted-foreground">正在补充足够的相近选项，请稍候…</div>}
+        </div> : (
+          <div className="mt-4 rounded-xl border border-mint/20 bg-mint/5 p-4">
+            {revealedForSelfCheck ? <>
+              <p className="text-foreground">{question.correctAnswer}</p>
+              <div className="mt-3 flex gap-2">
+                <button type="button" disabled={picked !== null} onClick={() => choose(options[0], false)} className="rounded-full border border-white/15 px-4 py-2 text-sm">没记住</button>
+                <button type="button" disabled={picked !== null} onClick={() => choose(options[0], true)} className="rounded-full bg-mint px-4 py-2 text-sm text-background">记得</button>
+              </div>
+            </> : <button type="button" onClick={() => setRevealedForSelfCheck(true)} className="rounded-full border border-mint/40 px-4 py-2 text-sm text-mint">显示答案</button>}
+          </div>
+        )}
         {mode === "r3" && picked !== null && correct && <div className="mt-4 rounded-xl border border-mint/20 bg-mint/5 p-4">
           <div className="flex items-center gap-2 text-sm text-mint"><Check size={16} />回答正确</div>
           <p className="mt-2 font-display text-lg text-foreground">{expr}</p>

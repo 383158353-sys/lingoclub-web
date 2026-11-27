@@ -122,10 +122,8 @@ export default function Collection() {
   const [corpusFontScale, setCorpusFontScale] = useState(1);
   const [hideSource, setHideSource] = useState(false);
   const [dailyGoal, setDailyGoal] = useState(DAILY_REVIEW_GOAL);
-  const [distractorRevision, setDistractorRevision] = useState(0);
   const answerCommitGate = useRef(createAnswerCommitGate());
   const reviewQuestionToken = useRef(null);
-  const activeReviewCardIdRef = useRef(null);
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -196,7 +194,6 @@ export default function Collection() {
   const reviewableVocab = useMemo(() => vocab.filter(isReviewableCard), [vocab]);
   const distractorIndexKey = reviewDistractorPoolKey(vocab);
   const distractorIndex = useMemo(() => createReviewDistractorIndex(vocab), [distractorIndexKey]);
-  activeReviewCardIdRef.current = tab === "review" ? queue[idx] || null : null;
   const resumable = isResumable(savedSession, vocabIds);
   const resumableDaily = canResumeSession(savedSession, vocabIds, "daily");
   const resumableOther = resumable && (savedSession?.reviewMode || "daily") !== "daily";
@@ -289,9 +286,6 @@ export default function Collection() {
       }, { signal, timeoutMs: 12000 });
     }, {
       signal: controller.signal,
-      onPrepared: (ids) => {
-        if (ids.includes(activeReviewCardIdRef.current)) setDistractorRevision((revision) => revision + 1);
-      },
     });
     return () => controller.abort();
   }, [distractorIndex, originalQueue, queue, reviewSessionId, tab]);
@@ -570,7 +564,6 @@ export default function Collection() {
             card={activeCard}
             pool={vocab}
             distractorIndex={distractorIndex}
-            distractorRevision={distractorRevision}
             onAnswer={onAnswer}
             reviewMode={reviewMode}
             onBack={goBack}

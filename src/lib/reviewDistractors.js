@@ -179,7 +179,7 @@ export function buildReviewQuestion(card, pool, mode, distractors = buildLocalDi
   return {
     correctAnswer: correct,
     correctAnswerId,
-    options: options.length === 4 ? fisherYatesShuffle(options, random) : options,
+    options: fisherYatesShuffle(options, random),
   };
 }
 
