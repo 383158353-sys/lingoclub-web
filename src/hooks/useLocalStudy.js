@@ -18,7 +18,7 @@ function ensureIds(list) {
   return list.map((s, i) => (s.id ? s : { ...s, id: `auto-${i}` }));
 }
 
-function mergeSubtitleProgress(current, incoming) {
+export function mergeSubtitleProgress(current, incoming) {
   const currentById = new Map((current || []).map((cue) => [cue.id, cue]));
   return (incoming || []).map((cue) => {
     const previous = currentById.get(cue.id);
@@ -102,7 +102,7 @@ function normalizeTimestamps(list) {
   return subs;
 }
 
-function presentStudySubtitles(list) {
+export function presentStudySubtitles(list) {
   return ensureIds(normalizeTimestamps(displayLinesFromTimedCues(list || [])));
 }
 

@@ -4,7 +4,7 @@ import { localMovies } from "@/lib/localStudyMeta";
 import { syncUserState } from "@/lib/cloudState";
 import { cleanVideoTitle } from "@/lib/videoTitle";
 import { useAuth } from "@/lib/AuthContext";
-import { useLocalStudy } from "@/hooks/useLocalStudy";
+import { mergeSubtitleProgress, presentStudySubtitles, useLocalStudy } from "@/hooks/useLocalStudy";
 import VideoPlayer from "@/components/study/VideoPlayer";
 import SubtitleScrubber from "@/components/study/SubtitleScrubber";
 import StudyAnalysisColumn from "@/components/study/StudyAnalysisColumn";
@@ -18,6 +18,7 @@ import BilibiliScrubber from "@/components/study/BilibiliScrubber";
 import YoutubeSubtitleHelper from "@/components/study/YoutubeSubtitleHelper";
 import { transcribeYouTubeClient, extractYouTubeId } from "@/lib/youtubeTranscriptClient";
 import { fetchYouTubeMeta } from "@/lib/localApi";
+import { subtitleHash } from "@/lib/subtitleAiProcessing";
 import { cleanSubtitleText } from "@/lib/subtitleCleaner";
 import { isBilibiliUrl } from "@/lib/bilibiliTranscriptClient";
 import { useToast } from "@/components/ui/use-toast";
@@ -84,14 +85,31 @@ export default function QuickStudy() {
   useEffect(() => {
     if (!videoUrl) { setLoading(false); return; }
     let cancelled = false;
-    const metaRequest = !titleParam && extractYouTubeId(videoUrl)
-      ? fetchYouTubeMeta(videoUrl).catch(() => null)
-      : null;
-    // 字幕请求与页面渲染/扩展字幕解码并行启动；有扩展字幕时结果直接丢弃。
-    const transcriptRequest = !subsB64 && extractYouTubeId(videoUrl)
-      ? transcribeYouTubeClient(videoUrl).catch((error) => ({ error: error?.message || "提取失败" }))
-      : null;
+    setLoading(true);
+    setMaterials(null);
+    setFetchError("");
+    setNeedsOcr(false);
     (async () => {
+      const existing = await localMovies.findByVideoUrl(videoUrl).catch(() => null);
+      if (cancelled) return;
+      const savedSubtitles = existing?.subtitles || [];
+      if (savedSubtitles.length) {
+        setMaterials({
+          videoUrl,
+          videoName: titleParam || existing.name || "快速导入视频",
+          subtitles: savedSubtitles,
+          posterUrl: existing.poster_url || "",
+          recordId: existing.id,
+          subtitleOffsetMs: existing.subtitle_offset_ms,
+          hasLocalVideo: false,
+        });
+        setLoading(false);
+        return;
+      }
+
+      const metaRequest = !titleParam && extractYouTubeId(videoUrl)
+        ? fetchYouTubeMeta(videoUrl).catch(() => null)
+        : null;
       let subs = [];
 
       // 1. 优先使用扩展端提取的字幕（base64 JSON）
@@ -102,7 +120,7 @@ export default function QuickStudy() {
           const json = new TextDecoder("utf-8").decode(bytes);
           const parsed = JSON.parse(json);
           subs = parsed.map((l, i) => ({
-            id: `ext-${Date.now()}-${i}`,
+            id: `ext-${i}`,
             text_en: cleanSubtitleText(l.text_en),
             text_zh: l.text_zh || "",
             speaker: "",
@@ -143,7 +161,7 @@ export default function QuickStudy() {
               const json = new TextDecoder("utf-8").decode(bytes);
               const parsed = JSON.parse(json);
               subs = parsed.map((l, i) => ({
-                id: `ext-${Date.now()}-${i}`,
+                id: `ext-${i}`,
                 text_en: cleanSubtitleText(l.text_en),
                 text_zh: l.text_zh || "",
                 speaker: "",
@@ -165,12 +183,12 @@ export default function QuickStudy() {
         if (extractYouTubeId(videoUrl)) {
           try {
             const res = await Promise.race([
-              transcriptRequest || transcribeYouTubeClient(videoUrl),
+              transcribeYouTubeClient(videoUrl),
               new Promise((_, reject) => setTimeout(() => reject(new Error("提取超时，请稍后重试")), 55000)),
             ]);
             if (!cancelled && res.lines) {
               subs = res.lines.map((l, i) => ({
-                id: `yt-${Date.now()}-${i}`,
+                id: `yt-${i}`,
                 text_en: cleanSubtitleText(l.text_en),
                 text_zh: "",
                 speaker: "",
@@ -193,43 +211,42 @@ export default function QuickStudy() {
 
       if (cancelled) return;
 
-      // 先显示学习页，标题和保存/同步放到后台（国内网络下 syncUserState 可能要好几秒）。
-      let movieTitle = titleParam || "快速导入视频";
+      const movieTitle = titleParam || existing?.name || "快速导入视频";
+      let saved = existing;
+      if (user?.id) {
+        try {
+          // Create or reuse the record before translated batches start arriving.
+          saved = existing
+            ? (subs.length ? await localMovies.update(existing.id, { subtitles: subs }) : existing)
+            : (await localMovies.importMovie({
+                name: movieTitle,
+                original_title: movieTitle === "快速导入视频" ? "" : movieTitle,
+                poster_url: "",
+                video_url: videoUrl,
+                subtitles: subs,
+              })).movie;
+        } catch { /* The in-browser subtitle cache can still be used. */ }
+      }
+      if (cancelled) return;
+
       setMaterials({
         videoUrl,
         videoName: movieTitle,
-        subtitles: subs,
-        posterUrl: "",
-        recordId: null,
+        subtitles: saved?.subtitles?.length ? saved.subtitles : subs,
+        posterUrl: saved?.poster_url || "",
+        recordId: saved?.id || null,
+        subtitleOffsetMs: saved?.subtitle_offset_ms,
         hasLocalVideo: false,
       });
       setLoading(false);
 
-      (async () => {
-        if (!titleParam && metaRequest) {
-          const meta = await metaRequest;
-          if (meta?.title) movieTitle = meta.title;
-          if (!cancelled && meta?.title) setMaterials((current) => current && ({ ...current, videoName: movieTitle }));
-        }
-        if (!user || cancelled) return;
-        try {
-          // Same storage as the paste importer: local library + user_state sync,
-          // so the video shows up at the top of 我的视频.
-          const saved = await localMovies.importMovie({
-            name: movieTitle,
-            original_title: movieTitle === "快速导入视频" ? "" : movieTitle,
-            poster_url: "",
-            video_url: videoUrl,
-            subtitles: subs,
-          });
-          if (!cancelled) setMaterials((current) => current && ({
-            ...current,
-            recordId: saved.movie.id,
-            subtitleOffsetMs: saved.movie.subtitle_offset_ms == null || saved.movie.subtitle_offset_ms === "" || !Number.isFinite(Number(saved.movie.subtitle_offset_ms)) ? current.subtitleOffsetMs ?? null : Number(saved.movie.subtitle_offset_ms),
-          }));
-          if (user?.id) await syncUserState(user.id).catch(() => null);
-        } catch { /* non-critical: studying still works without saving */ }
-      })();
+      if (metaRequest) {
+        void metaRequest.then(async (meta) => {
+          if (cancelled || !meta?.title) return;
+          setMaterials((current) => current && ({ ...current, videoName: meta.title }));
+          if (saved?.id) await localMovies.update(saved.id, { name: meta.title, original_title: meta.title });
+        }).catch(() => {});
+      }
 
       if (subs.length > 0) {
         toast({ title: `已导入 ${subs.length} 条字幕`, description: "可以开始逐句精读了。" });
@@ -240,7 +257,7 @@ export default function QuickStudy() {
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoUrl, subsB64, titleParam]);
+  }, [videoUrl, subsB64, titleParam, user?.id]);
 
   // B站仿真时钟（跨域 iframe 无法读取真实进度）
   useEffect(() => {
@@ -353,8 +370,29 @@ export default function QuickStudy() {
     }
   }, [materials?.recordId, toast, user?.id]);
 
+  const subtitleWrites = useRef(Promise.resolve());
+  const persistTranslations = useCallback((processed) => {
+    const id = materials?.recordId;
+    if (!id) return false;
+    subtitleWrites.current = subtitleWrites.current.then(async () => {
+      const latest = await localMovies.get(id);
+      if (!latest) return false;
+      const current = presentStudySubtitles(latest.subtitles);
+      // A late translation must never replace a track edited while it was running.
+      if (subtitleHash(current) !== subtitleHash(processed)) return false;
+      const merged = mergeSubtitleProgress(current, processed);
+      if (merged.some((cue, index) => cue.text_zh !== current[index].text_zh)) {
+        await localMovies.update(id, { subtitles: merged });
+      }
+      return true;
+    }).catch(() => false);
+    return subtitleWrites.current;
+  }, [materials?.recordId]);
+
   const study = useLocalStudy({
     subtitles: materials?.subtitles,
+    videoId: quickYoutubeId || materials?.recordId || videoUrl || "local",
+    onSubtitlesProcessed: persistTranslations,
     currentTime: studyTime,
     offsetMs: subtitleOffsetMs,
     onSeek: seekAndPlayLine,
@@ -664,7 +702,7 @@ export default function QuickStudy() {
           <SubtitleWorkbench
             videoRef={videoRef}
             videoUrl={materials.videoUrl || ""}
-            subs={materials.subtitles || []}
+            subs={study.subs}
             onChanged={onSubsChanged}
             onSeek={canPlay ? (sec) => { study.exitCloseReading(); seekAndPause(sec); } : null}
             canPlay={canPlay}

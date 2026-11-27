@@ -271,6 +271,14 @@ const movieCollection = collection(MOVIES_KEY, "movie", "movie");
 
 export const localMovies = {
   ...movieCollection,
+  async findByVideoUrl(videoUrl) {
+    if (!videoUrl) return null;
+    const videoId = youtubeVideoId(videoUrl);
+    const metadata = await movieCollection.listMetadata();
+    const match = metadata.find((movie) => movie.video_url === videoUrl
+      || (videoId && (movie.youtube_video_id || youtubeVideoId(movie.video_url)) === videoId));
+    return match ? movieCollection.get(match.id) : null;
+  },
   async cacheSubtitles(recordId, subtitles) {
     await ensureMigrated(MOVIES_KEY, "movie");
     const item = read(MOVIES_KEY).find((entry) => entry.id === recordId);
